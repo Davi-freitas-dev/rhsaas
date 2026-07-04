@@ -7466,7 +7466,7 @@ class SegurancaTests(TestCase):
         csp = response.headers["Content-Security-Policy"]
         self.assertIn("script-src 'self'", csp)
         self.assertIn("require-trusted-types-for 'script'", csp)
-        self.assertIn("trusted-types default rhremoto", csp)
+        self.assertIn("trusted-types default rhsaas", csp)
         self.assertNotIn("unsafe-inline", csp)
         self.assertEqual(response.headers["Cross-Origin-Opener-Policy"], "same-origin")
         self.assertEqual(response.headers["Cross-Origin-Resource-Policy"], "same-origin")
@@ -7494,7 +7494,7 @@ class SegurancaTests(TestCase):
             / "pwa.js"
         ).read_text(encoding="utf-8")
 
-        self.assertIn('trustedTypes.createPolicy("rhremoto"', script)
+        self.assertIn('trustedTypes.createPolicy("rhsaas"', script)
         self.assertIn('createScriptURL("/sw.js")', script)
         self.assertIn("navigator.serviceWorker.register(serviceWorkerUrl()", script)
         self.assertNotIn('navigator.serviceWorker.register("/sw.js"', script)

@@ -212,7 +212,7 @@ CACHES = {
             "CACHE_BACKEND",
             default="django.core.cache.backends.locmem.LocMemCache",
         ),
-        "LOCATION": env("CACHE_LOCATION", default="controledecaixa-cache"),
+        "LOCATION": env("CACHE_LOCATION", default="rhsaas-cache"),
     }
 }
 
@@ -312,7 +312,7 @@ CONTENT_SECURITY_POLICY = (
     "frame-ancestors 'none'; "
     "object-src 'none'; "
     "require-trusted-types-for 'script'; "
-    "trusted-types default rhremoto"
+    "trusted-types default rhsaas"
 )
 if env.bool("CSP_UPGRADE_INSECURE_REQUESTS", default=not DEBUG):
     CONTENT_SECURITY_POLICY = f"{CONTENT_SECURITY_POLICY}; upgrade-insecure-requests"
@@ -333,7 +333,7 @@ EMAIL_PORT = int(env("EMAIL_PORT", default=587))
 EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
 EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="resend")
 EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
-DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="Painel Financeiro RH Remoto <nao-responder@seudominio.com>")
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="RH SaaS <nao-responder@seudominio.com>")
 SERVER_EMAIL = DEFAULT_FROM_EMAIL
 
 

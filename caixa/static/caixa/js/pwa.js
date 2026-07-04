@@ -9,8 +9,8 @@
     }
 
     const policy =
-      window.rhRemotoTrustedTypesPolicy ||
-      window.trustedTypes.createPolicy("rhremoto", {
+      window.rhSaasTrustedTypesPolicy ||
+      window.trustedTypes.createPolicy("rhsaas", {
         createScriptURL: function (url) {
           if (url === "/sw.js") {
             return url;
@@ -20,7 +20,7 @@
         },
       });
 
-    window.rhRemotoTrustedTypesPolicy = policy;
+    window.rhSaasTrustedTypesPolicy = policy;
     return policy.createScriptURL("/sw.js");
   }
 

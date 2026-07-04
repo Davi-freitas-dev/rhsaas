@@ -1,4 +1,4 @@
-const CACHE_VERSION = "rh-remoto-financeiro-v6";
+const CACHE_VERSION = "rh-saas-v1";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_VERSION));

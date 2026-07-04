@@ -1,13 +1,17 @@
-# Deploy no Oracle Cloud
+# Deploy no Oracle Cloud - RH SaaS
 
 Checklist para publicar depois do `git pull` no servidor.
+
+> Atencao: este roteiro foi herdado do projeto antigo e esta em revisao para
+> RH SaaS. Nao execute deploy sem confirmar repositorio, dominio, banco e
+> servico systemd do novo projeto.
 
 Para janelas da arquitetura financeira premium/canonical-first, este checklist deve ser usado junto com `PLANO_EVOLUCAO_DOMINIO_FINANCEIRO.md`, secao `Plano mestre para conclusao da arquitetura premium`. A etapa PM-02 define a baseline versionada, backup e validacoes de ambiente real antes de qualquer ampliacao de origem.
 
 ## 1. Preparar o ambiente
 
 ```bash
-cd /caminho/do/projeto/controledecaixa
+cd /caminho/do/projeto/rhsaas
 python3 -m venv venv
 source venv/bin/activate
 pip install --upgrade pip
@@ -36,11 +40,11 @@ DEFAULT_FROM_EMAIL
 ```
 
 Para frontend e backend em subdominios do mesmo dominio principal, como
-`app.rhremoto.com` e `api.rhremoto.com`, configure tambem:
+`app.rhsaas.example.com` e `api.rhsaas.example.com`, configure tambem:
 
 ```text
-SESSION_COOKIE_DOMAIN=.rhremoto.com
-CSRF_COOKIE_DOMAIN=.rhremoto.com
+SESSION_COOKIE_DOMAIN=.rhsaas.example.com
+CSRF_COOKIE_DOMAIN=.rhsaas.example.com
 SESSION_COOKIE_SAMESITE=Lax
 CSRF_COOKIE_SAMESITE=Lax
 SESSION_COOKIE_SECURE=True
@@ -461,19 +465,19 @@ sudo -u postgres psql
 Dentro do `psql`:
 
 ```sql
-CREATE DATABASE controledecaixa;
-CREATE USER controledecaixa WITH PASSWORD 'SENHA_FORTE';
-ALTER ROLE controledecaixa SET client_encoding TO 'utf8';
-ALTER ROLE controledecaixa SET default_transaction_isolation TO 'read committed';
-ALTER ROLE controledecaixa SET timezone TO 'America/Fortaleza';
-GRANT ALL PRIVILEGES ON DATABASE controledecaixa TO controledecaixa;
+CREATE DATABASE rhsaas;
+CREATE USER rhsaas WITH PASSWORD 'SENHA_FORTE';
+ALTER ROLE rhsaas SET client_encoding TO 'utf8';
+ALTER ROLE rhsaas SET default_transaction_isolation TO 'read committed';
+ALTER ROLE rhsaas SET timezone TO 'America/Fortaleza';
+GRANT ALL PRIVILEGES ON DATABASE rhsaas TO rhsaas;
 \q
 ```
 
 No `.env`:
 
 ```text
-DATABASE_URL=postgres://controledecaixa:SENHA_FORTE@localhost:5432/controledecaixa
+DATABASE_URL=postgres://rhsaas:SENHA_FORTE@localhost:5432/rhsaas
 ```
 
 ## 4. Migrar dados atuais do SQLite para PostgreSQL
@@ -532,19 +536,19 @@ gunicorn config.wsgi:application --bind 127.0.0.1:8000
 
 ## 7. Exemplo de service systemd
 
-Crie `/etc/systemd/system/controledecaixa.service`:
+Crie `/etc/systemd/system/rhsaas.service`:
 
 ```ini
 [Unit]
-Description=Controle de Caixa Django
+Description=RH SaaS Django
 After=network.target
 
 [Service]
 User=ubuntu
 Group=www-data
-WorkingDirectory=/caminho/do/projeto/controledecaixa
-Environment="PATH=/caminho/do/projeto/controledecaixa/venv/bin"
-ExecStart=/caminho/do/projeto/controledecaixa/venv/bin/gunicorn config.wsgi:application --workers 3 --bind 127.0.0.1:8000
+WorkingDirectory=/caminho/do/projeto/rhsaas
+Environment="PATH=/caminho/do/projeto/rhsaas/venv/bin"
+ExecStart=/caminho/do/projeto/rhsaas/venv/bin/gunicorn config.wsgi:application --workers 3 --bind 127.0.0.1:8000
 Restart=always
 
 [Install]
@@ -555,9 +559,9 @@ Ative:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable controledecaixa
-sudo systemctl restart controledecaixa
-sudo systemctl status controledecaixa
+sudo systemctl enable rhsaas
+sudo systemctl restart rhsaas
+sudo systemctl status rhsaas
 ```
 
 ## 8. Exemplo Nginx
@@ -582,7 +586,7 @@ Depois configure HTTPS com Certbot ou outro certificado.
 ## 9. Fluxo de atualizacao
 
 ```bash
-cd /caminho/do/projeto/controledecaixa
+cd /caminho/do/projeto/rhsaas
 git pull
 source venv/bin/activate
 pip install -r requirements.txt
@@ -591,7 +595,7 @@ python manage.py collectstatic --noinput
 python manage.py validar_preflight_deploy_financeiro --falhar
 python manage.py auditar_totais_negocio --falhar-com-divergencia --validar-valores-editaveis --falhar-com-valores-editaveis
 python manage.py check --deploy
-sudo systemctl restart controledecaixa
+sudo systemctl restart rhsaas
 ```
 
 `validar_preflight_deploy_financeiro --falhar` e a validacao padrao atual antes de reiniciar o servico: ela executa checagens financeiras, valores editaveis, ledger, despesas manuais reservadas, integridade dos credores das dividas FCF, entradas FCF automaticas de dividas e prontidao operacional. Use `verificar_consistencia_financeira` apenas como investigacao legado quando algum diagnostico antigo pedir esse comando.
@@ -750,7 +754,7 @@ crontab -e
 Adicione, ajustando o caminho do projeto:
 
 ```cron
-0 3 1 * * cd /caminho/do/projeto/controledecaixa && /caminho/do/projeto/controledecaixa/venv/bin/python manage.py backup_banco_mensal >> /caminho/do/projeto/controledecaixa/backups/backup.log 2>&1
+0 3 1 * * cd /caminho/do/projeto/rhsaas && /caminho/do/projeto/rhsaas/venv/bin/python manage.py backup_banco_mensal >> /caminho/do/projeto/rhsaas/backups/backup.log 2>&1
 ```
 
 Para criar manualmente mesmo sem alteracao:

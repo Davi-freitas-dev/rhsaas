@@ -1,6 +1,6 @@
 {
-  "name": "Painel Financeiro RH Remoto",
-  "short_name": "Financeiro",
+  "name": "RH SaaS",
+  "short_name": "RH SaaS",
   "description": "Painel corporativo de gestao financeira e operacional.",
   "id": "/",
   "start_url": "/",

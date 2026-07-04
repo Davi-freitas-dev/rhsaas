@@ -6,6 +6,7 @@ __pycache__
 db.sqlite3
 db.sqlite3.backup_*
 staticfiles/
+media/
 backup_dados*.json
 dados_*.json
 backups/
