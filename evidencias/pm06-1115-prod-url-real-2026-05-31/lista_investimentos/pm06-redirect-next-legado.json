@@ -1,0 +1,51 @@
+{
+  "activation": {
+    "commands": {
+      "rollbackValidation": "python manage.py validar_redirects_next_legado --json",
+      "validateCandidate": "python manage.py validar_redirects_next_legado --surface=lista_investimentos --exigir-unitario --falhar --json",
+      "validateEnvironment": "python manage.py validar_redirects_next_legado --falhar --json"
+    },
+    "readyToActivate": true,
+    "recommendedEnabledValue": "True",
+    "recommendedEnvironment": {
+      "NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED": "True",
+      "NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES": "lista_investimentos",
+      "NEXT_FRONTEND_URL": "https://adm.rhremoto.com"
+    },
+    "recommendedSurfacesValue": "lista_investimentos",
+    "rollbackEnvironment": {
+      "NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED": "False",
+      "NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES": ""
+    }
+  },
+  "candidateSurfaces": [
+    "lista_investimentos"
+  ],
+  "configuredSurfaces": [
+    "lista_investimentos"
+  ],
+  "executionRecord": {
+    "format": "markdown",
+    "markdown": "### Registro PM-06.1104 - canario de redirect Next legado\n\n- ready: True\n- source: argument\n- frontendBaseUrl: https://adm.rhremoto.com\n- redirectsEnabled: True\n- candidateSurfaces: lista_investimentos\n- recommendedSurfaces: lista_investimentos\n- readyToActivate: True\n\n#### Superficies avaliadas\n- lista_investimentos: status=migrated; django=/fci/; next=https://adm.rhremoto.com/fci; redirectEligible=True\n\n#### Pendencias\n- nenhuma\n\n#### Ativacao sugerida\n- NEXT_FRONTEND_URL=https://adm.rhremoto.com\n- NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True\n- NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=lista_investimentos\n\n#### Comandos\n- validateCandidate: python manage.py validar_redirects_next_legado --surface=lista_investimentos --exigir-unitario --falhar --json\n- validateEnvironment: python manage.py validar_redirects_next_legado --falhar --json\n- rollbackValidation: python manage.py validar_redirects_next_legado --json\n\n#### Rollback\n- NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=False\n- NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=<vazio>\n\n#### Arquivos salvos\n- json: evidencias\\pm06-1115-prod-url-real-2026-05-31\\lista_investimentos\\pm06-redirect-next-legado.json\n- registro: evidencias\\pm06-1115-prod-url-real-2026-05-31\\lista_investimentos\\pm06-redirect-next-legado.md"
+  },
+  "frontendBaseUrl": "https://adm.rhremoto.com",
+  "issues": [],
+  "outputEvidenceFiles": {
+    "directory": "evidencias\\pm06-1115-prod-url-real-2026-05-31\\lista_investimentos",
+    "json": "evidencias\\pm06-1115-prod-url-real-2026-05-31\\lista_investimentos\\pm06-redirect-next-legado.json",
+    "record": "evidencias\\pm06-1115-prod-url-real-2026-05-31\\lista_investimentos\\pm06-redirect-next-legado.md"
+  },
+  "ready": true,
+  "redirectsEnabled": true,
+  "source": "argument",
+  "surfaces": [
+    {
+      "djangoUrl": "/fci/",
+      "known": true,
+      "nextUrl": "https://adm.rhremoto.com/fci",
+      "redirectEligible": true,
+      "status": "migrated",
+      "surface": "lista_investimentos"
+    }
+  ]
+}

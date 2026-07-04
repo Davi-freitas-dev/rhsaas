@@ -1,0 +1,38 @@
+{
+  "activation": {
+    "commands": {
+      "rollbackValidation": "python manage.py validar_redirects_next_legado --json",
+      "validateCandidate": "",
+      "validateEnvironment": "python manage.py validar_redirects_next_legado --falhar --json"
+    },
+    "readyToActivate": false,
+    "recommendedEnabledValue": "True",
+    "recommendedEnvironment": {
+      "NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED": "False",
+      "NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES": "",
+      "NEXT_FRONTEND_URL": "https://adm.rhremoto.com"
+    },
+    "recommendedSurfacesValue": "",
+    "rollbackEnvironment": {
+      "NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED": "False",
+      "NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES": ""
+    }
+  },
+  "candidateSurfaces": [],
+  "configuredSurfaces": [],
+  "executionRecord": {
+    "format": "markdown",
+    "markdown": "### Registro PM-06.1104 - canario de redirect Next legado\n\n- ready: True\n- source: settings\n- frontendBaseUrl: https://adm.rhremoto.com\n- redirectsEnabled: False\n- candidateSurfaces: -\n- recommendedSurfaces: -\n- readyToActivate: False\n\n#### Superficies avaliadas\n- -\n\n#### Pendencias\n- nenhuma\n\n#### Ativacao sugerida\n- NEXT_FRONTEND_URL=https://adm.rhremoto.com\n- NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=False\n- NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=-\n\n#### Comandos\n- validateCandidate: -\n- validateEnvironment: python manage.py validar_redirects_next_legado --falhar --json\n- rollbackValidation: python manage.py validar_redirects_next_legado --json\n\n#### Rollback\n- NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=False\n- NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=<vazio>\n\n#### Arquivos salvos\n- json: evidencias\\pm06-1115-prod-url-real-2026-05-31\\rollback\\pm06-redirect-next-legado.json\n- registro: evidencias\\pm06-1115-prod-url-real-2026-05-31\\rollback\\pm06-redirect-next-legado.md"
+  },
+  "frontendBaseUrl": "https://adm.rhremoto.com",
+  "issues": [],
+  "outputEvidenceFiles": {
+    "directory": "evidencias\\pm06-1115-prod-url-real-2026-05-31\\rollback",
+    "json": "evidencias\\pm06-1115-prod-url-real-2026-05-31\\rollback\\pm06-redirect-next-legado.json",
+    "record": "evidencias\\pm06-1115-prod-url-real-2026-05-31\\rollback\\pm06-redirect-next-legado.md"
+  },
+  "ready": true,
+  "redirectsEnabled": false,
+  "source": "settings",
+  "surfaces": []
+}

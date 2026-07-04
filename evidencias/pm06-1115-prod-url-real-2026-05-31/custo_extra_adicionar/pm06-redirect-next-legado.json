@@ -1,0 +1,51 @@
+{
+  "activation": {
+    "commands": {
+      "rollbackValidation": "python manage.py validar_redirects_next_legado --json",
+      "validateCandidate": "python manage.py validar_redirects_next_legado --surface=custo_extra_adicionar --exigir-unitario --falhar --json",
+      "validateEnvironment": "python manage.py validar_redirects_next_legado --falhar --json"
+    },
+    "readyToActivate": true,
+    "recommendedEnabledValue": "True",
+    "recommendedEnvironment": {
+      "NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED": "True",
+      "NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES": "custo_extra_adicionar",
+      "NEXT_FRONTEND_URL": "https://adm.rhremoto.com"
+    },
+    "recommendedSurfacesValue": "custo_extra_adicionar",
+    "rollbackEnvironment": {
+      "NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED": "False",
+      "NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES": ""
+    }
+  },
+  "candidateSurfaces": [
+    "custo_extra_adicionar"
+  ],
+  "configuredSurfaces": [
+    "custo_extra_adicionar"
+  ],
+  "executionRecord": {
+    "format": "markdown",
+    "markdown": "### Registro PM-06.1104 - canario de redirect Next legado\n\n- ready: True\n- source: argument\n- frontendBaseUrl: https://adm.rhremoto.com\n- redirectsEnabled: True\n- candidateSurfaces: custo_extra_adicionar\n- recommendedSurfaces: custo_extra_adicionar\n- readyToActivate: True\n\n#### Superficies avaliadas\n- custo_extra_adicionar: status=migrated; django=/eventos/custos-extras/adicionar/; next=https://adm.rhremoto.com/custos-extras; redirectEligible=True\n\n#### Pendencias\n- nenhuma\n\n#### Ativacao sugerida\n- NEXT_FRONTEND_URL=https://adm.rhremoto.com\n- NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True\n- NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=custo_extra_adicionar\n\n#### Comandos\n- validateCandidate: python manage.py validar_redirects_next_legado --surface=custo_extra_adicionar --exigir-unitario --falhar --json\n- validateEnvironment: python manage.py validar_redirects_next_legado --falhar --json\n- rollbackValidation: python manage.py validar_redirects_next_legado --json\n\n#### Rollback\n- NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=False\n- NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=<vazio>\n\n#### Arquivos salvos\n- json: evidencias\\pm06-1115-prod-url-real-2026-05-31\\custo_extra_adicionar\\pm06-redirect-next-legado.json\n- registro: evidencias\\pm06-1115-prod-url-real-2026-05-31\\custo_extra_adicionar\\pm06-redirect-next-legado.md"
+  },
+  "frontendBaseUrl": "https://adm.rhremoto.com",
+  "issues": [],
+  "outputEvidenceFiles": {
+    "directory": "evidencias\\pm06-1115-prod-url-real-2026-05-31\\custo_extra_adicionar",
+    "json": "evidencias\\pm06-1115-prod-url-real-2026-05-31\\custo_extra_adicionar\\pm06-redirect-next-legado.json",
+    "record": "evidencias\\pm06-1115-prod-url-real-2026-05-31\\custo_extra_adicionar\\pm06-redirect-next-legado.md"
+  },
+  "ready": true,
+  "redirectsEnabled": true,
+  "source": "argument",
+  "surfaces": [
+    {
+      "djangoUrl": "/eventos/custos-extras/adicionar/",
+      "known": true,
+      "nextUrl": "https://adm.rhremoto.com/custos-extras",
+      "redirectEligible": true,
+      "status": "migrated",
+      "surface": "custo_extra_adicionar"
+    }
+  ]
+}

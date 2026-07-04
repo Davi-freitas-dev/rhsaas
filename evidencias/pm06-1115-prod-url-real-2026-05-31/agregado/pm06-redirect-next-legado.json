@@ -1,0 +1,171 @@
+{
+  "activation": {
+    "commands": {
+      "rollbackValidation": "python manage.py validar_redirects_next_legado --json",
+      "validateCandidate": "",
+      "validateEnvironment": "python manage.py validar_redirects_next_legado --falhar --json"
+    },
+    "readyToActivate": true,
+    "recommendedEnabledValue": "True",
+    "recommendedEnvironment": {
+      "NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED": "True",
+      "NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES": "backups_lista,lista_investimentos,lista_financiamentos,pagamentos_custos_extras,pagamentos_custos_servico,pagamentos_fcf,pagar_parcela,receitas_lista,despesas_lista,custos_fixos_lista,custos_por_evento,custo_extra_adicionar,pagamentos",
+      "NEXT_FRONTEND_URL": "https://adm.rhremoto.com"
+    },
+    "recommendedSurfacesValue": "backups_lista,lista_investimentos,lista_financiamentos,pagamentos_custos_extras,pagamentos_custos_servico,pagamentos_fcf,pagar_parcela,receitas_lista,despesas_lista,custos_fixos_lista,custos_por_evento,custo_extra_adicionar,pagamentos",
+    "rollbackEnvironment": {
+      "NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED": "False",
+      "NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES": ""
+    }
+  },
+  "candidateSurfaces": [
+    "backups_lista",
+    "lista_investimentos",
+    "lista_financiamentos",
+    "pagamentos_custos_extras",
+    "pagamentos_custos_servico",
+    "pagamentos_fcf",
+    "pagar_parcela",
+    "receitas_lista",
+    "despesas_lista",
+    "custos_fixos_lista",
+    "custos_por_evento",
+    "custo_extra_adicionar",
+    "pagamentos"
+  ],
+  "configuredSurfaces": [
+    "backups_lista",
+    "lista_investimentos",
+    "lista_financiamentos",
+    "pagamentos_custos_extras",
+    "pagamentos_custos_servico",
+    "pagamentos_fcf",
+    "pagar_parcela",
+    "receitas_lista",
+    "despesas_lista",
+    "custos_fixos_lista",
+    "custos_por_evento",
+    "custo_extra_adicionar",
+    "pagamentos"
+  ],
+  "executionRecord": {
+    "format": "markdown",
+    "markdown": "### Registro PM-06.1104 - canario de redirect Next legado\n\n- ready: True\n- source: settings\n- frontendBaseUrl: https://adm.rhremoto.com\n- redirectsEnabled: True\n- candidateSurfaces: backups_lista,lista_investimentos,lista_financiamentos,pagamentos_custos_extras,pagamentos_custos_servico,pagamentos_fcf,pagar_parcela,receitas_lista,despesas_lista,custos_fixos_lista,custos_por_evento,custo_extra_adicionar,pagamentos\n- recommendedSurfaces: backups_lista,lista_investimentos,lista_financiamentos,pagamentos_custos_extras,pagamentos_custos_servico,pagamentos_fcf,pagar_parcela,receitas_lista,despesas_lista,custos_fixos_lista,custos_por_evento,custo_extra_adicionar,pagamentos\n- readyToActivate: True\n\n#### Superficies avaliadas\n- backups_lista: status=migrated; django=/backups/; next=https://adm.rhremoto.com/backups; redirectEligible=True\n- lista_investimentos: status=migrated; django=/fci/; next=https://adm.rhremoto.com/fci; redirectEligible=True\n- lista_financiamentos: status=migrated; django=/fcf/; next=https://adm.rhremoto.com/fcf; redirectEligible=True\n- pagamentos_custos_extras: status=migrated; django=/eventos/custos-extras/pagamentos/; next=https://adm.rhremoto.com/pagamentos?source=custo_extra; redirectEligible=True\n- pagamentos_custos_servico: status=migrated; django=/eventos/custos-servico/pagamentos/; next=https://adm.rhremoto.com/pagamentos?source=custo_servico; redirectEligible=True\n- pagamentos_fcf: status=migrated; django=/fcf/pagamentos/; next=https://adm.rhremoto.com/pagamentos?source=parcela_divida; redirectEligible=True\n- pagar_parcela: status=migrated; django=/fcf/parcelas/1/pagar/; next=https://adm.rhremoto.com/pagamentos?source=parcela_divida; redirectEligible=True\n- receitas_lista: status=migrated; django=/receitas/; next=https://adm.rhremoto.com/receitas; redirectEligible=True\n- despesas_lista: status=migrated; django=/despesas/; next=https://adm.rhremoto.com/despesas; redirectEligible=True\n- custos_fixos_lista: status=migrated; django=/custos-fixos/; next=https://adm.rhremoto.com/custos-fixos; redirectEligible=True\n- custos_por_evento: status=migrated; django=/custos-por-evento/; next=https://adm.rhremoto.com/custos-por-evento; redirectEligible=True\n- custo_extra_adicionar: status=migrated; django=/eventos/custos-extras/adicionar/; next=https://adm.rhremoto.com/custos-extras; redirectEligible=True\n- pagamentos: status=migrated; django=/pagamentos/; next=https://adm.rhremoto.com/pagamentos; redirectEligible=True\n\n#### Pendencias\n- nenhuma\n\n#### Ativacao sugerida\n- NEXT_FRONTEND_URL=https://adm.rhremoto.com\n- NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True\n- NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=backups_lista,lista_investimentos,lista_financiamentos,pagamentos_custos_extras,pagamentos_custos_servico,pagamentos_fcf,pagar_parcela,receitas_lista,despesas_lista,custos_fixos_lista,custos_por_evento,custo_extra_adicionar,pagamentos\n\n#### Comandos\n- validateCandidate: -\n- validateEnvironment: python manage.py validar_redirects_next_legado --falhar --json\n- rollbackValidation: python manage.py validar_redirects_next_legado --json\n\n#### Rollback\n- NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=False\n- NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=<vazio>\n\n#### Arquivos salvos\n- json: evidencias\\pm06-1115-prod-url-real-2026-05-31\\agregado\\pm06-redirect-next-legado.json\n- registro: evidencias\\pm06-1115-prod-url-real-2026-05-31\\agregado\\pm06-redirect-next-legado.md"
+  },
+  "frontendBaseUrl": "https://adm.rhremoto.com",
+  "issues": [],
+  "outputEvidenceFiles": {
+    "directory": "evidencias\\pm06-1115-prod-url-real-2026-05-31\\agregado",
+    "json": "evidencias\\pm06-1115-prod-url-real-2026-05-31\\agregado\\pm06-redirect-next-legado.json",
+    "record": "evidencias\\pm06-1115-prod-url-real-2026-05-31\\agregado\\pm06-redirect-next-legado.md"
+  },
+  "ready": true,
+  "redirectsEnabled": true,
+  "source": "settings",
+  "surfaces": [
+    {
+      "djangoUrl": "/backups/",
+      "known": true,
+      "nextUrl": "https://adm.rhremoto.com/backups",
+      "redirectEligible": true,
+      "status": "migrated",
+      "surface": "backups_lista"
+    },
+    {
+      "djangoUrl": "/fci/",
+      "known": true,
+      "nextUrl": "https://adm.rhremoto.com/fci",
+      "redirectEligible": true,
+      "status": "migrated",
+      "surface": "lista_investimentos"
+    },
+    {
+      "djangoUrl": "/fcf/",
+      "known": true,
+      "nextUrl": "https://adm.rhremoto.com/fcf",
+      "redirectEligible": true,
+      "status": "migrated",
+      "surface": "lista_financiamentos"
+    },
+    {
+      "djangoUrl": "/eventos/custos-extras/pagamentos/",
+      "known": true,
+      "nextUrl": "https://adm.rhremoto.com/pagamentos?source=custo_extra",
+      "redirectEligible": true,
+      "status": "migrated",
+      "surface": "pagamentos_custos_extras"
+    },
+    {
+      "djangoUrl": "/eventos/custos-servico/pagamentos/",
+      "known": true,
+      "nextUrl": "https://adm.rhremoto.com/pagamentos?source=custo_servico",
+      "redirectEligible": true,
+      "status": "migrated",
+      "surface": "pagamentos_custos_servico"
+    },
+    {
+      "djangoUrl": "/fcf/pagamentos/",
+      "known": true,
+      "nextUrl": "https://adm.rhremoto.com/pagamentos?source=parcela_divida",
+      "redirectEligible": true,
+      "status": "migrated",
+      "surface": "pagamentos_fcf"
+    },
+    {
+      "djangoUrl": "/fcf/parcelas/1/pagar/",
+      "known": true,
+      "nextUrl": "https://adm.rhremoto.com/pagamentos?source=parcela_divida",
+      "redirectEligible": true,
+      "status": "migrated",
+      "surface": "pagar_parcela"
+    },
+    {
+      "djangoUrl": "/receitas/",
+      "known": true,
+      "nextUrl": "https://adm.rhremoto.com/receitas",
+      "redirectEligible": true,
+      "status": "migrated",
+      "surface": "receitas_lista"
+    },
+    {
+      "djangoUrl": "/despesas/",
+      "known": true,
+      "nextUrl": "https://adm.rhremoto.com/despesas",
+      "redirectEligible": true,
+      "status": "migrated",
+      "surface": "despesas_lista"
+    },
+    {
+      "djangoUrl": "/custos-fixos/",
+      "known": true,
+      "nextUrl": "https://adm.rhremoto.com/custos-fixos",
+      "redirectEligible": true,
+      "status": "migrated",
+      "surface": "custos_fixos_lista"
+    },
+    {
+      "djangoUrl": "/custos-por-evento/",
+      "known": true,
+      "nextUrl": "https://adm.rhremoto.com/custos-por-evento",
+      "redirectEligible": true,
+      "status": "migrated",
+      "surface": "custos_por_evento"
+    },
+    {
+      "djangoUrl": "/eventos/custos-extras/adicionar/",
+      "known": true,
+      "nextUrl": "https://adm.rhremoto.com/custos-extras",
+      "redirectEligible": true,
+      "status": "migrated",
+      "surface": "custo_extra_adicionar"
+    },
+    {
+      "djangoUrl": "/pagamentos/",
+      "known": true,
+      "nextUrl": "https://adm.rhremoto.com/pagamentos",
+      "redirectEligible": true,
+      "status": "migrated",
+      "surface": "pagamentos"
+    }
+  ]
+}

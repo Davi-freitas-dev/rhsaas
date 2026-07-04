@@ -1,0 +1,26 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Acesso - Painel Financeiro RH Remoto{% endblock %}</title>
+  {% block meta_description %}{% endblock %}
+  <meta name="robots" content="noindex, nofollow">
+  {% include "caixa/shared/_pwa_head.html" %}
+  {% block extra_head %}{% endblock %}
+  <link rel="stylesheet" href="{% static 'caixa/css/login.css' %}">
+</head>
+<body>
+  <main class="login-page">
+    <section class="login-card">
+      <div class="login-header">
+        {% block auth_header %}{% endblock %}
+      </div>
+
+      {% block auth_content %}{% endblock %}
+    </section>
+  </main>
+  {% block auth_scripts %}{% endblock %}
+</body>
+</html>

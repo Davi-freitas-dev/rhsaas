@@ -1,0 +1,49 @@
+{
+  "activation": {
+    "commands": {
+      "rollbackValidation": "python manage.py validar_redirects_next_legado --json",
+      "validateCandidate": "python manage.py validar_redirects_next_legado --surface=pagamentos_fcf --exigir-unitario --falhar --json",
+      "validateEnvironment": "python manage.py validar_redirects_next_legado --falhar --json"
+    },
+    "readyToActivate": true,
+    "recommendedEnabledValue": "True",
+    "recommendedEnvironment": {
+      "NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED": "True",
+      "NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES": "pagamentos_fcf",
+      "NEXT_FRONTEND_URL": "https://app.rhremoto.test"
+    },
+    "recommendedSurfacesValue": "pagamentos_fcf",
+    "rollbackEnvironment": {
+      "NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED": "False",
+      "NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES": ""
+    }
+  },
+  "candidateSurfaces": [
+    "pagamentos_fcf"
+  ],
+  "configuredSurfaces": [],
+  "executionRecord": {
+    "format": "markdown",
+    "markdown": "### Registro PM-06.1104 - canario de redirect Next legado\n\n- ready: True\n- source: argument\n- frontendBaseUrl: https://app.rhremoto.test\n- redirectsEnabled: False\n- candidateSurfaces: pagamentos_fcf\n- recommendedSurfaces: pagamentos_fcf\n- readyToActivate: True\n\n#### Superficies avaliadas\n- pagamentos_fcf: status=migrated; django=/fcf/pagamentos/; next=https://app.rhremoto.test/pagamentos?source=parcela_divida; redirectEligible=True\n\n#### Pendencias\n- nenhuma\n\n#### Ativacao sugerida\n- NEXT_FRONTEND_URL=https://app.rhremoto.test\n- NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True\n- NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=pagamentos_fcf\n\n#### Comandos\n- validateCandidate: python manage.py validar_redirects_next_legado --surface=pagamentos_fcf --exigir-unitario --falhar --json\n- validateEnvironment: python manage.py validar_redirects_next_legado --falhar --json\n- rollbackValidation: python manage.py validar_redirects_next_legado --json\n\n#### Rollback\n- NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=False\n- NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=<vazio>\n\n#### Arquivos salvos\n- json: evidencias\\pm06-1109-pagamentos-fcf-2026-05-31\\pm06-redirect-next-legado.json\n- registro: evidencias\\pm06-1109-pagamentos-fcf-2026-05-31\\pm06-redirect-next-legado.md"
+  },
+  "frontendBaseUrl": "https://app.rhremoto.test",
+  "issues": [],
+  "outputEvidenceFiles": {
+    "directory": "evidencias\\pm06-1109-pagamentos-fcf-2026-05-31",
+    "json": "evidencias\\pm06-1109-pagamentos-fcf-2026-05-31\\pm06-redirect-next-legado.json",
+    "record": "evidencias\\pm06-1109-pagamentos-fcf-2026-05-31\\pm06-redirect-next-legado.md"
+  },
+  "ready": true,
+  "redirectsEnabled": false,
+  "source": "argument",
+  "surfaces": [
+    {
+      "djangoUrl": "/fcf/pagamentos/",
+      "known": true,
+      "nextUrl": "https://app.rhremoto.test/pagamentos?source=parcela_divida",
+      "redirectEligible": true,
+      "status": "migrated",
+      "surface": "pagamentos_fcf"
+    }
+  ]
+}

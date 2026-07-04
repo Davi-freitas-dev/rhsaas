@@ -1,0 +1,78 @@
+{
+    "phase":  "PM-07",
+    "artifact":  "plano-commit-release-local",
+    "generatedAt":  "2026-06-04T20:04:22-03:00",
+    "status":  "preparado_nao_executado",
+    "currentRefs":  {
+                        "backend":  "d08c4ea",
+                        "frontend":  "275aa10",
+                        "backendChangedEntries":  93,
+                        "frontendChangedEntries":  37
+                    },
+    "proposedCommits":  [
+                            {
+                                "repository":  "backend",
+                                "title":  "pm06: concluir arquitetura premium backend",
+                                "include":  [
+                                                "docs e Plano Mestre",
+                                                "migration 0035_remove_contrato_operacional",
+                                                "remocao de HTML Django operacional",
+                                                "API/Admin/services/selectors/serializers preservados e ajustados",
+                                                "guardrails/comandos de auditoria",
+                                                "testes backend",
+                                                "evidencias PM-07"
+                                            ],
+                                "beforeCommitChecks":  [
+                                                           "git diff --check",
+                                                           "python manage.py check",
+                                                           "python manage.py makemigrations --check --dry-run",
+                                                           "python manage.py test caixa.tests --keepdb --verbosity 1"
+                                                       ]
+                            },
+                            {
+                                "repository":  "frontend",
+                                "title":  "pm06: alinhar Next.js a interface operacional premium",
+                                "include":  [
+                                                "docs frontend",
+                                                "servicos/hooks/utils canonicos",
+                                                "componentes operacionais",
+                                                "guardrails de aliases",
+                                                "E2E de filtros por contrato",
+                                                "verify:publish"
+                                            ],
+                                "beforeCommitChecks":  [
+                                                           "git diff --check",
+                                                           "corepack pnpm run verify:publish",
+                                                           "corepack pnpm run verify:pm06:e2e quando houver ambiente"
+                                                       ]
+                            }
+                        ],
+    "proposedTags":  [
+                         "backend: pm07-acceptance-candidate-backend-2026-06-04 ou tag equivalente aprovada",
+                         "frontend: pm07-acceptance-candidate-frontend-2026-06-04 ou tag equivalente aprovada"
+                     ],
+    "rollbackPlan":  [
+                         "Antes da janela, registrar commit/tag atual de producao backend e frontend.",
+                         "Executar backup_banco_mensal --force --manter 12 e guardar referencia/arquivo.",
+                         "Se falhar antes de migrations/deploy efetivo, cancelar janela e manter refs atuais.",
+                         "Se falhar depois de migration/deploy, voltar codigo para refs anteriores e restaurar backup do banco; se houver delta operacional depois do backup, conciliar manualmente antes de retomar.",
+                         "Manter CANONICAL_FIRST_SETTLEMENT_ENABLED desativado salvo origem explicitamente aprovada.",
+                         "Desativar flags/allowlists de redirects ou canonical-first como primeira resposta quando o problema for operacional e reversivel por configuracao.",
+                         "Rodar check, preflight, auditoria de totais e conciliacao apos rollback."
+                     ],
+    "notExecuted":  [
+                        "git add",
+                        "git commit",
+                        "git tag",
+                        "deploy",
+                        "backup real em ambiente alvo",
+                        "migrate em ambiente alvo"
+                    ],
+    "blockers":  [
+                     "worktree nao revisado",
+                     "validacao local ou alvo falhando",
+                     "backup real ausente",
+                     "sem aceite semantico/tecnico",
+                     "sem plano de rollback registrado"
+                 ]
+}

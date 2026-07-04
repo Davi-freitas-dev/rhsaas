@@ -1,0 +1,51 @@
+{
+  "activation": {
+    "commands": {
+      "rollbackValidation": "python manage.py validar_redirects_next_legado --json",
+      "validateCandidate": "python manage.py validar_redirects_next_legado --surface=pagamentos_custos_servico --exigir-unitario --falhar --json",
+      "validateEnvironment": "python manage.py validar_redirects_next_legado --falhar --json"
+    },
+    "readyToActivate": true,
+    "recommendedEnabledValue": "True",
+    "recommendedEnvironment": {
+      "NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED": "True",
+      "NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES": "pagamentos_custos_servico",
+      "NEXT_FRONTEND_URL": "https://adm.rhremoto.com"
+    },
+    "recommendedSurfacesValue": "pagamentos_custos_servico",
+    "rollbackEnvironment": {
+      "NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED": "False",
+      "NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES": ""
+    }
+  },
+  "candidateSurfaces": [
+    "pagamentos_custos_servico"
+  ],
+  "configuredSurfaces": [
+    "pagamentos_custos_servico"
+  ],
+  "executionRecord": {
+    "format": "markdown",
+    "markdown": "### Registro PM-06.1104 - canario de redirect Next legado\n\n- ready: True\n- source: argument\n- frontendBaseUrl: https://adm.rhremoto.com\n- redirectsEnabled: True\n- candidateSurfaces: pagamentos_custos_servico\n- recommendedSurfaces: pagamentos_custos_servico\n- readyToActivate: True\n\n#### Superficies avaliadas\n- pagamentos_custos_servico: status=migrated; django=/eventos/custos-servico/pagamentos/; next=https://adm.rhremoto.com/pagamentos?source=custo_servico; redirectEligible=True\n\n#### Pendencias\n- nenhuma\n\n#### Ativacao sugerida\n- NEXT_FRONTEND_URL=https://adm.rhremoto.com\n- NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True\n- NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=pagamentos_custos_servico\n\n#### Comandos\n- validateCandidate: python manage.py validar_redirects_next_legado --surface=pagamentos_custos_servico --exigir-unitario --falhar --json\n- validateEnvironment: python manage.py validar_redirects_next_legado --falhar --json\n- rollbackValidation: python manage.py validar_redirects_next_legado --json\n\n#### Rollback\n- NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=False\n- NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=<vazio>\n\n#### Arquivos salvos\n- json: evidencias\\pm06-1115-prod-url-real-2026-05-31\\pagamentos_custos_servico\\pm06-redirect-next-legado.json\n- registro: evidencias\\pm06-1115-prod-url-real-2026-05-31\\pagamentos_custos_servico\\pm06-redirect-next-legado.md"
+  },
+  "frontendBaseUrl": "https://adm.rhremoto.com",
+  "issues": [],
+  "outputEvidenceFiles": {
+    "directory": "evidencias\\pm06-1115-prod-url-real-2026-05-31\\pagamentos_custos_servico",
+    "json": "evidencias\\pm06-1115-prod-url-real-2026-05-31\\pagamentos_custos_servico\\pm06-redirect-next-legado.json",
+    "record": "evidencias\\pm06-1115-prod-url-real-2026-05-31\\pagamentos_custos_servico\\pm06-redirect-next-legado.md"
+  },
+  "ready": true,
+  "redirectsEnabled": true,
+  "source": "argument",
+  "surfaces": [
+    {
+      "djangoUrl": "/eventos/custos-servico/pagamentos/",
+      "known": true,
+      "nextUrl": "https://adm.rhremoto.com/pagamentos?source=custo_servico",
+      "redirectEligible": true,
+      "status": "migrated",
+      "surface": "pagamentos_custos_servico"
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{% extends "caixa/layouts/auth.html" %}
+
+{% block title %}Acesso negado - Painel Financeiro RH Remoto{% endblock %}
+
+{% block auth_header %}
+  <h1>Acesso negado</h1>
+  <p>Seu usu&aacute;rio n&atilde;o tem permiss&atilde;o para acessar esta &aacute;rea.</p>
+{% endblock %}
+
+{% block auth_content %}
+  {% if request.user.is_authenticated %}
+    <form method="post" action="{% url 'caixa:logout' %}" class="login-form">
+      {% csrf_token %}
+      <button type="submit" class="botao-entrar">Sair desta conta</button>
+    </form>
+
+    {% if request.user.is_staff %}
+      <div class="acoes-extras">
+        <a href="{% url 'admin:index' %}">Ir para o admin</a>
+      </div>
+    {% endif %}
+  {% else %}
+    <div class="acoes-extras">
+      <a href="{% url 'caixa:login' %}">Ir para o login</a>
+    </div>
+  {% endif %}
+{% endblock %}

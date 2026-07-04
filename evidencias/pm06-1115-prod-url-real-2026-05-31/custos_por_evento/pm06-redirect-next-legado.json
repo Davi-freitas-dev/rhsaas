@@ -1,0 +1,51 @@
+{
+  "activation": {
+    "commands": {
+      "rollbackValidation": "python manage.py validar_redirects_next_legado --json",
+      "validateCandidate": "python manage.py validar_redirects_next_legado --surface=custos_por_evento --exigir-unitario --falhar --json",
+      "validateEnvironment": "python manage.py validar_redirects_next_legado --falhar --json"
+    },
+    "readyToActivate": true,
+    "recommendedEnabledValue": "True",
+    "recommendedEnvironment": {
+      "NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED": "True",
+      "NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES": "custos_por_evento",
+      "NEXT_FRONTEND_URL": "https://adm.rhremoto.com"
+    },
+    "recommendedSurfacesValue": "custos_por_evento",
+    "rollbackEnvironment": {
+      "NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED": "False",
+      "NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES": ""
+    }
+  },
+  "candidateSurfaces": [
+    "custos_por_evento"
+  ],
+  "configuredSurfaces": [
+    "custos_por_evento"
+  ],
+  "executionRecord": {
+    "format": "markdown",
+    "markdown": "### Registro PM-06.1104 - canario de redirect Next legado\n\n- ready: True\n- source: argument\n- frontendBaseUrl: https://adm.rhremoto.com\n- redirectsEnabled: True\n- candidateSurfaces: custos_por_evento\n- recommendedSurfaces: custos_por_evento\n- readyToActivate: True\n\n#### Superficies avaliadas\n- custos_por_evento: status=migrated; django=/custos-por-evento/; next=https://adm.rhremoto.com/custos-por-evento; redirectEligible=True\n\n#### Pendencias\n- nenhuma\n\n#### Ativacao sugerida\n- NEXT_FRONTEND_URL=https://adm.rhremoto.com\n- NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True\n- NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=custos_por_evento\n\n#### Comandos\n- validateCandidate: python manage.py validar_redirects_next_legado --surface=custos_por_evento --exigir-unitario --falhar --json\n- validateEnvironment: python manage.py validar_redirects_next_legado --falhar --json\n- rollbackValidation: python manage.py validar_redirects_next_legado --json\n\n#### Rollback\n- NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=False\n- NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=<vazio>\n\n#### Arquivos salvos\n- json: evidencias\\pm06-1115-prod-url-real-2026-05-31\\custos_por_evento\\pm06-redirect-next-legado.json\n- registro: evidencias\\pm06-1115-prod-url-real-2026-05-31\\custos_por_evento\\pm06-redirect-next-legado.md"
+  },
+  "frontendBaseUrl": "https://adm.rhremoto.com",
+  "issues": [],
+  "outputEvidenceFiles": {
+    "directory": "evidencias\\pm06-1115-prod-url-real-2026-05-31\\custos_por_evento",
+    "json": "evidencias\\pm06-1115-prod-url-real-2026-05-31\\custos_por_evento\\pm06-redirect-next-legado.json",
+    "record": "evidencias\\pm06-1115-prod-url-real-2026-05-31\\custos_por_evento\\pm06-redirect-next-legado.md"
+  },
+  "ready": true,
+  "redirectsEnabled": true,
+  "source": "argument",
+  "surfaces": [
+    {
+      "djangoUrl": "/custos-por-evento/",
+      "known": true,
+      "nextUrl": "https://adm.rhremoto.com/custos-por-evento",
+      "redirectEligible": true,
+      "status": "migrated",
+      "surface": "custos_por_evento"
+    }
+  ]
+}

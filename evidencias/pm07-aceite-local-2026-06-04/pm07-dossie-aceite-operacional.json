@@ -1,0 +1,53 @@
+{
+    "phase":  "PM-07",
+    "artifact":  "dossie-aceite-operacional",
+    "generatedAt":  "2026-06-04T19:56:25-03:00",
+    "status":  "preparado_localmente_pendente_ambiente_alvo",
+    "references":  {
+                       "backendCommitBeforeFinalCommit":  "d08c4ea",
+                       "frontendCommitBeforeFinalCommit":  "275aa10",
+                       "backendChangedEntries":  93,
+                       "frontendChangedEntries":  37,
+                       "localEvidenceDirectory":  "evidencias/pm07-aceite-local-2026-06-04"
+                   },
+    "finalAcceptanceSequence":  [
+                                    "Revisar diffs e confirmar que todos os arquivos alterados pertencem ao pacote PM-06/PM-07.",
+                                    "Criar commits finais separados no backend e no frontend, depois tags/referencias publicaveis.",
+                                    "Executar backup real do banco no ambiente alvo antes de aplicar migrations/deploy.",
+                                    "Registrar rollback: codigo/tag anterior, backup, responsavel, janela e criterio de abortar.",
+                                    "Reexecutar validacoes PM-07 no ambiente alvo ou janela aprovada.",
+                                    "Ativar rotina periodica de auditoria/alerta.",
+                                    "Registrar aceite semantico financeiro/operacao e aceite tecnico.",
+                                    "Conferir dados reais apos a primeira janela completa de uso."
+                                ],
+    "requiredTargetCommands":  [
+                                   "python manage.py backup_banco_mensal --force --manter 12",
+                                   "python manage.py check",
+                                   "python manage.py makemigrations --check --dry-run",
+                                   "python manage.py migrate --plan",
+                                   "python manage.py validar_preflight_deploy_financeiro --falhar --json",
+                                   "python manage.py validar_operacao_obrigacoes --validar-canonico --validar-escrita-canonica --validar-valores-editaveis --falhar --json",
+                                   "python manage.py auditar_totais_negocio --validar-valores-editaveis --falhar-com-divergencia --falhar-com-valores-editaveis --json",
+                                   "python manage.py verificar_conciliacao_obrigacoes --json --falhar-com-divergencia",
+                                   "corepack pnpm run verify:publish"
+                               ],
+    "conditionalCanonicalFirstCommand":  "python manage.py monitorar_janela_canonical_first --source=\u003corigem\u003e --data-inicial=\u003cdata_ativacao\u003e --exigir-data-ativacao --exigir-canonical-first --falhar-com-legado-na-janela --json --falhar",
+    "blockers":  [
+                     "Worktree com alteracoes nao revisadas ou fora do pacote PM-06/PM-07.",
+                     "Backup real ausente ou sem referencia registrada.",
+                     "migrate --plan com operacao inesperada nao revisada.",
+                     "Qualquer comando PM-07 com exit code diferente de zero.",
+                     "preflight/operacao/totais/conciliacao com issues, divergencias ou ready diferente de true.",
+                     "verify:publish falhando no frontend.",
+                     "Ausencia de aceite semantico ou tecnico.",
+                     "Primeira janela completa sem conferencia de dados reais."
+                 ],
+    "mayClosePm07After":  [
+                              "Commit/tag final registrados.",
+                              "Backup/rollback/janela registrados.",
+                              "Validacoes do ambiente alvo aprovadas.",
+                              "Rotina de monitoramento/alerta ativa.",
+                              "Aceites semantico e tecnico registrados.",
+                              "Revisao de dados reais apos primeira janela completa concluida ou pendencia residual aceita explicitamente."
+                          ]
+}

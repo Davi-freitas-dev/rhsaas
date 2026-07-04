@@ -1,0 +1,51 @@
+{
+  "activation": {
+    "commands": {
+      "rollbackValidation": "python manage.py validar_redirects_next_legado --json",
+      "validateCandidate": "python manage.py validar_redirects_next_legado --surface=pagamentos --exigir-unitario --falhar --json",
+      "validateEnvironment": "python manage.py validar_redirects_next_legado --falhar --json"
+    },
+    "readyToActivate": true,
+    "recommendedEnabledValue": "True",
+    "recommendedEnvironment": {
+      "NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED": "True",
+      "NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES": "pagamentos",
+      "NEXT_FRONTEND_URL": "http://localhost:3000"
+    },
+    "recommendedSurfacesValue": "pagamentos",
+    "rollbackEnvironment": {
+      "NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED": "False",
+      "NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES": ""
+    }
+  },
+  "candidateSurfaces": [
+    "pagamentos"
+  ],
+  "configuredSurfaces": [
+    "pagamentos"
+  ],
+  "executionRecord": {
+    "format": "markdown",
+    "markdown": "### Registro PM-06.1104 - canario de redirect Next legado\n\n- ready: True\n- source: argument\n- frontendBaseUrl: http://localhost:3000\n- redirectsEnabled: True\n- candidateSurfaces: pagamentos\n- recommendedSurfaces: pagamentos\n- readyToActivate: True\n\n#### Superficies avaliadas\n- pagamentos: status=migrated; django=/pagamentos/; next=http://localhost:3000/pagamentos; redirectEligible=True\n\n#### Pendencias\n- nenhuma\n\n#### Ativacao sugerida\n- NEXT_FRONTEND_URL=http://localhost:3000\n- NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True\n- NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=pagamentos\n\n#### Comandos\n- validateCandidate: python manage.py validar_redirects_next_legado --surface=pagamentos --exigir-unitario --falhar --json\n- validateEnvironment: python manage.py validar_redirects_next_legado --falhar --json\n- rollbackValidation: python manage.py validar_redirects_next_legado --json\n\n#### Rollback\n- NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=False\n- NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=<vazio>\n\n#### Arquivos salvos\n- json: evidencias\\pm06-1114-url-real-next-local-2026-05-31\\pagamentos\\pm06-redirect-next-legado.json\n- registro: evidencias\\pm06-1114-url-real-next-local-2026-05-31\\pagamentos\\pm06-redirect-next-legado.md"
+  },
+  "frontendBaseUrl": "http://localhost:3000",
+  "issues": [],
+  "outputEvidenceFiles": {
+    "directory": "evidencias\\pm06-1114-url-real-next-local-2026-05-31\\pagamentos",
+    "json": "evidencias\\pm06-1114-url-real-next-local-2026-05-31\\pagamentos\\pm06-redirect-next-legado.json",
+    "record": "evidencias\\pm06-1114-url-real-next-local-2026-05-31\\pagamentos\\pm06-redirect-next-legado.md"
+  },
+  "ready": true,
+  "redirectsEnabled": true,
+  "source": "argument",
+  "surfaces": [
+    {
+      "djangoUrl": "/pagamentos/",
+      "known": true,
+      "nextUrl": "http://localhost:3000/pagamentos",
+      "redirectEligible": true,
+      "status": "migrated",
+      "surface": "pagamentos"
+    }
+  ]
+}

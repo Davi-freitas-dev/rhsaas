@@ -1,0 +1,80 @@
+{
+    "phase":  "PM-07",
+    "record":  "aceite-local",
+    "generatedAt":  "2026-06-04T19:36:02-03:00",
+    "status":  "validacao_automatizada_local_concluida_aceite_operacional_pendente",
+    "progressEstimate":  {
+                             "localTechnicalImplementationPercent":  95,
+                             "formalPm07ClosurePercent":  75
+                         },
+    "backend":  {
+                    "path":  "C:\\Users\\Davif\\OneDrive\\Desktop\\Projetos\\controledecaixa",
+                    "baseCommit":  "d08c4ea",
+                    "worktreeClean":  false,
+                    "changedFilesEvidence":  [
+                                                 "backend-status.txt",
+                                                 "backend-diff-stat.txt",
+                                                 "backend-name-status.txt"
+                                             ],
+                    "validationsPassed":  [
+                                              "python manage.py test caixa.tests --keepdb --verbosity 1 =\u003e 657 tests OK, 24 skipped",
+                                              "python manage.py check =\u003e OK",
+                                              "python manage.py makemigrations --check --dry-run =\u003e OK, no changes detected",
+                                              "python manage.py migrate --plan =\u003e no planned operations after 0035",
+                                              "python manage.py inventariar_html_django_pm06 --json =\u003e ready=true, operationalHtmlCount=0, issues=[]",
+                                              "python manage.py validar_redirects_next_legado --json =\u003e ready=true, issues=[]",
+                                              "python manage.py validar_preflight_deploy_financeiro --falhar --json =\u003e exit 0, ready=true, issues=[]",
+                                              "python manage.py validar_operacao_obrigacoes --validar-canonico --validar-escrita-canonica --validar-valores-editaveis --falhar --json =\u003e exit 0, ready=true",
+                                              "python manage.py auditar_totais_negocio --validar-valores-editaveis --falhar-com-divergencia --falhar-com-valores-editaveis --json =\u003e exit 0, divergencias=0",
+                                              "python manage.py verificar_conciliacao_obrigacoes --json --falhar-com-divergencia =\u003e exit 0, divergentCount=0"
+                                          ]
+                },
+    "frontend":  {
+                     "path":  "C:\\Users\\Davif\\OneDrive\\Desktop\\Projetos\\dashboardFinanceiro\\v0-dashboard-financeiro-rhremoto",
+                     "baseCommit":  "275aa10",
+                     "worktreeClean":  false,
+                     "changedFilesEvidence":  [
+                                                  "frontend-status.txt",
+                                                  "frontend-diff-stat.txt",
+                                                  "frontend-name-status.txt"
+                                              ],
+                     "validationsPassed":  [
+                                               "corepack pnpm run verify:frontend =\u003e OK",
+                                               "corepack pnpm run verify:pm06:e2e =\u003e 12 passed",
+                                               "corepack pnpm run verify:publish =\u003e OK, including frozen lockfile with pnpm 10.33.4, lint, typecheck, guardrails and Next.js build"
+                                           ]
+                 },
+    "architectureAssertions":  {
+                                   "djangoOperationalHtmlRemoved":  true,
+                                   "backendApiAdminOnly":  true,
+                                   "nextOperationalUiPrimary":  true,
+                                   "contratoOperacionalRemovedLocally":  true,
+                                   "contractCodeCanonicalForVisualContract":  true,
+                                   "contractIdNotRuntimeDomainDependency":  true
+                               },
+    "safeContinuationPoint":  "Preparar pacote final de aceite PM-07 em ambiente alvo, com commit/tag, backup, rollback, rotina real de alertas, aceite operacional e primeira janela completa.",
+    "remainingGates":  [
+                           "Revisar worktrees e decidir o conjunto exato do commit final",
+                           "Criar commit/tag final apos revisao humana",
+                           "Executar backup do banco do ambiente alvo e registrar rollback",
+                           "Reexecutar validacoes PM-07 no ambiente alvo ou janela aprovada",
+                           "Ativar rotina periodica real de auditoria/alerta",
+                           "Registrar aceite semantico financeiro/operacao",
+                           "Registrar aceite tecnico deploy/rollback/logs/frontend",
+                           "Conferir dados reais apos a primeira janela completa de uso"
+                       ],
+    "evidenceFiles":  [
+                          "pm07-aceite-local.md",
+                          "pm07-aceite-local.json",
+                          "backend-status.txt",
+                          "backend-diff-stat.txt",
+                          "backend-name-status.txt",
+                          "frontend-status.txt",
+                          "frontend-diff-stat.txt",
+                          "frontend-name-status.txt",
+                          "pm07-dossie-aceite-operacional.md",
+                          "pm07-dossie-aceite-operacional.json",
+                          "pm07-plano-commit-release.md",
+                          "pm07-plano-commit-release.json"
+                      ]
+}

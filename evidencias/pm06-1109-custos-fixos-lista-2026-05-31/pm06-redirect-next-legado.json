@@ -1,0 +1,49 @@
+{
+  "activation": {
+    "commands": {
+      "rollbackValidation": "python manage.py validar_redirects_next_legado --json",
+      "validateCandidate": "python manage.py validar_redirects_next_legado --surface=custos_fixos_lista --exigir-unitario --falhar --json",
+      "validateEnvironment": "python manage.py validar_redirects_next_legado --falhar --json"
+    },
+    "readyToActivate": true,
+    "recommendedEnabledValue": "True",
+    "recommendedEnvironment": {
+      "NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED": "True",
+      "NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES": "custos_fixos_lista",
+      "NEXT_FRONTEND_URL": "https://app.rhremoto.test"
+    },
+    "recommendedSurfacesValue": "custos_fixos_lista",
+    "rollbackEnvironment": {
+      "NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED": "False",
+      "NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES": ""
+    }
+  },
+  "candidateSurfaces": [
+    "custos_fixos_lista"
+  ],
+  "configuredSurfaces": [],
+  "executionRecord": {
+    "format": "markdown",
+    "markdown": "### Registro PM-06.1104 - canario de redirect Next legado\n\n- ready: True\n- source: argument\n- frontendBaseUrl: https://app.rhremoto.test\n- redirectsEnabled: False\n- candidateSurfaces: custos_fixos_lista\n- recommendedSurfaces: custos_fixos_lista\n- readyToActivate: True\n\n#### Superficies avaliadas\n- custos_fixos_lista: status=migrated; django=/custos-fixos/; next=https://app.rhremoto.test/custos-fixos; redirectEligible=True\n\n#### Pendencias\n- nenhuma\n\n#### Ativacao sugerida\n- NEXT_FRONTEND_URL=https://app.rhremoto.test\n- NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True\n- NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=custos_fixos_lista\n\n#### Comandos\n- validateCandidate: python manage.py validar_redirects_next_legado --surface=custos_fixos_lista --exigir-unitario --falhar --json\n- validateEnvironment: python manage.py validar_redirects_next_legado --falhar --json\n- rollbackValidation: python manage.py validar_redirects_next_legado --json\n\n#### Rollback\n- NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=False\n- NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=<vazio>\n\n#### Arquivos salvos\n- json: evidencias\\pm06-1109-custos-fixos-lista-2026-05-31\\pm06-redirect-next-legado.json\n- registro: evidencias\\pm06-1109-custos-fixos-lista-2026-05-31\\pm06-redirect-next-legado.md"
+  },
+  "frontendBaseUrl": "https://app.rhremoto.test",
+  "issues": [],
+  "outputEvidenceFiles": {
+    "directory": "evidencias\\pm06-1109-custos-fixos-lista-2026-05-31",
+    "json": "evidencias\\pm06-1109-custos-fixos-lista-2026-05-31\\pm06-redirect-next-legado.json",
+    "record": "evidencias\\pm06-1109-custos-fixos-lista-2026-05-31\\pm06-redirect-next-legado.md"
+  },
+  "ready": true,
+  "redirectsEnabled": false,
+  "source": "argument",
+  "surfaces": [
+    {
+      "djangoUrl": "/custos-fixos/",
+      "known": true,
+      "nextUrl": "https://app.rhremoto.test/custos-fixos",
+      "redirectEligible": true,
+      "status": "migrated",
+      "surface": "custos_fixos_lista"
+    }
+  ]
+}

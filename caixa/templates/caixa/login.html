@@ -1,0 +1,74 @@
+{% extends "caixa/layouts/auth.html" %}
+{% load static %}
+
+{% block title %}Acesso - Painel Financeiro RH Remoto{% endblock %}
+{% block meta_description %}
+  <meta name="description" content="Acesso ao Painel Financeiro RH Remoto.">
+{% endblock %}
+
+{% block extra_head %}
+  <link
+    rel="preload"
+    as="image"
+    href="{% static 'caixa/icons/logoAzulT-192.png' %}"
+    imagesrcset="{% static 'caixa/icons/logoAzulT-96.png' %} 96w, {% static 'caixa/icons/logoAzulT-192.png' %} 192w"
+    imagesizes="92px"
+    fetchpriority="high"
+  >
+{% endblock %}
+
+{% block auth_header %}
+  <img
+    class="login-logo"
+    src="{% static 'caixa/icons/logoAzulT-192.png' %}"
+    srcset="{% static 'caixa/icons/logoAzulT-96.png' %} 96w, {% static 'caixa/icons/logoAzulT-192.png' %} 192w"
+    sizes="92px"
+    width="92"
+    height="92"
+    decoding="async"
+    fetchpriority="high"
+    alt="RH Remoto"
+  >
+  <h1>RH Remoto Admin</h1>
+{% endblock %}
+
+{% block auth_content %}
+  <form method="post" novalidate class="login-form">
+    {% csrf_token %}
+
+    {% if form.non_field_errors %}
+      <div class="alerta-erro">
+        Usu&aacute;rio ou senha inv&aacute;lidos.
+      </div>
+    {% endif %}
+
+    <div class="campo">
+      <label for="{{ form.username.id_for_label }}">Usu&aacute;rio</label>
+      {{ form.username }}
+      {% if form.username.errors %}
+        <small class="erro-campo">{{ form.username.errors.0 }}</small>
+      {% endif %}
+    </div>
+
+    <div class="campo">
+      <label for="{{ form.password.id_for_label }}">Senha</label>
+      {{ form.password }}
+      {% if form.password.errors %}
+        <small class="erro-campo">{{ form.password.errors.0 }}</small>
+      {% endif %}
+    </div>
+
+    {% if next %}
+      <input type="hidden" name="next" value="{{ next }}">
+    {% endif %}
+
+    <button type="submit" class="botao-entrar">Entrar</button>
+    <div class="acoes-extras">
+      <a href="{% url 'caixa:password_reset' %}">Esqueci minha senha</a>
+    </div>
+  </form>
+{% endblock %}
+
+{% block auth_scripts %}
+  {% include "caixa/shared/_pwa_scripts.html" %}
+{% endblock %}
