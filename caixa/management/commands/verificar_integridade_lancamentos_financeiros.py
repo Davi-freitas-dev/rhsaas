@@ -3,6 +3,7 @@ import json
 from django.core.management.base import BaseCommand, CommandError
 
 from caixa.models import LancamentoFinanceiro, DespesaOperacional
+from tenancy.command_guards import ensure_tenant_schema
 
 
 class Command(BaseCommand):
@@ -31,6 +32,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema("verificar_integridade_lancamentos_financeiros", action="verificar dados operacionais")
         resultado = verificar_integridade_lancamentos_financeiros(
             limit=options["limit"],
         )

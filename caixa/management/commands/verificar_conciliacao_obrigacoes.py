@@ -7,6 +7,7 @@ from caixa.serializers_obrigacoes import (
     montar_payload_obrigacoes_financeiras_api,
     resumir_status_leitura_obrigacoes_meta,
 )
+from tenancy.command_guards import ensure_tenant_schema
 
 
 CONCILIACAO_FILTER_ALIASES = (
@@ -55,6 +56,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema("verificar_conciliacao_obrigacoes", action="verificar dados operacionais")
         filtros = montar_filtros_conciliacao_obrigacoes(options)
         resultado = validar_conciliacao_obrigacoes(filtros)
         dados = resultado["data"]

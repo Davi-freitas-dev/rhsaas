@@ -20,6 +20,7 @@ from caixa.pm03_sequence import SOURCE_PM03_STEPS, montar_posicao_sequencia_pm03
 from caixa.services_modelagem_canonica import (
     verificar_paridade_modelagem_financeira_canonica,
 )
+from tenancy.command_guards import ensure_tenant_schema
 
 CANARY_CANDIDATE_LIMIT = 5
 PM03_DIRECT_SOURCE_STEPS = SOURCE_PM03_STEPS
@@ -116,6 +117,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema("validar_ativacao_canonical_first", action="validar dados operacionais")
         evidence_files = _normalizar_arquivos_evidencia(options)
         if options["exigir_arquivos_evidencia"]:
             _exigir_arquivos_evidencia(evidence_files)

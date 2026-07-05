@@ -10,6 +10,7 @@ from caixa.management.commands.validar_preflight_deploy_financeiro import (
 from caixa.pm03_sequence import montar_posicao_sequencia_pm03
 from caixa.services_dividas import sincronizar_credores_dividas_fcf
 from caixa.services_dividas_fcf import resumir_integridade_entradas_fcf_dividas
+from tenancy.command_guards import ensure_tenant_schema
 
 
 SOURCE_PM03_4 = "financiamento_movimentacao"
@@ -73,6 +74,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema("validar_regressao_dividas_pm03", action="validar dados operacionais")
         evidence_files = _normalizar_arquivos_evidencia(options)
         if options["exigir_arquivos_evidencia"]:
             _exigir_arquivos_evidencia(evidence_files)

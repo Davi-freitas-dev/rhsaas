@@ -24,6 +24,7 @@ from caixa.services_valores_editaveis import (
     formatar_plano_correcao_valores_editaveis,
     resumir_integridade_valores_editaveis,
 )
+from tenancy.command_guards import ensure_tenant_schema
 
 
 class Command(BaseCommand):
@@ -197,6 +198,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema("validar_janela_canonical_first", action="validar dados operacionais")
         evidence_files = _normalizar_arquivos_evidencia(options)
         if options["exigir_arquivos_evidencia"]:
             _exigir_arquivos_evidencia(evidence_files)

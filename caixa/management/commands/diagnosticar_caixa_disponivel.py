@@ -17,6 +17,7 @@ from caixa.services_validacao_pagamentos import (
     saldo_caixa_disponivel,
 )
 from caixa.utils_financeiros import ZERO_DECIMAL, decimal_zero, quantizar_moeda
+from tenancy.command_guards import ensure_tenant_schema
 
 
 class Command(BaseCommand):
@@ -66,6 +67,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema("diagnosticar_caixa_disponivel", action="diagnosticar dados operacionais")
         data_limite = parse_data(options["data"])
         data_inicial = parse_data(options["data_inicial"]) if options["data_inicial"] else None
         valor_pagamento = options["valor_pagamento"]

@@ -6,6 +6,7 @@ from caixa.services_valores_editaveis import (
     formatar_plano_correcao_valores_editaveis,
     verificar_integridade_valores_editaveis,
 )
+from tenancy.command_guards import ensure_tenant_schema
 
 
 class Command(BaseCommand):
@@ -55,6 +56,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema("verificar_integridade_valores_editaveis", action="verificar dados operacionais")
         limit = max(options["limit"], 1)
         resultado = verificar_integridade_valores_editaveis(
             corrigir=options["corrigir"],

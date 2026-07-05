@@ -40,47 +40,20 @@ PM02_STRICT_SERVER_COMMAND_WITH_DEPLOY_URL = (
     "--json"
 )
 PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION = (
-    "python manage.py validar_baseline_pm02 --modo-servidor-estrito "
-    "--perfil-rhremoto-producao "
-    "--frontend-ref=<commit-ou-deploy-vercel> "
-    "--release-ref=<tag-ou-commit-backend> "
-    "--backup-ref=<arquivo-ou-id-backup> "
-    "--json"
+    "DESATIVADO no RH SaaS: perfil legado do projeto antigo."
 )
 PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION_WITH_DEPLOY_URL = (
-    "python manage.py validar_baseline_pm02 --modo-servidor-estrito "
-    "--perfil-rhremoto-producao "
-    "--frontend-deploy-url=<url-deploy-vercel> "
-    "--exigir-frontend-deploy-url-https "
-    "--release-ref=<tag-ou-commit-backend> "
-    "--backup-ref=<arquivo-ou-id-backup> "
-    "--json"
+    "DESATIVADO no RH SaaS: perfil legado do projeto antigo."
 )
 PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION_WITH_EVIDENCE = (
-    "python manage.py validar_baseline_pm02 --modo-servidor-estrito "
-    "--perfil-rhremoto-producao "
-    "--frontend-ref=<commit-ou-deploy-vercel> "
-    "--release-ref=<tag-ou-commit-backend> "
-    "--backup-ref=<arquivo-ou-id-backup> "
-    "--diretorio-evidencias=<diretorio-evidencias-pm02> "
-    "--exigir-arquivos-evidencia "
-    "--json"
+    "DESATIVADO no RH SaaS: perfil legado do projeto antigo."
 )
 PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION_WITH_DEPLOY_URL_AND_EVIDENCE = (
-    "python manage.py validar_baseline_pm02 --modo-servidor-estrito "
-    "--perfil-rhremoto-producao "
-    "--frontend-deploy-url=<url-deploy-vercel> "
-    "--exigir-frontend-deploy-url-https "
-    "--release-ref=<tag-ou-commit-backend> "
-    "--backup-ref=<arquivo-ou-id-backup> "
-    "--diretorio-evidencias=<diretorio-evidencias-pm02> "
-    "--exigir-arquivos-evidencia "
-    "--json"
+    "DESATIVADO no RH SaaS: perfil legado do projeto antigo."
 )
 DEFAULT_FRONTEND_PATH = (
     settings.BASE_DIR.parent
-    / "dashboardFinanceiro"
-    / "v0-dashboard-financeiro-rhremoto"
+    / "rhsaasfront"
 )
 
 

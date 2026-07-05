@@ -20,6 +20,7 @@ from caixa.utils_periodos import (
     normalizar_periodo_rapido,
 )
 from caixa.utils_request import normalizar_data_iso
+from tenancy.command_guards import ensure_tenant_schema
 
 
 PM05_STEP = "PM-05.2"
@@ -103,6 +104,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema("validar_recortes_pm05", action="validar dados operacionais")
         evidence_files = _normalizar_arquivos_evidencia(options)
         filtros = _normalizar_filtros(options)
         baseline_payload, baseline_load_issues = _carregar_json(

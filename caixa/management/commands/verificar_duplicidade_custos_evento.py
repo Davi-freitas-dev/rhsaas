@@ -4,6 +4,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db.models import Count
 
 from caixa.models_servico import EventoCustoServico
+from tenancy.command_guards import ensure_tenant_schema
 
 
 class Command(BaseCommand):
@@ -26,6 +27,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema("verificar_duplicidade_custos_evento", action="verificar dados operacionais")
         resultado = verificar_duplicidade_custos_evento()
 
         if options["json_output"]:

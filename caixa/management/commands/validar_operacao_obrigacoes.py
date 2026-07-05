@@ -21,6 +21,7 @@ from caixa.services_valores_editaveis import (
     formatar_plano_correcao_valores_editaveis,
     resumir_integridade_valores_editaveis,
 )
+from tenancy.command_guards import ensure_tenant_schema
 
 
 class Command(BaseCommand):
@@ -120,6 +121,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema("validar_operacao_obrigacoes", action="validar dados operacionais")
         resultado = validar_operacao_obrigacoes(options)
 
         if options["json_output"]:

@@ -8,6 +8,7 @@ from caixa.models_pagamentos import (
     PagamentoEventoCustoExtra,
     PagamentoEventoCustoServico,
 )
+from tenancy.command_guards import ensure_tenant_schema
 
 
 class Command(BaseCommand):
@@ -44,6 +45,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema("verificar_duplicidade_pagamentos", action="verificar dados operacionais")
         resultado = verificar_duplicidade_pagamentos(
             origens=options["origem"],
             limit=options["limit"],

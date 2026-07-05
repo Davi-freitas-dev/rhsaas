@@ -5,6 +5,7 @@ from django.core.management.base import BaseCommand
 from caixa.models import Evento
 from caixa.services_sincronizacao import sincronizar_evento_financeiro
 from caixa.utils_financeiros import quantizar_moeda
+from tenancy.command_guards import ensure_tenant_schema
 
 
 class Command(BaseCommand):
@@ -18,6 +19,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema("verificar_consistencia_financeira", action="verificar dados operacionais")
         corrigir = options["corrigir"]
         inconsistentes = []
 

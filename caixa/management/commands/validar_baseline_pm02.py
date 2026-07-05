@@ -26,6 +26,7 @@ from caixa.management.commands.validar_operacao_obrigacoes import (
 from caixa.management.commands.validar_preflight_deploy_financeiro import (
     validar_preflight_deploy_financeiro,
 )
+from tenancy.command_guards import ensure_tenant_schema
 
 
 PM02_MANUAL_REQUIREMENTS = [
@@ -43,7 +44,7 @@ PM02_MANUAL_REQUIREMENTS = [
         "key": "environmentLabel",
         "label": "Identificar ambiente operacional da janela",
         "suggestedCommand": "--ambiente=producao",
-        "suggestedRhremotoCommand": "--perfil-rhremoto-producao",
+        "suggestedRhremotoCommand": "DESATIVADO no RH SaaS: perfil legado do projeto antigo.",
     },
     {
         "key": "environmentSnapshot",
@@ -117,13 +118,8 @@ PM02_STRICT_FLAG_REQUIREMENTS = [
     },
 ]
 RHREMOTO_PRODUCTION_PROFILE_DEFAULTS = {
-    "ambiente": "producao",
-    "esperar_session_cookie_domain": ".rhremoto.com",
-    "esperar_csrf_cookie_domain": ".rhremoto.com",
-    "esperar_cache_backend": "django.core.cache.backends.redis.RedisCache",
-    "esperar_cache_location": "redis://127.0.0.1:6379/1",
 }
-RHREMOTO_PRODUCTION_PROFILE_LABEL = "rhremoto-producao"
+RHREMOTO_PRODUCTION_PROFILE_LABEL = "perfil-legado-desativado"
 
 
 class Command(BaseCommand):
@@ -226,8 +222,8 @@ class Command(BaseCommand):
             "--rhremoto-production-profile",
             action="store_true",
             help=(
-                "Preenche defaults da PM-02 em producao RHRemoto: ambiente, "
-                "cookies de .rhremoto.com e cache Redis local."
+                "Perfil legado do projeto antigo. Esta opcao fica desativada "
+                "no RH SaaS."
             ),
         )
         parser.add_argument(
@@ -409,6 +405,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         options = _normalizar_opcoes_pm02(options)
+        ensure_tenant_schema("validar_baseline_pm02", action="validar dados operacionais")
         resultado = validar_baseline_pm02(options)
         json_text = json.dumps(resultado, ensure_ascii=False, sort_keys=True)
 
@@ -589,6 +586,7 @@ class Command(BaseCommand):
 
 def validar_baseline_pm02(options=None):
     options = _normalizar_opcoes_pm02(options)
+    ensure_tenant_schema("validar_baseline_pm02", action="validar dados operacionais")
     snapshot = gerar_snapshot_baseline_financeira(
         frontend_path=options.get("frontend_path"),
         frontend_ref=options.get("frontend_ref"),
@@ -846,17 +844,10 @@ def _normalizar_opcoes_pm02(options=None):
         for requirement in PM02_STRICT_FLAG_REQUIREMENTS:
             options[requirement["option"]] = True
     if options.get("perfil_rhremoto_producao", False):
-        for key, value in RHREMOTO_PRODUCTION_PROFILE_DEFAULTS.items():
-            current_value = options.get(key)
-            if current_value:
-                if str(current_value) != str(value):
-                    options["_environment_profile_overrides"][key] = {
-                        "profileDefault": value,
-                        "effective": current_value,
-                    }
-            else:
-                options[key] = value
-                options["_environment_profile_defaults_applied"][key] = value
+        raise CommandError(
+            "O perfil legado --perfil-rhremoto-producao esta desativado no RH SaaS. "
+            "Informe os parametros esperados explicitamente para o ambiente atual."
+        )
     evidence_dir = options.get("diretorio_evidencias", "")
     if evidence_dir:
         base_path = Path(evidence_dir).expanduser()
@@ -1605,7 +1596,7 @@ def _pm02_strict_server_command_resolved(
         "--modo-servidor-estrito",
     ]
     if server_evidence.get("environmentProfile") == RHREMOTO_PRODUCTION_PROFILE_LABEL:
-        parts.append("--perfil-rhremoto-producao")
+        parts.append("perfil-legado-desativado")
     if server_evidence["frontendRef"]:
         parts.append(f"--frontend-ref={server_evidence['frontendRef']}")
     elif server_evidence["frontendDeployUrl"]:

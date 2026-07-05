@@ -27,6 +27,7 @@ from caixa.management.commands.verificar_despesas_manuais_sobrepostas import (
 from caixa.serializers_obrigacoes import formatar_status_leitura_obrigacoes
 from caixa.services_dividas import resumir_integridade_credores_dividas
 from caixa.services_dividas_fcf import resumir_integridade_entradas_fcf_dividas
+from tenancy.command_guards import ensure_tenant_schema
 
 
 LIMIT_ARGUMENTS = (
@@ -110,6 +111,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema("validar_preflight_deploy_financeiro", action="validar dados operacionais")
         resultado = validar_preflight_deploy_financeiro(options)
 
         if options["json_output"]:

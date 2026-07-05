@@ -9,15 +9,16 @@ Criado em: 2026-07-05
 ### Hardening
 
 - Status geral: 🔴 Em andamento
-- Objetivo atual: eliminar riscos conhecidos e adaptar 100% da arquitetura ao modelo SaaS multi-tenant por schema.
-- Evolução funcional: bloqueada enquanto o Gate para Evolução do Projeto não for aprovado.
+- Modo atual do projeto: demo/teste/portfólio multi-tenant.
+- Objetivo atual: liberar uma demo segura, com isolamento entre tenants, sem tratar o projeto como produção SaaS comercial.
+- Evolução funcional: bloqueada apenas para funcionalidades de produção SaaS real; ajustes necessários para demo/teste podem avançar após o Gate para Demo/Teste.
 
 ### Progresso geral
 
 | Métrica | Progresso |
 | --- | --- |
-| Áreas totalmente adaptadas | 8 / 30 |
-| Riscos altos concluídos | 3 / 5 |
+| Áreas totalmente adaptadas | 10 / 30 |
+| Riscos altos concluídos | 5 / 5 |
 | Riscos médios concluídos | 0 / 9 |
 | Riscos baixos concluídos | 0 / 4 |
 
@@ -25,19 +26,21 @@ Este painel deve ser atualizado a cada implementação, auditoria ou reclassific
 
 ## Objetivo
 
-Paralisar a evolução funcional do RH SaaS enquanto existirem riscos conhecidos de isolamento, segurança ou escalabilidade ligados à arquitetura SaaS multi-tenant.
+Adaptar o RH SaaS para uso como demo/teste/portfólio multi-tenant, mantendo `django-tenants` como arquitetura definitiva.
 
-A prioridade absoluta desta fase é eliminar os riscos encontrados nas auditorias de segurança e arquitetura, especialmente qualquer possibilidade de:
+O projeto não será tratado, nesta fase, como um SaaS comercial em produção real. Ainda assim, como mais de uma pessoa poderá testar a aplicação, a prioridade absoluta continua sendo impedir qualquer possibilidade de vazamento entre schemas.
+
+A prioridade desta fase é eliminar ou neutralizar riscos que afetem a demo/teste, especialmente qualquer possibilidade de:
 
 - um tenant acessar dados de outro tenant;
 - permissões de plataforma se confundirem com permissões de tenant;
 - backups, exportações, downloads, cache ou sessões escaparem do schema correto;
-- funcionalidades legadas single-tenant continuarem ativas em produção;
-- configurações de produção permitirem uso inseguro de Host, cookies, CORS, CSRF ou admin.
+- funcionalidades legadas single-tenant continuarem ativas em ambiente exposto;
+- configurações permitirem uso inseguro de Host, cookies, CORS, CSRF ou admin durante testes públicos/controlados.
 
-O objetivo final não é apenas eliminar riscos isolados. O objetivo final é que todas as áreas da arquitetura sejam consideradas 100% adaptadas ao modelo SaaS multi-tenant por schema.
+O objetivo imediato não é concluir todos os requisitos de produção SaaS. O objetivo imediato é ter uma demo confiável, com isolamento multi-tenant comprovado e sem superfícies perigosas abertas.
 
-Nenhuma área poderá permanecer com status "Parcialmente adaptada" ao final da fase de Hardening.
+O objetivo de longo prazo, caso o projeto evolua para SaaS real, continua sendo que todas as áreas da arquitetura sejam consideradas 100% adaptadas ao modelo SaaS multi-tenant por schema.
 
 Status permitidos para cada área:
 
@@ -45,7 +48,25 @@ Status permitidos para cada área:
 - 🟡 Parcialmente adaptada
 - ✅ Totalmente adaptada
 
-Durante esta fase, nenhuma funcionalidade nova deve ser implementada enquanto houver risco alto, risco médio, área parcialmente adaptada, teste obrigatório pendente ou auditoria obrigatória pendente.
+Durante a fase de demo/teste, nenhuma funcionalidade nova de produção SaaS deve ser implementada enquanto houver risco alto que permita vazamento entre tenants, execução operacional perigosa, admin exposto indevidamente, backup/download global indevido ou configuração insegura para ambiente exposto.
+
+## Escopo atual: Demo/Teste/Portfólio
+
+O RH SaaS será usado inicialmente apenas como demo, teste e portfólio.
+
+Decisões para este escopo:
+
+- O multi-tenant por schema será mantido.
+- Cada usuário/tester poderá operar em tenant/schema separado.
+- O tenant continuará sendo resolvido exclusivamente pelo `Host`.
+- Cookies devem continuar host-only.
+- Admin Django deve continuar desativado.
+- Backups globais não devem ser acessíveis por administradores de tenant.
+- Exportações/downloads devem ser tenant-scoped ou ficar desativados até existir proteção suficiente.
+- Comandos perigosos devem ser protegidos contra execução acidental no `public` ou schema errado.
+- Billing, trial, planos comerciais, cobrança, domínio customizado, observabilidade avançada e disaster recovery completo não fazem parte do escopo imediato.
+
+Critério prático: tudo que puder causar vazamento entre tenants, confusão com o projeto antigo ou operação destrutiva acidental continua obrigatório. O que for maturidade de produção comercial pode ficar registrado para depois.
 
 ## Estado atual do projeto
 
@@ -65,7 +86,18 @@ Estado consolidado até a última auditoria:
 
 ## Critérios para encerrar a fase de Hardening
 
-A fase de Hardening só poderá ser encerrada quando todos os critérios abaixo forem atendidos:
+Para liberar a demo/teste com segurança, os critérios mínimos são:
+
+- Nenhum risco alto conhecido que afete isolamento, admin, backup/download, exportação ou commands perigosos estiver com status "Não iniciado" ou "Em andamento".
+- A suíte multi-tenant cobrir isolamento entre pelo menos dois tenants para autenticação, sessões, APIs principais, backups/exportações aplicáveis e IDs iguais quando houver endpoint simples para testar.
+- Backups e exportações estiverem tenant-scoped, restritos a operadores da plataforma ou desativados para testers.
+- Todos os comandos operacionais críticos estiverem classificados e protegidos contra execução acidental no schema errado.
+- O admin Django continuar desativado.
+- Configurações do ambiente exposto tiverem validações mínimas contra Host, cookies, CSRF, CORS, `DEBUG` e secrets inseguros.
+- Uma auditoria read-only de demo/teste não encontrar riscos altos pendentes.
+- Este documento estiver atualizado com painel, backlog, evidências e histórico.
+
+Para encerrar a fase completa de Hardening rumo a produção SaaS real, todos os critérios abaixo continuam válidos:
 
 - Nenhum risco alto conhecido estiver com status "Não iniciado" ou "Em andamento".
 - Nenhum risco médio conhecido estiver com status "Não iniciado" ou "Em andamento".
@@ -142,26 +174,26 @@ Uma área só pode ser marcada como "✅ Totalmente adaptada" quando:
 | Middleware | ✅ Totalmente adaptada | - | Manter `TenantMainMiddleware` no início e testes de resolução por Host |
 | Database Router | ✅ Totalmente adaptada | - | Manter `TenantSyncRouter` e validações de migrations por schema |
 | django-tenants | ✅ Totalmente adaptada | - | Manter modelo de um schema por empresa e tenant identificado por Host |
-| Commands | 🟡 Parcialmente adaptada | H-004, M-008 | Classificar e proteger todos os comandos operacionais |
+| Commands | 🟡 Parcialmente adaptada | M-008 | Classificar e proteger todos os comandos operacionais |
 | Signals | ✅ Totalmente adaptada | - | Manter signals operacionais bloqueados no `public` e cobertos por testes quando críticos |
 | Backups | ✅ Totalmente adaptada | - | Backup/download tenant-scoped por schema, com autorização explícita e auditoria mínima por log |
-| Exportações | 🟡 Parcialmente adaptada | H-005 | Padronizar export tenant-scoped, auditado, autorizado e testado com dois tenants |
+| Exportações | ✅ Totalmente adaptada | - | Export tenant-scoped, autorizado, auditado e testado com dois tenants para o escopo demo/teste |
 | Uploads | 🟡 Parcialmente adaptada | L-002 | Definir arquitetura tenant-aware antes de qualquer upload real |
 | Media | 🟡 Parcialmente adaptada | L-002 | Definir paths, URLs e limpeza por tenant |
 | Logs | 🟡 Parcialmente adaptada | M-003 | Incluir tenant/schema, usuário, IP e ação em eventos relevantes |
-| Auditoria | ❌ Não adaptada | M-003, H-005 | Criar trilha para login, logout, backup, export, download e ações administrativas |
+| Auditoria | ❌ Não adaptada | M-003 | Criar trilha para login, logout, backup, export, download e ações administrativas |
 | Admin Django | ✅ Totalmente adaptada | - | Manter `/admin/` desativado por teste até existir admin público e tenant separados |
-| Services | 🟡 Parcialmente adaptada | H-005, M-006 | Revisar serviços sensíveis para schema ativo, permissões e ausência de globais |
-| Selectors | 🟡 Parcialmente adaptada | H-005 | Revisar seletores para garantir queries tenant-scoped e sem leitura global indevida |
+| Services | 🟡 Parcialmente adaptada | M-006 | Revisar serviços sensíveis para schema ativo, permissões e ausência de globais |
+| Selectors | ✅ Totalmente adaptada | - | Seletores sensíveis revisados no escopo atual e cobertos por testes de exportação entre tenants |
 | Models | ✅ Totalmente adaptada | - | Separação validada entre models de `public` e models de tenant para a arquitetura atual |
 | Managers | 🟡 Parcialmente adaptada | M-006 | Garantir que managers não escondam consultas globais nem dependam de single-tenant |
-| QuerySets | 🟡 Parcialmente adaptada | M-001, H-005 | Testar listagem, detalhe, IDs iguais e filtros entre tenants |
-| Testes | 🟡 Parcialmente adaptada | H-004, H-005, M-001, M-005, L-004 | Cobrir autenticação, permissões, API, backups, exportações, comandos e produção |
+| QuerySets | 🟡 Parcialmente adaptada | M-001 | Testar listagem, detalhe, IDs iguais e filtros entre tenants |
+| Testes | 🟡 Parcialmente adaptada | M-001, M-005, L-004 | Cobrir autenticação, permissões, API, backups, exportações, comandos e produção |
 | Configurações de produção | 🟡 Parcialmente adaptada | M-002, M-007 | Adicionar checks para Host, cookies, CSRF, CORS, cache, debug e secrets |
 | Deploy | 🟡 Parcialmente adaptada | M-007, M-008 | Documentar e validar deploy separado do projeto antigo, sem comandos legados |
 | Observabilidade mínima | ❌ Não adaptada | M-003 | Ter logs, auditoria, alertas mínimos e identificação do tenant em eventos sensíveis |
 | Recuperação de desastre | 🟡 Parcialmente adaptada | M-009 | Definir restore e teste de restore por tenant e plataforma |
-| Segurança operacional | 🟡 Parcialmente adaptada | H-004, M-007, M-008 | Fechar procedimentos de acesso, comandos, secrets, auditoria e incidentes |
+| Segurança operacional | 🟡 Parcialmente adaptada | M-007, M-008 | Fechar procedimentos de acesso, comandos, secrets, auditoria e incidentes |
 
 ## Observabilidade
 
@@ -326,7 +358,7 @@ Quando um risco for dividido em riscos menores, ele nunca deve ser removido. Dev
 - ID: H-004
 - Domínio: Commands
 - Severidade: Alta
-- Status: Não iniciado
+- Status: Concluído
 - Responsável: Davi
 - Estimativa: Grande
 - Descrição: Comandos operacionais ainda não estão todos classificados e protegidos.
@@ -336,16 +368,28 @@ Quando um risco for dividido em riscos menores, ele nunca deve ser removido. Dev
 - Estratégia de correção: Classificar todos como `tenant-only`, `platform-only` ou `read-only`; exigir schema explícito quando aplicável; bloquear `public` para dados operacionais.
 - Dependências: H-002 concluído em 2026-07-05.
 - Critério de Aceite: Todos os comandos estão inventariados; comandos operacionais recusam schema `public`; comandos tenant-only exigem schema/tenant explícito; testes ou validações provam bloqueio de execução perigosa.
-- Evidências: Nenhuma registrada ainda.
+- Evidências:
+  - 2026-07-05: Criado inventário central em `tenancy/command_guards.py` com 45 commands customizados classificados como `tenant-only`, `read-only`, `legacy/read-only` ou `platform-only`.
+  - 2026-07-05: Commands tenant-only que ainda não tinham guarda passaram a chamar `ensure_tenant_schema` no início do `handle`, falhando de forma explícita no schema `public`.
+  - 2026-07-05: `limpar_base_operacional_pm06` passou a validar que o `--backup-ref` pertence ao schema ativo e está dentro do diretório esperado do tenant.
+  - 2026-07-05: Snapshot de baseline passou a usar `rhsaasfront` como frontend padrão.
+  - 2026-07-05: Perfil legado `--perfil-rhremoto-producao` foi desativado no RH SaaS e coberto por teste.
+  - 2026-07-05: Auditoria read-only confirmou `custom_commands=45`, `classified_commands=45`, `missing_classification=[]`, `missing_files=[]` e `tenant_only_missing_guard=[]`.
+  - 2026-07-05: `venv\Scripts\python.exe manage.py check` aprovado.
+  - 2026-07-05: `venv\Scripts\python.exe manage.py test tenancy.tests.TenantCommandGuardTests` aprovado, 8 testes, 59.281s na última execução.
+  - 2026-07-05: `venv\Scripts\python.exe manage.py test tenancy` aprovado, 37 testes, 643.788s na última execução.
+  - 2026-07-05: `venv\Scripts\python.exe manage.py makemigrations --check --dry-run` aprovado, sem mudanças detectadas.
+  - 2026-07-05: `git diff --check` aprovado sem erro; Git exibiu apenas aviso de normalização futura de CRLF em dois arquivos tocados.
 - Histórico individual:
   - 2026-07-05: Criado a partir da auditoria arquitetural.
+  - 2026-07-05: Concluído com inventário, guardas tenant-only, validação de backup por schema, neutralização de perfil legado e testes focados.
 
 #### H-005
 
 - ID: H-005
 - Domínio: Exportações
 - Severidade: Alta
-- Status: Não iniciado
+- Status: Concluído
 - Responsável: Davi
 - Estimativa: Médio
 - Descrição: Exportações e downloads ainda não possuem padrão SaaS completo.
@@ -355,9 +399,22 @@ Quando um risco for dividido em riscos menores, ele nunca deve ser removido. Dev
 - Estratégia de correção: Criar serviço padrão tenant-scoped para export/download; auditar; limitar; testar tenant A vs tenant B.
 - Dependências: H-002 concluído em 2026-07-05, M-001, M-003.
 - Critério de Aceite: Exportações retornam apenas dados do schema atual; tenant A nunca exporta dados do tenant B; downloads são autenticados, autorizados, auditados e cobertos por testes.
-- Evidências: Nenhuma registrada ainda.
+- Evidências:
+  - 2026-07-05: `api_exportar_obrigacoes_financeiras` mantém exportação em memória por `HttpResponse`, sem criar arquivo temporário compartilhado em disco.
+  - 2026-07-05: Exportação CSV continua autenticada e autorizada por permissões do tenant/schema ativo.
+  - 2026-07-05: Exportação CSV registra auditoria mínima por log com action, outcome, schema, user_id, host, scope e filename para sucesso, negação de autenticação, negação de permissão e erro de validação.
+  - 2026-07-05: Resposta CSV mantém `Cache-Control: no-store` e passou a incluir `X-Content-Type-Options: nosniff`.
+  - 2026-07-05: Teste `TenantExportDownloadIsolationTests.test_exportacao_csv_retorna_apenas_dados_do_schema_do_host` validou tenant A vs tenant B, `Content-Disposition`, `no-store`, `nosniff` e auditoria com `schema=tenant_a`.
+  - 2026-07-05: Teste `TenantExportDownloadIsolationTests.test_exportacao_csv_exige_permissao_no_tenant` validou 403 e auditoria quando usuário do tenant não possui permissão de exportação.
+  - 2026-07-05: `venv\Scripts\python.exe manage.py check` aprovado.
+  - 2026-07-05: `venv\Scripts\python.exe manage.py test tenancy.tests.TenantExportDownloadIsolationTests` aprovado, 2 testes, 66.201s.
+  - 2026-07-05: `venv\Scripts\python.exe manage.py test tenancy` aprovado, 38 testes, 720.161s.
+  - 2026-07-05: `venv\Scripts\python.exe manage.py makemigrations --check --dry-run` aprovado, sem mudanças detectadas.
+  - 2026-07-05: `git diff --check` aprovado sem erro; Git exibiu apenas aviso de normalização futura de CRLF em dois arquivos tocados anteriormente.
+  - 2026-07-05: Auditoria read-only focada com `rg` confirmou pontos de download/export sensíveis alterados: `views_obrigacoes.py` para exportação CSV e `views_backups.py` para downloads de backup já tratados em H-001.
 - Histórico individual:
   - 2026-07-05: Criado a partir da auditoria arquitetural.
+  - 2026-07-05: Concluído para o escopo demo/teste com exportação tenant-scoped, auditoria mínima, cabeçalhos seguros e testes multi-tenant focados.
 
 ### 🟠 Riscos MÉDIOS
 
@@ -679,40 +736,50 @@ Esta seção não duplica riscos. Ela apenas mapeia os IDs existentes no backlog
 
 ## Ordem obrigatória
 
-A fase de Hardening deve seguir obrigatoriamente esta ordem:
+A fase de Hardening para demo/teste deve seguir obrigatoriamente esta ordem:
 
-1. Corrigir TODOS os riscos ALTOS.
+1. Corrigir ou neutralizar TODOS os riscos ALTOS que possam afetar isolamento, admin, backup/download, exportação ou commands perigosos.
 2. Executar testes.
-3. Executar nova auditoria.
+3. Executar nova auditoria focada no escopo demo/teste.
 4. Corrigir novos riscos ALTOS encontrados.
-5. Somente quando não existir nenhum risco ALTO, iniciar riscos MÉDIOS.
-6. Repetir o processo de implementação, testes e auditoria.
-7. Somente quando não existir nenhum risco MÉDIO, iniciar riscos BAIXOS.
-8. Reavaliar a Matriz de Adaptação SaaS após cada ciclo.
-9. Antes de encerrar a fase, executar auditoria final completa.
-10. Encerrar somente se todas as áreas estiverem "✅ Totalmente adaptada".
+5. Corrigir riscos MÉDIOS que sejam bloqueadores da demo/teste exposta.
+6. Registrar riscos MÉDIOS e BAIXOS que pertencem somente à produção SaaS real como pendências pós-demo.
+7. Reavaliar a Matriz de Adaptação SaaS após cada ciclo.
+8. Antes de liberar a demo/teste, executar auditoria final focada em isolamento, autenticação, sessão, backup/export/download, commands, admin e configurações.
 
-Nenhuma funcionalidade nova deve entrar enquanto houver risco alto ou médio conhecido sem decisão registrada.
+Nenhuma funcionalidade comercial de SaaS real deve entrar enquanto houver risco alto ou médio conhecido sem decisão registrada.
 
-## Gate para Evolução do Projeto
+## Gate para Demo/Teste
 
-Nenhuma funcionalidade nova poderá ser iniciada enquanto existir:
+Nenhuma demo/teste com usuários externos deve ser liberada enquanto existir:
 
-- risco alto pendente;
-- risco médio pendente;
-- área parcialmente adaptada;
-- área não adaptada;
-- teste obrigatório pendente;
-- auditoria obrigatória pendente;
-- documentação de Hardening desatualizada;
-- evidência obrigatória não registrada.
+- risco alto pendente que permita vazamento entre tenants;
+- risco alto pendente em admin, backup/download, exportação ou commands;
+- sessão/cookie/cache sem isolamento básico por tenant;
+- admin Django exposto;
+- backup global acessível por administrador de tenant;
+- comando destrutivo ou operacional crítico executável no `public`;
+- referência ativa que possa apontar deploy, banco ou domínio para o projeto antigo;
+- configuração insegura para ambiente exposto;
+- documentação de Hardening desatualizada sobre o escopo atual.
 
-O Gate para Evolução do Projeto só pode ser aprovado quando:
+O Gate para Demo/Teste só pode ser aprovado quando:
 
 - todos os itens da Definition of Done aplicáveis estiverem concluídos;
 - o Painel executivo estiver atualizado;
+- os riscos altos aplicáveis à demo/teste estiverem concluídos ou neutralizados;
+- uma auditoria read-only final confirmar ausência de riscos altos no escopo da demo/teste.
+
+## Gate para Produção SaaS Real
+
+O Gate para Produção SaaS Real permanece mais rigoroso e só poderá ser aprovado quando:
+
+- não houver riscos altos pendentes;
+- não houver riscos médios pendentes;
 - a Matriz de Adaptação SaaS estiver 100% verde;
-- uma auditoria read-only final confirmar ausência de riscos altos e médios.
+- todas as áreas parcialmente adaptadas tiverem sido concluídas;
+- uma auditoria read-only final confirmar ausência de riscos altos e médios;
+- disaster recovery, observabilidade mínima, configurações de produção, restore e segurança operacional estiverem completos.
 
 ## Definition of Done
 
@@ -753,7 +820,7 @@ Quando aplicável, registrar também:
 
 ## Roadmap após Hardening
 
-O Hardening continua bloqueando novas funcionalidades até ser encerrado pelo Gate para Evolução do Projeto.
+O Hardening passa a ter dois marcos: primeiro liberar uma demo/teste segura; depois, se fizer sentido, evoluir para produção SaaS real.
 
 ### Fase 1 - Spike
 
@@ -762,34 +829,49 @@ O Hardening continua bloqueando novas funcionalidades até ser encerrado pelo Ga
 - Confirmar isolamento básico.
 - Status: em andamento/concluído parcialmente antes deste plano.
 
-### Fase 2 - Hardening
+### Fase 2 - Hardening mínimo para Demo/Teste
 
-- Eliminar riscos altos, médios e baixos conforme este plano.
-- Adaptar 100% das áreas da Matriz de Adaptação SaaS.
-- Preparar produção segura.
+- Eliminar ou neutralizar riscos altos aplicáveis ao uso demo/teste.
+- Proteger commands críticos.
+- Garantir admin fechado.
+- Garantir isolamento de sessão, cache, backup/download e exportações aplicáveis.
+- Validar configurações mínimas para ambiente exposto.
 - Status: fase atual.
 
-### Fase 3 - Produção SaaS
+### Fase 3 - Demo/Portfólio controlado
+
+- Liberar acesso controlado para testers.
+- Criar tenants de teste separados.
+- Monitorar erros e comportamentos de isolamento.
+- Evitar billing, trial, cobrança e funcionalidades comerciais.
+
+### Fase 4 - Hardening de Produção SaaS
+
+- Concluir riscos médios e baixos que foram aceitos para a demo.
+- Adaptar 100% das áreas da Matriz de Adaptação SaaS.
+- Completar observabilidade mínima, logs, auditoria, restore e segurança operacional.
+
+### Fase 5 - Produção SaaS
 
 - Configurar produção definitiva.
 - Validar deploy próprio.
 - Validar domínio próprio.
 - Executar auditoria final pré-produção.
 
-### Fase 4 - Escalabilidade
+### Fase 6 - Escalabilidade
 
 - Revisar performance por tenant.
 - Planejar limites, filas, cache e otimizações.
 
-### Fase 5 - Billing
+### Fase 7 - Billing
 
 - Implementar planos, assinaturas, trial e cobrança somente após base SaaS segura.
 
-### Fase 6 - Observabilidade avançada
+### Fase 8 - Observabilidade avançada
 
 - Evoluir métricas, dashboards, tracing, analytics e SLOs.
 
-### Fase 7 - Alta disponibilidade
+### Fase 9 - Alta disponibilidade
 
 - Planejar redundância, restore validado, monitoramento avançado e recuperação de desastre.
 
@@ -824,6 +906,47 @@ Não será permitido:
 Riscos antigos devem permanecer no documento, mesmo quando concluídos ou desdobrados.
 
 ## Histórico
+
+### 2026-07-05 - H-005 concluído: exportações tenant-scoped auditadas
+
+- Riscos corrigidos: H-005.
+- Arquivos alterados: `caixa/views_obrigacoes.py`, `tenancy/tests.py`, `docs/PLANO_HARDENING_SAAS.md`.
+- Validações executadas:
+  - `venv\Scripts\python.exe manage.py check`: aprovado.
+  - `venv\Scripts\python.exe manage.py test tenancy.tests.TenantExportDownloadIsolationTests`: aprovado, 2 testes.
+  - `venv\Scripts\python.exe manage.py test tenancy`: aprovado, 38 testes.
+  - `venv\Scripts\python.exe manage.py makemigrations --check --dry-run`: aprovado, sem mudanças detectadas.
+  - `git diff --check`: aprovado sem erro; apenas aviso de normalização futura de CRLF em dois arquivos tocados anteriormente.
+- Auditoria executada: busca read-only focada por export/download confirmou que a exportação CSV operacional fica em memória, usa schema ativo, exige autenticação/permissão, não grava arquivo temporário compartilhado e registra evento de auditoria por schema/host/usuário.
+- Novos riscos encontrados: nenhum risco alto novo. M-001 e M-003 permanecem como padronização mais ampla de permissões DRF e auditoria/logs para produção SaaS real.
+- Decisão registrada: para o escopo demo/teste, exportações operacionais devem permanecer tenant-scoped, autenticadas, autorizadas, sem cache, com `nosniff`, auditoria mínima e cobertura multi-tenant.
+
+### 2026-07-05 - H-004 concluído: management commands classificados e protegidos
+
+- Riscos corrigidos: H-004.
+- Arquivos alterados: `tenancy/command_guards.py`, `tenancy/tests.py`, commands tenant-only em `caixa/management/commands/`, `caixa/management/commands/limpar_base_operacional_pm06.py`, `caixa/management/commands/gerar_snapshot_baseline_financeira.py`, `caixa/management/commands/validar_baseline_pm02.py`, `docs/PLANO_HARDENING_SAAS.md`.
+- Validações executadas:
+  - `venv\Scripts\python.exe manage.py check`: aprovado.
+  - `venv\Scripts\python.exe manage.py test tenancy.tests.TenantCommandGuardTests`: aprovado, 8 testes.
+  - `venv\Scripts\python.exe manage.py test tenancy`: aprovado, 37 testes.
+  - `venv\Scripts\python.exe manage.py makemigrations --check --dry-run`: aprovado, sem mudanças detectadas.
+  - `git diff --check`: aprovado sem erro; apenas aviso de normalização futura de CRLF em dois arquivos tocados.
+- Auditoria executada: inventário read-only confirmou 45 commands customizados, 45 classificados e nenhum tenant-only sem `ensure_tenant_schema`.
+- Novos riscos encontrados: nenhum risco alto novo; M-008 permanece como limpeza de resquícios legados em comandos/testes/docs.
+- Decisão registrada: para o escopo demo/teste, commands que leem, escrevem, sincronizam, exportam ou limpam dados operacionais devem exigir schema de tenant explícito; commands puramente documentais/file-only permanecem classificados como read-only/legacy-read-only.
+
+### 2026-07-05 - Escopo ajustado para demo/teste/portfólio multi-tenant
+
+- Riscos corrigidos: nenhum nesta etapa.
+- Arquivos alterados: `docs/PLANO_HARDENING_SAAS.md`.
+- Validações executadas: revisão documental.
+- Novos riscos encontrados: nenhum novo risco técnico.
+- Decisões registradas:
+  - o RH SaaS será usado inicialmente como demo, teste e portfólio;
+  - o multi-tenant por schema com `django-tenants` será mantido porque mais de um tester poderá usar a aplicação;
+  - o gate imediato passa a ser o Gate para Demo/Teste, focado em isolamento entre tenants, admin fechado, backup/export/download seguros, commands críticos protegidos e configuração segura para ambiente exposto;
+  - produção SaaS real permanece como trilha futura, com gate próprio mais rigoroso;
+  - billing, trial, planos comerciais, cobrança, domínio customizado, observabilidade avançada e disaster recovery completo ficam fora do escopo imediato da demo/teste.
 
 ### 2026-07-05 - H-003 concluído: Admin Django permanece desativado
 

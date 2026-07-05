@@ -1,4 +1,5 @@
 import json
+import logging
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.http import HttpResponse
@@ -20,6 +21,7 @@ from .permissions import (
     api_authentication_required_response,
     api_no_store_json_response,
     api_permission_denied_response,
+    current_schema_name,
 )
 from .contracts_obrigacoes import PERMISSOES_BAIXA_NATIVA
 from .selectors_obrigacoes import (
@@ -38,6 +40,9 @@ from .serializers_obrigacoes import (
     normalizar_filtros_obrigacoes,
 )
 from .services_obrigacoes import liquidar_obrigacao_financeira_com_contexto_canonico
+
+
+logger = logging.getLogger(__name__)
 
 
 OBRIGACOES_SOURCE_VIEW_PERMISSIONS = {
@@ -90,6 +95,20 @@ def _erro_validacao_payload(erro):
     return {"detail": erro.messages}
 
 
+def _audit_export_event(request, action, outcome, *, export_scope="", filename=""):
+    user = getattr(request, "user", None)
+    logger.info(
+        "export_event action=%s outcome=%s schema=%s user_id=%s host=%s scope=%s filename=%s",
+        action,
+        outcome,
+        current_schema_name(),
+        getattr(user, "pk", None),
+        request.get_host(),
+        export_scope,
+        filename,
+    )
+
+
 class _ExportacaoObrigacoesContentNegotiation(DefaultContentNegotiation):
     class settings:
         URL_FORMAT_OVERRIDE = None
@@ -139,11 +158,13 @@ def api_exportar_obrigacoes_financeiras(request):
         return drf_response
 
     if not request.user.is_authenticated:
+        _audit_export_event(request, "obligations_csv", "denied_unauthenticated")
         return drf_response_from_json_response(api_authentication_required_response())
 
     try:
         params = _params_exportacao_obrigacoes_autorizados(request)
     except ValidationError as erro:
+        _audit_export_event(request, "obligations_csv", "validation_error")
         return drf_response_from_json_response(
             api_no_store_json_response(
                 {"errors": _erro_validacao_payload(erro)},
@@ -153,6 +174,7 @@ def api_exportar_obrigacoes_financeiras(request):
         )
 
     if params is None:
+        _audit_export_event(request, "obligations_csv", "denied_permission")
         return drf_response_from_json_response(api_permission_denied_response())
 
     try:
@@ -161,6 +183,7 @@ def api_exportar_obrigacoes_financeiras(request):
             request.user,
         )
     except ValidationError as erro:
+        _audit_export_event(request, "obligations_csv", "validation_error")
         return drf_response_from_json_response(
             api_no_store_json_response(
                 {"errors": _erro_validacao_payload(erro)},
@@ -175,6 +198,14 @@ def api_exportar_obrigacoes_financeiras(request):
     )
     response["Content-Disposition"] = f'attachment; filename="{exportacao["filename"]}"'
     response["Cache-Control"] = "no-store"
+    response["X-Content-Type-Options"] = "nosniff"
+    _audit_export_event(
+        request,
+        "obligations_csv",
+        "allowed",
+        export_scope=str(params.get("exportScope") or "obligations"),
+        filename=exportacao["filename"],
+    )
     return response
 
 

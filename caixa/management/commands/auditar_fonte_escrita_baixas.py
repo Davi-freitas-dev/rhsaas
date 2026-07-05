@@ -8,6 +8,7 @@ from caixa.serializers_modelagem_canonica import (
     montar_payload_baixas_financeiras_canonicas_api,
 )
 from caixa.models import FONTE_ESCRITA_BAIXA_CHOICES
+from tenancy.command_guards import ensure_tenant_schema
 
 
 FONTES_ESCRITA = tuple(valor for valor, _rotulo in FONTE_ESCRITA_BAIXA_CHOICES)
@@ -89,6 +90,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema("auditar_fonte_escrita_baixas", action="auditar dados operacionais")
         evidence_files = _normalizar_arquivos_evidencia(options)
         if options["exigir_arquivos_evidencia"]:
             _exigir_arquivos_evidencia(evidence_files)

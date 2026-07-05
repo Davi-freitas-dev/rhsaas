@@ -5,6 +5,7 @@ from django.core.management.base import BaseCommand, CommandError
 from caixa.models import DespesaOperacional
 from caixa.models_custos_extras import EventoCustoExtra
 from caixa.models_servico import EventoCustoServico
+from tenancy.command_guards import ensure_tenant_schema
 
 
 CATEGORIAS_CUSTO_SERVICO = {
@@ -52,6 +53,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema("verificar_despesas_manuais_sobrepostas", action="verificar dados operacionais")
         resultado = verificar_despesas_manuais_sobrepostas(
             evento_id=options["evento_id"],
         )

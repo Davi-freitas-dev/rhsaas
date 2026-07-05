@@ -42,6 +42,7 @@ from caixa.services_valores_editaveis import (
     formatar_plano_correcao_valores_editaveis,
     resumir_integridade_valores_editaveis,
 )
+from tenancy.command_guards import ensure_tenant_schema
 
 
 class Command(BaseCommand):
@@ -139,6 +140,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema("auditar_totais_negocio", action="auditar dados operacionais")
         evidence_context = _normalizar_contexto_evidencia(options.get("fase_evidencia"))
         evidence_files = _normalizar_arquivos_evidencia(options, evidence_context)
         if options["exigir_arquivos_evidencia"]:

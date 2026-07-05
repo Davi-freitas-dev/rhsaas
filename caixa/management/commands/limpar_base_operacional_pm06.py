@@ -26,6 +26,7 @@ from caixa.models_fcf import FinanciamentoMovimentacao
 from caixa.models_fci import Investimento
 from caixa.models_pagamentos import PagamentoEventoCustoExtra, PagamentoEventoCustoServico
 from caixa.models_servico import EventoCustoServico
+from caixa.tenant_files import backup_dir_for_schema
 from tenancy.command_guards import ensure_tenant_schema
 
 
@@ -96,7 +97,7 @@ class Command(BaseCommand):
         parser.add_argument("--falhar", action="store_true")
 
     def handle(self, *args, **options):
-        ensure_tenant_schema(
+        schema_name = ensure_tenant_schema(
             "limpar_base_operacional_pm06",
             action="limpar dados operacionais",
         )
@@ -110,6 +111,7 @@ class Command(BaseCommand):
             clean_history=bool(options["limpar_historico"]),
             confirmation=options.get("confirmacao") or "",
             require_output_files=bool(options["exigir_arquivos_evidencia"]),
+            expected_schema_name=schema_name,
         )
         _salvar_payload(payload)
 
@@ -130,11 +132,15 @@ def executar_limpeza_pm06(
     clean_history,
     confirmation,
     require_output_files,
+    expected_schema_name=None,
 ):
     checks = []
     issues = []
 
-    backup_check = _validar_backup(refs["backupRef"])
+    backup_check = _validar_backup(
+        refs["backupRef"],
+        expected_schema_name=expected_schema_name,
+    )
     readiness_payload, readiness_check = _carregar_e_validar_prontidao(refs["readinessJson"])
     reentry_payload, reentry_check = _carregar_e_validar_recadastro(refs["reentryValidationJson"])
     consistency_check = _validar_consistencia_evidencias(
@@ -282,7 +288,7 @@ def _check(key, label, issues):
     }
 
 
-def _validar_backup(backup_ref):
+def _validar_backup(backup_ref, expected_schema_name=None):
     issues = []
     if not backup_ref:
         issues.append("backup-ref nao informado")
@@ -303,6 +309,22 @@ def _validar_backup(backup_ref):
     except Exception as exc:
         issues.append(f"metadata do backup invalida: {exc}")
         return _check("backup", "Backup bruto vigente", issues)
+
+    if expected_schema_name:
+        if metadata.get("scope") != "tenant":
+            issues.append("metadata do backup nao pertence ao escopo tenant")
+        if metadata.get("schema_name") != expected_schema_name:
+            issues.append(
+                "metadata do backup pertence a outro schema: "
+                f"{metadata.get('schema_name') or '-'}"
+            )
+        expected_dir = backup_dir_for_schema(expected_schema_name).resolve()
+        try:
+            backup_path.resolve().relative_to(expected_dir)
+        except ValueError:
+            issues.append(
+                "backup-ref fora do diretorio esperado para o schema ativo"
+            )
 
     expected_sha = metadata.get("sha256")
     if not expected_sha:

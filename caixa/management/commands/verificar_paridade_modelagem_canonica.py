@@ -5,6 +5,7 @@ from django.core.management.base import BaseCommand, CommandError
 from caixa.services_modelagem_canonica import (
     verificar_paridade_modelagem_financeira_canonica,
 )
+from tenancy.command_guards import ensure_tenant_schema
 
 
 class Command(BaseCommand):
@@ -33,6 +34,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema("verificar_paridade_modelagem_canonica", action="verificar dados operacionais")
         resultado = verificar_paridade_modelagem_financeira_canonica(
             limit=options["limit"],
         )

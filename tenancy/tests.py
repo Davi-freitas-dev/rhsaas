@@ -1,4 +1,5 @@
 import json
+import hashlib
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -20,6 +21,10 @@ from caixa.models import ReceitaOperacional
 from caixa.permissions import is_platform_operator, is_tenant_administrator
 from caixa.tenant_files import backup_dir_for_schema
 from caixa.throttling import AuthLoginRateThrottle, TenantUserRateThrottle
+from tenancy.command_guards import (
+    COMMAND_SCOPES,
+    SCOPE_TENANT_ONLY,
+)
 from tenancy.models import Domain, Tenant
 from tenancy.test_helpers import MultiTenantTestCase, OPERATIONAL_GROUPS
 
@@ -551,6 +556,11 @@ class TenantExportDownloadIsolationTests(MultiTenantTestCase):
             is_staff=True,
             is_superuser=True,
         )
+        cls.create_user(
+            "tenant_a",
+            "usuario-export-sem-permissao",
+            cls.password,
+        )
         cliente_a = cls.create_basic_cliente("tenant_a", nome="Cliente Export A")
         cliente_b = cls.create_basic_cliente("tenant_b", nome="Cliente Export B")
         evento_a = cls.create_basic_evento(
@@ -608,14 +618,15 @@ class TenantExportDownloadIsolationTests(MultiTenantTestCase):
         return client
 
     def test_exportacao_csv_retorna_apenas_dados_do_schema_do_host(self):
-        response_a = self._authenticated_client("tenant_a").get(
-            "/api/obrigacoes-financeiras/exportar/",
-            {
-                "exportScope": "revenues",
-                "startDate": "2026-07-01",
-                "endDate": "2026-07-31",
-            },
-        )
+        with self.assertLogs("caixa.views_obrigacoes", level="INFO") as logs:
+            response_a = self._authenticated_client("tenant_a").get(
+                "/api/obrigacoes-financeiras/exportar/",
+                {
+                    "exportScope": "revenues",
+                    "startDate": "2026-07-01",
+                    "endDate": "2026-07-31",
+                },
+            )
         response_b = self._authenticated_client("tenant_b").get(
             "/api/obrigacoes-financeiras/exportar/",
             {
@@ -634,7 +645,32 @@ class TenantExportDownloadIsolationTests(MultiTenantTestCase):
         self.assertIn("Receita Export Tenant B", content_b)
         self.assertNotIn("Receita Export Tenant A", content_b)
         self.assertIn("no-store", response_a["Cache-Control"])
+        self.assertEqual(response_a["X-Content-Type-Options"], "nosniff")
         self.assertIn("attachment;", response_a["Content-Disposition"])
+        audit_output = "\n".join(logs.output)
+        self.assertIn("export_event action=obligations_csv outcome=allowed", audit_output)
+        self.assertIn("schema=tenant_a", audit_output)
+        self.assertIn("scope=revenues", audit_output)
+
+    def test_exportacao_csv_exige_permissao_no_tenant(self):
+        client = self._client_for_schema("tenant_a")
+        response_login = self._login_json(client, "usuario-export-sem-permissao")
+        self.assertEqual(response_login.status_code, 200)
+
+        with self.assertLogs("caixa.views_obrigacoes", level="INFO") as logs:
+            response = client.get(
+                "/api/obrigacoes-financeiras/exportar/",
+                {
+                    "exportScope": "revenues",
+                    "startDate": "2026-07-01",
+                    "endDate": "2026-07-31",
+                },
+            )
+
+        self.assertEqual(response.status_code, 403)
+        audit_output = "\n".join(logs.output)
+        self.assertIn("export_event action=obligations_csv outcome=denied_permission", audit_output)
+        self.assertIn("schema=tenant_a", audit_output)
 
 
 class TenantApiIdorIsolationTests(MultiTenantTestCase):
@@ -970,11 +1006,57 @@ class TenantThrottleIsolationTests(MultiTenantTestCase):
 
 
 class TenantCommandGuardTests(MultiTenantTestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.secondary_tenant, cls.secondary_domain = cls.create_tenant(
+            schema_name="tenant_b",
+            name="Tenant B",
+            domain="tenant-b.localhost",
+        )
+
+    def test_todos_commands_customizados_estao_classificados(self):
+        commands_dir = Path(settings.BASE_DIR) / "caixa" / "management" / "commands"
+        command_names = {
+            path.stem
+            for path in commands_dir.glob("*.py")
+            if path.name != "__init__.py"
+        }
+
+        self.assertEqual(command_names, set(COMMAND_SCOPES))
+
+    def test_commands_tenant_only_possuem_guarda_de_schema(self):
+        commands_dir = Path(settings.BASE_DIR) / "caixa" / "management" / "commands"
+        missing = []
+
+        for command_name, scope in sorted(COMMAND_SCOPES.items()):
+            if scope != SCOPE_TENANT_ONLY:
+                continue
+
+            command_path = commands_dir / f"{command_name}.py"
+            command_source = command_path.read_text(encoding="utf-8")
+            if "ensure_tenant_schema(" not in command_source:
+                missing.append(command_name)
+
+        self.assertEqual(missing, [])
+
     def test_comando_operacional_recusa_schema_public(self):
         self.switch_to_public()
 
         with self.assertRaisesMessage(CommandError, "schema de tenant"):
             call_command("backup_banco_mensal", stdout=StringIO())
+
+    def test_commands_tenant_only_criticos_recusam_schema_public(self):
+        self.switch_to_public()
+
+        for command_name in (
+            "auditar_totais_negocio",
+            "validar_preflight_deploy_financeiro",
+            "verificar_integridade_valores_editaveis",
+        ):
+            with self.subTest(command_name=command_name):
+                with self.assertRaisesMessage(CommandError, "schema de tenant"):
+                    call_command(command_name, stdout=StringIO())
 
     def test_comando_operacional_permite_schema_de_tenant(self):
         resultado = {"criado": False, "mensagem": "Sem alteracao.", "removidos": 0}
@@ -987,3 +1069,46 @@ class TenantCommandGuardTests(MultiTenantTestCase):
                 call_command("backup_banco_mensal", stdout=StringIO())
 
         criar_backup.assert_called_once_with(force=False, manter=3)
+
+    def test_limpeza_operacional_rejeita_backup_de_outro_schema(self):
+        backup_dir = backup_dir_for_schema("tenant_b")
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_path = backup_dir / "backup_banco_2026-01_20260101_000000_000000.json"
+        backup_content = b"[]"
+        backup_path.write_bytes(backup_content)
+        backup_path.with_suffix(".meta.json").write_text(
+            json.dumps(
+                {
+                    "arquivo": backup_path.name,
+                    "scope": "tenant",
+                    "schema_name": "tenant_b",
+                    "sha256": hashlib.sha256(backup_content).hexdigest(),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with self.in_schema("tenant_a"):
+            with self.assertRaisesMessage(CommandError, "outro schema"):
+                call_command(
+                    "limpar_base_operacional_pm06",
+                    "--backup-ref",
+                    str(backup_path),
+                    "--falhar",
+                    stdout=StringIO(),
+                )
+
+    def test_perfil_legado_rhremoto_esta_desativado(self):
+        with self.assertRaisesMessage(CommandError, "perfil legado"):
+            call_command(
+                "validar_baseline_pm02",
+                "--perfil-rhremoto-producao",
+                stdout=StringIO(),
+            )
+
+    def test_snapshot_financeiro_usa_frontend_rhsaas_por_padrao(self):
+        from caixa.management.commands.gerar_snapshot_baseline_financeira import (
+            DEFAULT_FRONTEND_PATH,
+        )
+
+        self.assertEqual(DEFAULT_FRONTEND_PATH.name, "rhsaasfront")

@@ -16,6 +16,7 @@ from caixa.management.commands.validar_ativacao_canonical_first import (
     resumir_saude_lista_candidatos,
 )
 from caixa.pm03_sequence import montar_posicao_sequencia_pm03
+from tenancy.command_guards import ensure_tenant_schema
 
 
 class Command(BaseCommand):
@@ -84,6 +85,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema("listar_candidatos_canario_pm03", action="listar dados operacionais")
         evidence_files = _normalizar_arquivos_evidencia(options)
         if options["exigir_arquivos_evidencia"]:
             _exigir_arquivos_evidencia(evidence_files)
