@@ -18,7 +18,7 @@ Criado em: 2026-07-05
 | Métrica | Progresso |
 | --- | --- |
 | Áreas totalmente adaptadas | 10 / 30 |
-| Riscos altos concluídos | 5 / 5 |
+| Riscos altos concluídos | 6 / 6 |
 | Riscos médios concluídos | 0 / 9 |
 | Riscos baixos concluídos | 0 / 4 |
 
@@ -416,6 +416,36 @@ Quando um risco for dividido em riscos menores, ele nunca deve ser removido. Dev
   - 2026-07-05: Criado a partir da auditoria arquitetural.
   - 2026-07-05: Concluído para o escopo demo/teste com exportação tenant-scoped, auditoria mínima, cabeçalhos seguros e testes multi-tenant focados.
 
+#### H-006
+
+- ID: H-006
+- Domínio: Configurações de demo/teste
+- Severidade: Alta
+- Status: Concluído
+- Responsável: Davi
+- Estimativa: Pequeno
+- Descrição: Configuração mínima da demo multi-tenant precisava aceitar o tenant local e evitar ambiguidade de `DEBUG`.
+- Motivo: A demo precisa funcionar por `Host`/subdomínio para provar isolamento entre tenants; `DEBUG=release` era interpretado como `False` silenciosamente e podia divergir do `.env`.
+- Arquivos envolvidos: `config/settings.py`, `.env`, `.env.example`, `.env.production.example`.
+- Impacto: Demo poderia falhar em `rh-teste.localhost`, quebrar login/CSRF/CORS ou rodar com modo de debug diferente do esperado.
+- Estratégia de correção: Permitir `rh-teste.localhost` no ambiente local, liberar origem do frontend local do tenant em CSRF/CORS, manter cookies host-only, orientar `SECRET_KEY` forte e bloquear valores ambíguos para `DEBUG`.
+- Dependências: H-001, H-002, H-003, H-004 e H-005 concluídos.
+- Critério de Aceite: Demo local aceita `rh-teste.localhost`; origem `http://rh-teste.localhost:3000` está permitida em CSRF/CORS; cookies continuam host-only; `DEBUG` só aceita valores booleanos claros; validações locais passam.
+- Evidências:
+  - 2026-07-05: `.env` local da demo passou a incluir `ALLOWED_HOSTS=.localhost,localhost,127.0.0.1,rh-teste.localhost`.
+  - 2026-07-05: `.env` local da demo passou a incluir `http://rh-teste.localhost` e `http://rh-teste.localhost:3000` em `CSRF_TRUSTED_ORIGINS`, e `http://rh-teste.localhost:3000` em `CORS_ALLOWED_ORIGINS`.
+  - 2026-07-05: `config/settings.py` passou a rejeitar `DEBUG` ambíguo, como `DEBUG=release`, com erro explícito orientando `DEBUG=True` para demo local.
+  - 2026-07-05: `.env.example` passou a orientar geração de `SECRET_KEY` local forte, sem expor segredo real.
+  - 2026-07-05: `.env.example` e `.env.production.example` reforçam que cookies devem permanecer host-only; `COOKIE_SECURE=False` é apenas para demo local HTTP e HTTPS público deve usar `True`.
+  - 2026-07-05: Validação de configuração confirmou `RH_TESTE_ALLOWED=True`, `CSRF_HAS_TENANT=True`, `CORS_HAS_TENANT=True`, `SESSION_COOKIE_DOMAIN=None` e `CSRF_COOKIE_DOMAIN=None`.
+  - 2026-07-05: `$env:DEBUG='True'; venv\Scripts\python.exe manage.py check` aprovado.
+  - 2026-07-05: `$env:DEBUG='True'; venv\Scripts\python.exe manage.py check --deploy` executado como diagnóstico; retornou apenas avisos esperados para demo local HTTP (`DEBUG=True`, sem HSTS/SSL redirect/cookies secure e `SECRET_KEY` local curta).
+  - 2026-07-05: `$env:DEBUG='True'; venv\Scripts\python.exe manage.py test tenancy.tests.TenantIsolationInfrastructureTests tenancy.tests.TenantAuthSessionIsolationTests` aprovado, 10 testes, 144.446s.
+  - 2026-07-05: `git diff --check` aprovado sem erros.
+  - 2026-07-05: Validação negativa com `DEBUG=release` confirmou falha explícita: `DEBUG deve ser True ou False`.
+- Histórico individual:
+  - 2026-07-05: Criado e concluído como ajuste mínimo para demo/teste/portfólio multi-tenant, sem transformar o projeto em hardening enterprise.
+
 ### 🟠 Riscos MÉDIOS
 
 #### M-001
@@ -697,6 +727,10 @@ Esta seção não duplica riscos. Ela apenas mapeia os IDs existentes no backlog
 - M-002
 - M-007
 
+### Configurações de demo/teste
+
+- H-006
+
 ### Deploy
 
 - M-004
@@ -906,6 +940,20 @@ Não será permitido:
 Riscos antigos devem permanecer no documento, mesmo quando concluídos ou desdobrados.
 
 ## Histórico
+
+### 2026-07-05 - H-006 concluído: configuração mínima para demo multi-tenant local
+
+- Riscos corrigidos: H-006.
+- Arquivos alterados: `config/settings.py`, `.env`, `.env.example`, `.env.production.example`, `docs/PLANO_HARDENING_SAAS.md`.
+- Validações executadas:
+  - `$env:DEBUG='True'; venv\Scripts\python.exe manage.py check`: aprovado.
+  - `$env:DEBUG='True'; venv\Scripts\python.exe manage.py check --deploy`: executado como diagnóstico; avisos esperados para demo local HTTP.
+  - `$env:DEBUG='True'; venv\Scripts\python.exe manage.py test tenancy.tests.TenantIsolationInfrastructureTests tenancy.tests.TenantAuthSessionIsolationTests`: aprovado, 10 testes.
+  - `git diff --check`: aprovado sem erros.
+  - Validação negativa com `DEBUG=release`: falhou explicitamente com orientação para usar `DEBUG=True` ou `DEBUG=False`.
+- Auditoria executada: leitura de `config/settings.py`, `caixa/middleware.py`, `.env`, `.env.example`, `.env.production.example`, URLConfs e tenant/domínio local confirmou demo em PostgreSQL `rhsaas_dev`, tenant `rh_teste`, domínio `rh-teste.localhost`, cookies host-only e ausência de rotas operacionais no `public`.
+- Novos riscos encontrados: nenhum risco alto novo. M-002 e M-007 permanecem para hardening de produção/HTTPS pública; os avisos de `check --deploy` são aceitáveis somente para demo local HTTP.
+- Decisão registrada: para o escopo portfólio/demo local, `COOKIE_SECURE=False`, HSTS desligado e `SECURE_SSL_REDIRECT=False` são aceitos apenas em HTTP local; qualquer demo pública HTTPS deve trocar cookies secure/SSL/HSTS para valores seguros antes de exposição.
 
 ### 2026-07-05 - H-005 concluído: exportações tenant-scoped auditadas
 

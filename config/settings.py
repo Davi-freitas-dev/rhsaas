@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -29,6 +30,13 @@ def env_runtime_str(name, default):
 
 
 # Core
+_DEBUG_VALUE = os.environ.get("DEBUG")
+_DEBUG_ALLOWED_VALUES = {"true", "false", "1", "0", "yes", "no", "on", "off"}
+if _DEBUG_VALUE and _DEBUG_VALUE.strip().lower() not in _DEBUG_ALLOWED_VALUES:
+    raise ImproperlyConfigured(
+        "DEBUG deve ser True ou False. Valor recebido: "
+        f"{_DEBUG_VALUE!r}. Para demo local, use DEBUG=True."
+    )
 DEBUG = env.bool("DEBUG", default=True)
 ENABLE_API_DOCS = env.bool("ENABLE_API_DOCS", default=DEBUG)
 DEFAULT_INSECURE_SECRET_KEY = "fedfedcvedc"
