@@ -18,7 +18,7 @@ Criado em: 2026-07-05
 | Métrica | Progresso |
 | --- | --- |
 | Áreas totalmente adaptadas | 11 / 30 |
-| Riscos altos concluídos | 7 / 7 |
+| Riscos altos concluídos | 8 / 8 |
 | Riscos médios concluídos | 1 / 9 |
 | Riscos baixos concluídos | 0 / 4 |
 
@@ -176,10 +176,10 @@ Uma área só pode ser marcada como "✅ Totalmente adaptada" quando:
 | django-tenants | ✅ Totalmente adaptada | - | Manter modelo de um schema por empresa e tenant identificado por Host |
 | Commands | 🟡 Parcialmente adaptada | M-008 | Classificar e proteger todos os comandos operacionais |
 | Signals | ✅ Totalmente adaptada | - | Manter signals operacionais bloqueados no `public` e cobertos por testes quando críticos |
-| Backups | ✅ Totalmente adaptada | - | Backup/download tenant-scoped por schema, com autorização explícita e auditoria mínima por log |
+| Backups | ✅ Totalmente adaptada | - | Backup/download tenant-scoped por schema, com autorização explícita, auditoria mínima por log e headers seguros |
 | Exportações | ✅ Totalmente adaptada | - | Export tenant-scoped, autorizado, auditado e testado com dois tenants para o escopo demo/teste |
-| Uploads | 🟡 Parcialmente adaptada | L-002 | Definir arquitetura tenant-aware antes de qualquer upload real |
-| Media | 🟡 Parcialmente adaptada | L-002 | Definir paths, URLs e limpeza por tenant |
+| Uploads | 🟡 Parcialmente adaptada | L-002 | Nao ha upload real na demo; definir arquitetura tenant-aware antes de qualquer upload real |
+| Media | 🟡 Parcialmente adaptada | L-002 | `MEDIA_ROOT`/`MEDIA_URL` estao explicitos; definir paths, URLs e limpeza por tenant antes de uploads reais |
 | Logs | 🟡 Parcialmente adaptada | M-003 | Incluir tenant/schema, usuário, IP e ação em eventos relevantes |
 | Auditoria | ❌ Não adaptada | M-003 | Criar trilha para login, logout, backup, export, download e ações administrativas |
 | Admin Django | ✅ Totalmente adaptada | - | Manter `/admin/` desativado por teste até existir admin público e tenant separados |
@@ -473,6 +473,32 @@ Quando um risco for dividido em riscos menores, ele nunca deve ser removido. Dev
 - Histórico individual:
   - 2026-07-05: Criado e concluído como hardening mínimo de autenticação/sessão para demo multi-tenant.
 
+#### H-008
+
+- ID: H-008
+- Domínio: Downloads e Media
+- Severidade: Alta
+- Status: Concluído
+- Responsável: Davi
+- Estimativa: Pequeno
+- Descrição: A demo precisava fechar o hardening mínimo de downloads de backup e explicitar a política base de mídia.
+- Motivo: Downloads sensíveis devem evitar cache indevido; a configuração de mídia não podia ficar implícita antes de futuras telas de upload.
+- Arquivos envolvidos: `caixa/views_backups.py`, `tenancy/tests.py`, `config/settings.py`.
+- Impacto: Sem headers seguros, backups baixados poderiam ser armazenados por cache local/proxy. Sem `MEDIA_ROOT`/`MEDIA_URL` explícitos, uploads futuros poderiam nascer em storage global sem decisão arquitetural clara.
+- Estratégia de correção: Adicionar headers `Cache-Control: no-store`, `Pragma: no-cache` e `X-Content-Type-Options: nosniff` ao download de backup; testar os headers em download autenticado de tenant; definir `MEDIA_ROOT` e `MEDIA_URL` com comentário exigindo upload futuro tenant-aware.
+- Dependências: H-001, H-005 e H-007 concluídos.
+- Critério de Aceite: Download autenticado de backup de tenant retorna headers anti-cache e `nosniff`; testes focados passam; política base de mídia fica explícita sem criar upload real nem rota pública de mídia.
+- Evidências:
+  - 2026-07-05: `backup_download` passou a retornar `Cache-Control: no-store`, `Pragma: no-cache` e `X-Content-Type-Options: nosniff`.
+  - 2026-07-05: Adicionado teste `TenantBackupIsolationTests.test_download_de_backup_envia_headers_seguros`.
+  - 2026-07-05: `MEDIA_ROOT = BASE_DIR / "media"` e `MEDIA_URL = "/media/"` foram explicitados em `config/settings.py`, com nota de que uploads reais futuros devem ser tenant-aware.
+  - 2026-07-05: `$env:DEBUG='True'; venv\Scripts\python.exe manage.py test tenancy.tests.TenantBackupIsolationTests` aprovado, 4 testes, 83.027s.
+  - 2026-07-05: `$env:DEBUG='True'; venv\Scripts\python.exe manage.py check` aprovado.
+  - 2026-07-05: `$env:DEBUG='True'; venv\Scripts\python.exe manage.py makemigrations --check --dry-run` aprovado, sem mudanças detectadas.
+  - 2026-07-05: `git diff --check` aprovado sem erros.
+- Histórico individual:
+  - 2026-07-05: Criado e concluído como hardening mínimo de uploads/media/downloads para demo/teste, sem implementar upload real nem storage enterprise.
+
 ### 🟠 Riscos MÉDIOS
 
 #### M-001
@@ -676,19 +702,21 @@ Quando um risco for dividido em riscos menores, ele nunca deve ser removido. Dev
 - ID: L-002
 - Domínio: Media
 - Severidade: Baixa
-- Status: Não iniciado
+- Status: Em andamento
 - Responsável: Davi
 - Estimativa: Médio
 - Descrição: Media/uploads ainda não têm arquitetura final.
 - Motivo: Não há upload operacional ativo relevante, mas futura funcionalidade precisa isolamento.
-- Arquivos envolvidos: Futuras configs `MEDIA_ROOT`, `MEDIA_URL`, models com arquivos.
+- Arquivos envolvidos: `config/settings.py`, futuras configs de storage, models com arquivos.
 - Impacto: Risco futuro de path compartilhado.
 - Estratégia de correção: Definir `media/tenants/<schema>/...`, URLs protegidas e limpeza por tenant antes de uploads reais.
 - Dependências: Implementação futura de uploads.
 - Critério de Aceite: Antes de qualquer upload real, arquivos ficam organizados por tenant/schema, URLs são protegidas quando necessário e testes provam isolamento.
-- Evidências: Nenhuma registrada ainda.
+- Evidências:
+  - 2026-07-05: H-008 explicitou `MEDIA_ROOT` e `MEDIA_URL` em `config/settings.py` e registrou que uploads reais futuros devem ser tenant-aware.
 - Histórico individual:
   - 2026-07-05: Criado a partir da auditoria arquitetural.
+  - 2026-07-05: Parcialmente encaminhado por H-008; permanece aberto porque ainda nao existe arquitetura final para upload real tenant-aware.
 
 #### L-003
 
@@ -747,6 +775,7 @@ Esta seção não duplica riscos. Ela apenas mapeia os IDs existentes no backlog
 ### Backups
 
 - H-001
+- H-008
 
 ### Cache
 
@@ -778,12 +807,19 @@ Esta seção não duplica riscos. Ela apenas mapeia os IDs existentes no backlog
 
 - M-001
 
+### Downloads
+
+- H-001
+- H-005
+- H-008
+
 ### Exportações
 
 - H-005
 
 ### Media
 
+- H-008
 - L-002
 
 ### Observabilidade
@@ -978,6 +1014,20 @@ Não será permitido:
 Riscos antigos devem permanecer no documento, mesmo quando concluídos ou desdobrados.
 
 ## Histórico
+
+### 2026-07-05 - H-008 concluído: downloads de backup e política base de mídia para demo
+
+- Riscos corrigidos: H-008.
+- Riscos parcialmente encaminhados: L-002 permanece em andamento para uploads reais futuros.
+- Arquivos alterados: `caixa/views_backups.py`, `tenancy/tests.py`, `config/settings.py`, `docs/PLANO_HARDENING_SAAS.md`.
+- Validações executadas:
+  - `$env:DEBUG='True'; venv\Scripts\python.exe manage.py test tenancy.tests.TenantBackupIsolationTests`: aprovado, 4 testes.
+  - `$env:DEBUG='True'; venv\Scripts\python.exe manage.py check`: aprovado.
+  - `$env:DEBUG='True'; venv\Scripts\python.exe manage.py makemigrations --check --dry-run`: aprovado, sem mudanças detectadas.
+  - `git diff --check`: aprovado sem erros.
+- Auditoria executada: revisão read-only de uploads, mídia, downloads, backups, exportações, rotas de `media`, service worker e arquivos estáticos confirmou ausência de upload real ativo, ausência de rota pública `/media/`, backups tenant-scoped e service worker limitado a `/static/`.
+- Novos riscos encontrados: nenhum risco alto novo. L-002 continua aberto para a arquitetura final de upload real tenant-aware.
+- Decisão registrada: a demo pode operar sem upload real; qualquer upload futuro deve ser tenant-aware antes de ser habilitado.
 
 ### 2026-07-05 - H-007 concluído: testes de autenticação e sessão entre tenants
 

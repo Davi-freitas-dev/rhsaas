@@ -146,9 +146,13 @@ def backup_download(request, nome_arquivo):
     caminho = obter_caminho_backup(nome_arquivo)
     _audit_backup_event(request, "download", "allowed", filename=nome_arquivo)
 
-    return FileResponse(
+    response = FileResponse(
         open(caminho, "rb"),
         as_attachment=True,
         filename=caminho.name,
         content_type="application/json",
     )
+    response["Cache-Control"] = "no-store"
+    response["Pragma"] = "no-cache"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response

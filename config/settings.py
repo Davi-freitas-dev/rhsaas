@@ -382,6 +382,14 @@ USE_I18N = True
 USE_TZ = True
 
 
+# Arquivos de midia
+# A demo nao possui upload real. Qualquer upload futuro deve gravar em
+# caminhos tenant-aware (ex.: media/tenants/<schema_name>/...) e usar
+# downloads autenticados quando o arquivo nao for publico.
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+
+
 # Arquivos estaticos
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"

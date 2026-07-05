@@ -578,6 +578,24 @@ class TenantBackupIsolationTests(MultiTenantTestCase):
             self.assertEqual(response_a.wsgi_request.tenant.schema_name, "tenant_a")
             self.assertEqual(response_b.wsgi_request.tenant.schema_name, "tenant_b")
 
+    def test_download_de_backup_envia_headers_seguros(self):
+        with TemporaryDirectory() as temp_dir:
+            base_dir = Path(temp_dir)
+            with override_settings(BASE_DIR=base_dir):
+                self._write_backup("tenant_a")
+                client = self._authenticated_admin("tenant_a")
+
+                response = client.get(f"/backups/{self.backup_filename}/download/")
+
+                if hasattr(response, "close"):
+                    response.close()
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.wsgi_request.tenant.schema_name, "tenant_a")
+            self.assertEqual(response["Cache-Control"], "no-store")
+            self.assertEqual(response["Pragma"], "no-cache")
+            self.assertEqual(response["X-Content-Type-Options"], "nosniff")
+
     def test_criacao_manual_de_backup_grava_no_diretorio_do_tenant(self):
         with TemporaryDirectory() as temp_dir:
             base_dir = Path(temp_dir)
