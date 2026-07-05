@@ -7,6 +7,11 @@ Data: 2026-07-04.
 Este documento nao implementa multi-tenant. Ele define a arquitetura futura para
 o RH SaaS usando PostgreSQL schemas com `django-tenants`.
 
+Contexto atualizado: o RH SaaS e um projeto novo, com base zerada. Ainda nao ha
+banco PostgreSQL de producao nem dados reais de clientes neste projeto. O
+projeto antigo pessoal permanece separado e nao sera migrado para o RH SaaS
+nesta fase.
+
 ## Decisao de arquitetura
 
 O RH SaaS usara multi-tenancy por schema PostgreSQL com `django-tenants`.
@@ -39,6 +44,10 @@ Tenants serao identificados por host/subdominio:
 ## Estado atual do projeto
 
 O projeto atual e uma aplicacao Django classica, ainda single-tenant.
+
+O banco alvo da implementacao multi-tenant sera um PostgreSQL novo e vazio. O
+primeiro tenant sera criado do zero, com bootstrap inicial de usuario, grupos,
+permissoes e configuracoes, sem carga de dados do projeto antigo.
 
 Fatos observados:
 
@@ -85,6 +94,14 @@ As principais ressalvas sao:
   na estrategia.
 - A configuracao de CORS atual usa allowlist exata e precisara considerar
   subdominios dinamicos com seguranca.
+
+Nao se aplica agora:
+
+- migracao de dados single-tenant existentes para o primeiro tenant;
+- backup/restore de dados reais atuais;
+- validacao de totais financeiros migrados;
+- invalidacao de sessoes antigas de usuarios reais;
+- janela de manutencao motivada por preservacao de dados reais existentes.
 
 ## Arquitetura recomendada
 
@@ -568,7 +585,6 @@ Nao implementar automacao de dominio personalizado na primeira fase.
 
 ### Alto
 
-- Migrar dados atuais para o schema errado.
 - Rodar `migrate` comum em vez de `migrate_schemas` depois da conversao.
 - Colocar `caixa` em `SHARED_APPS` por engano e criar dados operacionais no
   `public`.
@@ -678,23 +694,23 @@ Objetivo: reduzir risco antes da primeira migration.
 
 Tarefas:
 
-- Congelar mudancas funcionais durante a migracao.
-- Criar backup completo do banco atual.
-- Criar banco PostgreSQL limpo para staging.
+- Garantir que o codigo atual esteja versionado antes da branch multi-tenant.
+- Evitar mudancas funcionais paralelas durante a implementacao da arquitetura.
+- Criar banco PostgreSQL novo e vazio para desenvolvimento/staging.
 - Confirmar versao exata do `django-tenants`.
 - Confirmar compatibilidade com `Django==6.0.6`.
 - Definir dominio base do SaaS.
-- Definir primeiro tenant de migracao.
+- Definir o primeiro tenant a ser criado do zero.
 - Definir schema_name do primeiro tenant.
 - Definir estrategia de usuarios: public staff e tenant users separados.
 - Definir o app `tenancy`.
 - Fechar matriz `SHARED_APPS`/`TENANT_APPS`.
 - Fechar plano de rollback.
-- Fechar plano de migracao de dados do single-tenant atual para o primeiro
-  schema tenant.
+- Confirmar explicitamente que o projeto antigo pessoal fica fora do escopo e
+  nao sera migrado nesta fase.
 
-Risco: baixo se for apenas preparacao; alto se tentar atalhar direto em banco
-real.
+Risco: baixo se for apenas preparacao em banco novo e vazio; medio se houver
+mudancas funcionais concorrentes.
 
 ### Etapa 1 - Spike tecnico em branch
 
@@ -757,21 +773,25 @@ Tarefas:
 
 Risco: alto. O app e grande e tem muitas migrations.
 
-### Etapa 5 - Migracao dos dados atuais
+### Etapa 5 - Bootstrap do primeiro tenant zerado
 
-Objetivo: levar a base single-tenant atual para o primeiro tenant.
+Objetivo: criar o primeiro tenant do RH SaaS do zero, sem migrar dados do
+projeto antigo.
 
 Tarefas:
 
-- Exportar dados atuais com backup validado.
-- Criar tenant inicial.
-- Carregar dados operacionais apenas no schema do tenant.
-- Criar usuarios tenant correspondentes.
-- Validar totais financeiros.
-- Validar integridade de FKs.
-- Validar dashboards e relatórios.
+- Criar tenant inicial no schema `public`.
+- Criar dominio/subdominio do tenant.
+- Criar schema PostgreSQL do tenant.
+- Aplicar migrations do tenant em banco vazio.
+- Criar usuario admin inicial do tenant.
+- Criar grupos/perfis padrao.
+- Criar configuracoes iniciais minimas.
+- Validar login, dashboard vazio, cadastros vazios e APIs principais sem dados.
+- Confirmar que nenhum dado do projeto antigo foi carregado.
 
-Risco: alto. Deve acontecer primeiro em staging, nunca direto em producao.
+Risco: medio. O risco principal nao e perda de dados, e sim bootstrap incompleto
+ou schema/app split incorreto.
 
 ### Etapa 6 - Backups, exportacoes e media
 
@@ -825,15 +845,18 @@ Objetivo: ativar com um tenant inicial.
 
 Tarefas:
 
-- Janela de manutencao.
-- Backup final.
+- Confirmar codigo versionado e rollback de deploy.
+- Usar banco PostgreSQL de producao novo e vazio.
 - Deploy sem migrations automaticas destrutivas.
 - Migracoes controladas.
-- Validacao do tenant inicial.
+- Criacao do primeiro tenant do zero.
+- Validacao do tenant inicial sem dados legados.
 - Monitoramento.
 - Plano de rollback.
 
-Risco: alto. Deve ser feito apenas apos staging aprovado.
+Risco: medio/alto. Nao ha janela de manutencao por dados reais existentes, mas
+a ativacao ainda exige rollback de codigo/configuracao e validacao cuidadosa de
+migrations.
 
 ## Arquivos provavelmente alterados
 
@@ -971,9 +994,8 @@ Frontend, em repositorio separado:
 
 Obrigatorio:
 
-- Backup completo da base atual.
+- Codigo atual versionado antes da branch.
 - Banco PostgreSQL novo e vazio para experimento.
-- Plano de restore testado.
 - Branch exclusiva para multi-tenant.
 - Versao exata do `django-tenants` escolhida.
 - Confirmacao de compatibilidade com Django 6.0.6.
@@ -985,12 +1007,22 @@ Obrigatorio:
 - Dominio/subdominio do primeiro tenant.
 - Runbook de comandos permitidos.
 - Regra clara: apos conversao, usar `migrate_schemas` nos fluxos de tenant.
-- Plano de migracao de dados single-tenant para tenant inicial.
-- Plano para validar totais financeiros depois da migracao.
-- Plano para invalidar/renovar sessoes antigas.
+- Plano de bootstrap do primeiro tenant zerado.
 - Plano para bloquear backup global no tenant.
+- Confirmacao explicita de que o projeto antigo pessoal fica separado e nao
+  sera migrado nesta fase.
 
 Nao iniciar migration sem isso.
+
+Nao aplicavel agora:
+
+- backup de dados reais atuais;
+- restore de dados reais atuais;
+- migracao de dados single-tenant;
+- carga de dados operacionais existentes;
+- validacao de totais financeiros migrados;
+- invalidacao de sessoes antigas;
+- janela de manutencao por dados reais existentes.
 
 ## O que NAO deve ser implementado ainda
 
@@ -1014,7 +1046,7 @@ Nao iniciar migration sem isso.
 
 A melhor rota e migrar em fases, primeiro provando `django-tenants` com banco
 PostgreSQL vazio, depois separando public/tenant, depois autenticação e somente
-entao carregando os dados atuais no primeiro tenant.
+entao criando o primeiro tenant do zero.
 
 O maior cuidado tecnico sera separar corretamente usuarios da plataforma e
 usuarios de tenant. O segundo maior sera garantir que backups, exportacoes,
@@ -1023,3 +1055,7 @@ rate limits e testes de API nunca cruzem dados entre schemas.
 O projeto atual esta bem posicionado para essa mudanca porque o app operacional
 esta concentrado em `caixa`, mas a migracao deve ser tratada como mudanca de
 arquitetura central, nao como simples instalacao de biblioteca.
+
+Como o RH SaaS nasce com base zerada, a primeira implementacao nao precisa
+preservar ou migrar dados do projeto antigo. O foco passa a ser criar uma
+fundacao multi-tenant correta desde o primeiro schema.
