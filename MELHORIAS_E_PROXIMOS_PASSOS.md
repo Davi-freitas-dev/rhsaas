@@ -2,6 +2,10 @@
 
 Atualizado em: 2026-06-01
 
+> Aviso RH SaaS: este arquivo e historico do projeto antigo e nao deve ser usado
+> como roteiro de deploy, dominio, banco ou configuracao do RH SaaS. Use os
+> documentos atuais em `docs/` e os exemplos `.env*.example`.
+
 Este arquivo registra as melhorias aplicadas no ciclo atual e os proximos passos recomendados para continuar deixando a aplicacao mais segura, performatica e escalavel.
 
 Para a conclusao da arquitetura financeira premium/canonical-first, o roteiro oficial e o `PLANO_EVOLUCAO_DOMINIO_FINANCEIRO.md`, secao `Plano mestre para conclusao da arquitetura premium`. Este arquivo permanece como historico e apoio operacional; em retomadas, consultar primeiro o plano mestre.

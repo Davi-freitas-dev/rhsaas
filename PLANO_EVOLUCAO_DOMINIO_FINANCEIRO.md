@@ -2,6 +2,10 @@
 
 Atualizado em: 2026-06-07
 
+> Aviso RH SaaS: este arquivo e historico do projeto antigo e nao deve ser usado
+> como roteiro de deploy, dominio, banco ou configuracao do RH SaaS. Use os
+> documentos atuais em `docs/` e os exemplos `.env*.example`.
+
 ## Trilha ativa atual — Evolução financeira
 
 Ordem oficial vigente:

@@ -21,10 +21,11 @@ Auditoria inicial da copia RH SaaS.
 - `DEPLOY_ORACLE.md` ainda contem roteiro historico do projeto antigo.
 - `INTEGRACAO_NEXT_DJANGO.md`, `MELHORIAS_E_PROXIMOS_PASSOS.md`,
   `PLANO_EVOLUCAO_DOMINIO_FINANCEIRO.md`, `evidencias/` e alguns testes mantem
-  referencias historicas a RHRemoto e ao frontend antigo.
+  referencias historicas ao projeto antigo e ao frontend antigo.
 - Os comandos PM-02 em `caixa/management/commands/gerar_snapshot_baseline_financeira.py`
   e `caixa/management/commands/validar_baseline_pm02.py` ainda possuem perfil
-  `rhremoto-producao`; nao foram alterados por serem validacoes operacionais.
+  legado de producao do projeto antigo; nao foram alterados por serem
+  validacoes operacionais.
 
 ## Pendencias antes de producao
 

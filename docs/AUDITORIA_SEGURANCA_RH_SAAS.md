@@ -216,7 +216,7 @@ O principal risco para o SaaS não é uma falha isolada de configuração, mas a
 
 ## Riscos baixos
 
-- Título OpenAPI ainda pode carregar nome funcional legado, como "Controle de Caixa API".
+- Título OpenAPI foi renomeado para `RH SaaS API`; revisar docs antigas se esse nome reaparecer.
 - Existem documentos históricos com exemplos e nomes antigos que não parecem sensíveis, mas podem confundir manutenção.
 - Observabilidade e audit log ainda são básicos.
 - Há arquivo local não versionado de roadmap que deve ser tratado conscientemente no próximo commit.

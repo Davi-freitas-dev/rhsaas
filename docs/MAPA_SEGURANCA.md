@@ -28,6 +28,16 @@ Configuracao via `.env`:
 
 Em producao com mais de um worker/processo, use Redis em `CACHE_BACKEND`/`CACHE_LOCATION`, senao cada processo tera contadores locais de throttle.
 
+## Politica de backup no SaaS
+
+- Backup global do banco e artefatos operacionais e exclusivo do operador da
+  plataforma.
+- Administrador de cliente nao pode baixar backup global, mesmo quando tiver
+  permissoes administrativas dentro da aplicacao.
+- Backup/exportacao por tenant fica para a fase multi-tenant, depois de existir
+  isolamento formal de organizacao, permissoes por tenant e testes de acesso
+  cruzado.
+
 ## Comandos uteis
 
 - `python manage.py check`

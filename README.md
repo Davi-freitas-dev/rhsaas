@@ -13,7 +13,7 @@ Antes de qualquer deploy:
 - crie um banco separado para o RH SaaS;
 - revise `.env` a partir de `.env.production.example`;
 - substitua todos os dominios de exemplo `rhsaas.example.com` pelos dominios reais;
-- nao reutilize `adm.rhremoto.com`, `caixa.rhremoto.com` ou bancos do projeto antigo.
+- nao reutilize dominios, bancos ou credenciais do projeto antigo.
 
 ## Desenvolvimento local
 

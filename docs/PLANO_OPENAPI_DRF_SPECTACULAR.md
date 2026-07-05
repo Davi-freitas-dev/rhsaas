@@ -281,7 +281,7 @@ ENABLE_API_DOCS = env.bool("ENABLE_API_DOCS", default=DEBUG)
 
 ```python
 SPECTACULAR_SETTINGS = {
-    "TITLE": "Controle de Caixa API",
+    "TITLE": "RH SaaS API",
     "DESCRIPTION": "Schema OpenAPI inicial para validacao incremental.",
     "VERSION": "0.1.0",
     "SERVE_INCLUDE_SCHEMA": False,

@@ -195,8 +195,8 @@ Quando `--diretorio-evidencias` for usado, `strictServerCommandResolved`
 preserva essa flag e tambem mostra os tres caminhos expandidos de evidencia.
 O JSON tambem publica `pm02NextAction`, com a proxima acao recomendada para a
 janela antes de tentar fechar PM-02. Quando a acao exigir comando operacional,
-consultar tambem `pm02NextAction.suggestedCommand` e
-`pm02NextAction.suggestedRhremotoCommand`.
+consultar `pm02NextAction.suggestedCommand`. Campos de atalho especificos do
+projeto legado nao devem ser usados no RH SaaS.
 
 Em producao, quando quiser reprovar explicitamente worktree suja ou `DEBUG`
 ativo e exigir referencia do frontend publicado, acrescente:
@@ -212,41 +212,21 @@ python manage.py validar_baseline_pm02 --modo-servidor-estrito --frontend-deploy
 ```
 
 Para validar tambem os valores esperados do `.env` de producao, acrescente:
-`--esperar-session-cookie-domain=.rhremoto.com`,
-`--esperar-csrf-cookie-domain=.rhremoto.com` e
+`--esperar-session-cookie-domain=<dominio-cookie-rh-saas>`,
+`--esperar-csrf-cookie-domain=<dominio-cookie-rh-saas>` e
 `--esperar-cache-backend=django.core.cache.backends.redis.RedisCache`. Quando
 quiser travar tambem o banco Redis usado pelo cache, acrescente
 `--esperar-cache-location=redis://127.0.0.1:6379/1`.
 Quando a janela tambem quiser conferir que os cookies so trafegam por HTTPS,
 acrescente `--esperar-session-cookie-secure=true` e
 `--esperar-csrf-cookie-secure=true`; esses gates sao opcionais e nao entram no
-perfil RHRemoto automaticamente.
+perfil automaticamente.
 Para travar o escopo `SameSite` dos cookies, acrescente
 `--esperar-session-cookie-samesite=Lax` e
 `--esperar-csrf-cookie-samesite=Lax`, ou o valor esperado da janela.
-Como atalho equivalente para a producao RHRemoto em servidor unico com Redis
-local, use `--perfil-rhremoto-producao`; ele preenche `--ambiente=producao`,
-cookies `.rhremoto.com` e cache Redis local, sem preencher canonical-first ou
-banco automaticamente. Valores informados explicitamente no comando prevalecem
-sobre os defaults do perfil. Quando usado, o JSON publica
-`environmentProfile=rhremoto-producao`, `environmentProfileDefaults`,
-`environmentProfileDefaultsApplied` e `environmentProfileOverrides`; o registro
-markdown mostra `Perfil de ambiente: rhremoto-producao`,
-`Defaults do perfil de ambiente`, `Defaults aplicados do perfil de ambiente` e
-`Overrides do perfil de ambiente`; o `strictServerCommandResolved` mantem a flag
-do perfil junto dos valores concretos expandidos.
-O snapshot e o validador tambem publicam comandos prontos em
-`pm02StrictServerCommandRhremotoProduction`,
-`pm02StrictServerCommandRhremotoProductionWithDeployUrl`,
-`pm02StrictServerCommandRhremotoProductionWithEvidence`,
-`pm02StrictServerCommandRhremotoProductionWithDeployUrlAndEvidence`,
-`strictServerCommandRhremotoProduction` e
-`strictServerCommandRhremotoProductionWithDeployUrl`, incluindo variantes com
-`--diretorio-evidencias=<diretorio-evidencias-pm02>` e
-`--exigir-arquivos-evidencia`.
-O bloco `manualRequirements` tambem inclui `suggestedRhremotoCommand` e
-`suggestedRhremotoCommandWithDeployUrl`, alem das variantes com evidencias, para
-facilitar a copia do comando correto da janela.
+Nao use atalhos de perfil herdados do projeto antigo no RH SaaS. Prefira sempre
+informar explicitamente os dominios, origins, cache, banco, release, backup e
+URL de deploy esperados para o ambiente atual.
 Quando a janela precisar confirmar o estado atual do canonical-first, acrescente
 `--esperar-canonical-first-enabled=true` e
 `--esperar-canonical-first-sources=custo_fixo` ou a allowlist esperada para a
@@ -276,7 +256,8 @@ ou mais de um servidor, Redis evita esse isolamento.
 
 ## 2.3. Evidencia PM-03.1 da origem canonical-first ativa
 
-A PM-03.1 de `custo_fixo` foi fechada em producao RHRemoto em 2026-05-26 com
+A PM-03.1 de `custo_fixo` foi fechada em producao do projeto antigo em
+2026-05-26 com
 `canonicalFirst.count=1`, valor 81.90, `legacyAdapterSynced.count=0`,
 auditoria de totais sem divergencia e `validar_fechamento_pm03` aprovado. Os
 comandos abaixo ficam como roteiro de repeticao/auditoria dessa evidencia. Essa

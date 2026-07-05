@@ -2,7 +2,8 @@
 
 ## Objetivo
 
-Integrar o dashboard financeiro Next.js da RHRemoto ao backend Django existente sem recriar regras de negocio e sem quebrar o sistema atual em producao.
+Integrar o frontend Next.js do RH SaaS ao backend Django existente sem recriar
+regras de negocio e sem quebrar o sistema atual em producao.
 
 ## Principio principal
 
@@ -22,13 +23,13 @@ O Next.js nao deve duplicar regras financeiras, calculos sensiveis, permissoes o
 
 Este backend Django trabalha junto com o frontend Next.js no mesmo workspace/local de desenvolvimento:
 
-- Backend Django: `c:\Users\Davif\OneDrive\Desktop\Projetos\controledecaixa`
-- Frontend Next.js: `c:\Users\Davif\OneDrive\Desktop\Projetos\dashboardFinanceiro\v0-dashboard-financeiro-rhremoto`
+- Backend Django: `<workspace>/rhsaas`
+- Frontend Next.js: `<workspace>/rh-saas-frontend`
 
 Relacao de caminhos:
 
-- a partir do backend, o frontend fica em `..\dashboardFinanceiro\v0-dashboard-financeiro-rhremoto`;
-- a partir do frontend, o backend fica em `..\..\controledecaixa`.
+- a partir do backend, confirmar o caminho real do frontend RH SaaS;
+- a partir do frontend, confirmar o caminho real deste backend.
 
 Ao retomar uma tarefa, confirmar primeiro a raiz do terminal. Alteracoes de regra financeira, banco, admin, selectors, serializers, APIs, migrations, comandos, auditoria e testes de negocio ficam neste backend. Templates Django operacionais foram removidos da linha principal; permanecem apenas Admin, APIs, auth/erro/suporte, downloads tecnicos e redirects legados. Alteracoes de UI operacional, tipos TypeScript, mocks, services/hooks e documentacao visual ficam no frontend.
 
@@ -412,11 +413,12 @@ Reconciliacao PM-06.1106 a PM-06.1108:
 - PM-06.1112 fechou a revisao local. Nenhuma tela/template Django deve ser
   removida fisicamente antes de repetir as evidencias com URL real do Next.js
   em homologacao/producao e obter aceite operacional de rollback.
-- PM-06.1115 validou os dominios reais de producao informados pelo operador:
-  frontend `https://adm.rhremoto.com` e backend `https://caixa.rhremoto.com`.
+- PM-06.1115 validou os dominios reais de producao informados pelo operador do
+  projeto antigo. No RH SaaS, substituir por `<frontend-rh-saas>` e
+  `<backend-rh-saas>`.
   As rotas Next.js migradas responderam HTTP 200; o backend base respondeu HTTP
   200 e API protegida sem sessao respondeu HTTP 401 esperado. O management
-  command foi executado com `NEXT_FRONTEND_URL=https://adm.rhremoto.com`, 13
+  command foi executado com `NEXT_FRONTEND_URL=<frontend-rh-saas>`, 13
   superficies unitarias, agregado e rollback, salvando evidencias em
   `evidencias/pm06-1115-prod-url-real-2026-05-31/`. A ativacao em producao
   ainda depende de persistir flag/allowlist no runtime e manter rollback por
@@ -424,7 +426,7 @@ Reconciliacao PM-06.1106 a PM-06.1108:
 - PM-06.1116 confirmou o runtime efetivo em producao: o operador executou
   `python manage.py validar_redirects_next_legado --falhar --json` no servidor
   e o resultado retornou `ready=True`, `issues=[]`, `redirectsEnabled=True`,
-  `frontendBaseUrl=https://adm.rhremoto.com` e as 13 superficies migradas na
+  `frontendBaseUrl=<frontend-rh-saas>` e as 13 superficies migradas na
   allowlist configurada. O registro local ficou em
   `evidencias/pm06-1116-prod-runtime-efetivo-2026-05-31/`.
 - PM-06.1117 confirmou smoke autenticado de producao por relato do operador:
@@ -432,7 +434,7 @@ Reconciliacao PM-06.1106 a PM-06.1108:
   custos por evento, custos extras e admin abriram suas respectivas paginas
   normalmente. O servidor tambem salvou JSON/Markdown do validador em
   `evidencias/pm06-1116-prod-runtime-efetivo-2026-05-31/`.
-- Checagem externa anonima das rotas antigas em `https://caixa.rhremoto.com`
+- Checagem externa anonima das rotas antigas em `<backend-rh-saas>`
   retornou `/login/?next=...`, pois a autenticacao Django intercepta antes da
   view. O smoke autenticado foi confirmado em PM-06.1117.
 - PM-06.1119 alinhou as permissoes do Next.js ao Django para as telas
@@ -1124,7 +1126,8 @@ Diretriz de arquitetura principal/prime:
 - Antes de ampliar uma origem, executar backup do banco, registrar a versao do
   codigo, aplicar migrations, rodar pre-flight, canario rollback-only,
   auditoria de fonte de escrita, monitoramento da janela e auditoria de totais.
-- PM-03.1 de `custo_fixo` foi fechada em producao RHRemoto em 2026-05-26 com
+- PM-03.1 de `custo_fixo` foi fechada em producao do projeto antigo em
+  2026-05-26 com
   monitor `ready=True`, `canonicalFirst.count=1`, valor 81.90,
   `legacyAdapterSynced.count=0`, auditoria de totais sem divergencia e
   `validar_fechamento_pm03` com todos os checks OK.
@@ -1199,38 +1202,30 @@ Diretriz de arquitetura principal/prime:
 - O Next.js deve consumir contratos canonicos publicados pelo backend, sem
   recriar calculos nem assumir que uma origem virou canonical-first antes da API
   e da metadata operacional indicarem isso.
-- Em producao com subdominios `*.rhremoto.com`, o backend deve ler
-  `SESSION_COOKIE_DOMAIN=.rhremoto.com` e
-  `CSRF_COOKIE_DOMAIN=.rhremoto.com` do `.env`.
+- Em producao com subdominios do RH SaaS, o backend deve ler
+  `SESSION_COOKIE_DOMAIN=<dominio-cookie-rh-saas>` e
+  `CSRF_COOKIE_DOMAIN=<dominio-cookie-rh-saas>` do `.env`.
 - Em producao, usar Redis para cache compartilhado entre workers/processos:
   `CACHE_BACKEND=django.core.cache.backends.redis.RedisCache` e
   `CACHE_LOCATION=redis://127.0.0.1:6379/1`.
-- Na PM-02 da producao RHRemoto, o backend pode usar
-  `--perfil-rhremoto-producao` para preencher ambiente, cookies `.rhremoto.com`
-  e cache Redis local esperados no validador. Valores explicitos no comando
-  prevalecem sobre os defaults do perfil; o JSON publica
-  `environmentProfile=rhremoto-producao`, `environmentProfileDefaults`,
-  `environmentProfileDefaultsApplied` e `environmentProfileOverrides` quando
-  esse perfil for usado, e o comando resolvido preserva a flag do perfil junto
-  dos valores expandidos.
+- Na producao RH SaaS, informar explicitamente ambiente, dominios de cookie,
+  cache Redis, hosts, origins, release e backup esperados no validador. Evitar
+  atalhos de perfil herdados do projeto antigo.
   Se a janela tambem precisar validar cookies seguros por HTTPS, adicionar
   `--esperar-session-cookie-secure=true` e
   `--esperar-csrf-cookie-secure=true`; essas travas sao opcionais e nao sao
-  preenchidas automaticamente pelo perfil RHRemoto.
+  preenchidas automaticamente.
   Para validar o escopo `SameSite`, adicionar
   `--esperar-session-cookie-samesite=Lax` e
   `--esperar-csrf-cookie-samesite=Lax`, ou o valor esperado da janela.
-  O snapshot/validador tambem publicam comandos prontos em
-  `pm02StrictServerCommandRhremotoProduction` e
-  `strictServerCommandRhremotoProduction`, com variantes que ja incluem
-  `--diretorio-evidencias` e `--exigir-arquivos-evidencia`;
-  `manualRequirements` mantem o comando generico e adiciona sugestoes RHRemoto.
+  O snapshot/validador tambem publicam comandos prontos genericos, com
+  variantes que ja incluem `--diretorio-evidencias` e
+  `--exigir-arquivos-evidencia`.
   Quando `--diretorio-evidencias` for usado, o comando resolvido preserva essa
   flag e mostra os tres caminhos expandidos.
   Conferir tambem `pm02NextAction` para saber a proxima acao operacional antes
   de tentar fechar a etapa; quando houver comando sugerido, usar
-  `pm02NextAction.suggestedCommand` ou
-  `pm02NextAction.suggestedRhremotoCommand`.
+  `pm02NextAction.suggestedCommand`.
 - `LocMemCache` fica como fallback simples para desenvolvimento ou servidor
   unico sem Redis, mas e isolado por processo.
 
