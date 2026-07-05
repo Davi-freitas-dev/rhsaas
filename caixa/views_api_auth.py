@@ -1,4 +1,5 @@
 import json
+import logging
 from functools import wraps
 
 from django.contrib.auth import login, logout
@@ -60,10 +61,13 @@ from .permissions import (
     VIEW_SERVICE_PERMISSION,
     is_platform_operator,
     is_tenant_administrator,
+    current_schema_name,
 )
 from .throttling import AuthLoginRateThrottle
 
 GENERIC_LOGIN_ERROR = "Usuario ou senha invalidos."
+
+logger = logging.getLogger(__name__)
 
 
 class IgnoreBodyParser(BaseParser):
@@ -208,6 +212,22 @@ def _string_value(payload, key, *, strip=True):
     return value.strip() if strip else value
 
 
+def _client_ip(request):
+    return request.META.get("REMOTE_ADDR", "")
+
+
+def _audit_auth_event(request, action, outcome, *, user=None):
+    logger.info(
+        "auth_event action=%s outcome=%s schema=%s user_id=%s host=%s ip=%s",
+        action,
+        outcome,
+        current_schema_name(),
+        getattr(user, "pk", "") or "",
+        request.get_host(),
+        _client_ip(request),
+    )
+
+
 @ensure_csrf_cookie
 @never_cache
 @extend_schema(responses=OpenApiTypes.OBJECT)
@@ -275,10 +295,12 @@ def api_auth_login(request):
     )
 
     if not form.is_valid():
+        _audit_auth_event(django_request, "login", "failed")
         return Response({"detail": GENERIC_LOGIN_ERROR}, status=401)
 
     user = form.get_user()
     login(django_request, user)
+    _audit_auth_event(django_request, "login", "success", user=user)
 
     return Response(
         {
@@ -301,5 +323,7 @@ def api_auth_login(request):
 @permission_classes([AllowAny])
 def api_auth_logout(request):
     django_request = getattr(request, "_request", request)
+    user = django_request.user if django_request.user.is_authenticated else None
+    _audit_auth_event(django_request, "logout", "success", user=user)
     logout(django_request)
     return Response({"authenticated": False, "csrfToken": get_token(django_request)})

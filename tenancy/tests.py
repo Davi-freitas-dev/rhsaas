@@ -284,6 +284,52 @@ class TenantAuthSessionIsolationTests(MultiTenantTestCase):
         self.assertEqual(session_b.json()["user"]["username"], "usuario-logout-b")
         self.assertEqual(session_b.wsgi_request.tenant.schema_name, "tenant_b")
 
+    def test_login_e_logout_registram_auditoria_minima_por_tenant(self):
+        user = self.create_user("tenant_a", "usuario-log-auth", "senha-log-auth")
+        client = self._client_for_schema("tenant_a")
+
+        with self.assertLogs("caixa.views_api_auth", level="INFO") as logs:
+            login_response = self._login_json(
+                client,
+                "usuario-log-auth",
+                "senha-log-auth",
+            )
+            logout_response = self._logout_json(client)
+
+        self.assertEqual(login_response.status_code, 200)
+        self.assertEqual(logout_response.status_code, 200)
+        audit_output = "\n".join(logs.output)
+        self.assertIn("auth_event action=login outcome=success", audit_output)
+        self.assertIn("auth_event action=logout outcome=success", audit_output)
+        self.assertIn("schema=tenant_a", audit_output)
+        self.assertIn("host=tenant-a.localhost", audit_output)
+        self.assertIn(f"user_id={user.pk}", audit_output)
+        self.assertIn("ip=", audit_output)
+        self.assertNotIn("senha-log-auth", audit_output)
+        self.assertNotIn("password", audit_output)
+
+    def test_falha_de_login_registra_auditoria_minima_sem_payload(self):
+        self.create_user("tenant_a", "usuario-log-falha", "senha-correta")
+        client = self._client_for_schema("tenant_a")
+
+        with self.assertLogs("caixa.views_api_auth", level="INFO") as logs:
+            response = self._login_json(
+                client,
+                "usuario-log-falha",
+                "senha-incorreta",
+            )
+
+        self.assertEqual(response.status_code, 401)
+        audit_output = "\n".join(logs.output)
+        self.assertIn("auth_event action=login outcome=failed", audit_output)
+        self.assertIn("schema=tenant_a", audit_output)
+        self.assertIn("host=tenant-a.localhost", audit_output)
+        self.assertIn("user_id=", audit_output)
+        self.assertIn("ip=", audit_output)
+        self.assertNotIn("usuario-log-falha", audit_output)
+        self.assertNotIn("senha-incorreta", audit_output)
+        self.assertNotIn("password", audit_output)
+
     def test_login_usa_sempre_o_schema_do_host_atual(self):
         username = "usuario-schema-host"
         self.create_user("tenant_a", username, "senha-schema-a")
@@ -595,6 +641,28 @@ class TenantBackupIsolationTests(MultiTenantTestCase):
             self.assertEqual(response["Cache-Control"], "no-store")
             self.assertEqual(response["Pragma"], "no-cache")
             self.assertEqual(response["X-Content-Type-Options"], "nosniff")
+
+    def test_download_de_backup_invalido_registra_tentativa_negada(self):
+        with TemporaryDirectory() as temp_dir:
+            base_dir = Path(temp_dir)
+            with override_settings(BASE_DIR=base_dir):
+                client = self._authenticated_admin("tenant_a")
+
+                with self.assertLogs("caixa.views_backups", level="INFO") as logs:
+                    response = client.get(
+                        "/backups/backup_banco_inexistente.json/download/"
+                    )
+
+            self.assertEqual(response.status_code, 404)
+            self.assertEqual(response.wsgi_request.tenant.schema_name, "tenant_a")
+            audit_output = "\n".join(logs.output)
+            self.assertIn("backup_event action=download outcome=denied", audit_output)
+            self.assertIn("schema=tenant_a", audit_output)
+            self.assertIn("host=tenant-a.localhost", audit_output)
+            self.assertIn("user_id=", audit_output)
+            self.assertIn("filename=backup_banco_inexistente.json", audit_output)
+            self.assertNotIn("encontrado", audit_output.lower())
+            self.assertNotIn("exists", audit_output.lower())
 
     def test_criacao_manual_de_backup_grava_no_diretorio_do_tenant(self):
         with TemporaryDirectory() as temp_dir:

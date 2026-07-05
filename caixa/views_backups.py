@@ -1,7 +1,9 @@
 import logging
+import re
 from datetime import datetime
+from pathlib import Path
 
-from django.http import FileResponse
+from django.http import FileResponse, Http404
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.cache import never_cache
@@ -24,6 +26,12 @@ from .views_api_auth import IgnoreBodyParser, csrf_protect_drf_view
 
 
 logger = logging.getLogger(__name__)
+_SAFE_LOG_FILENAME_RE = re.compile(r"[^A-Za-z0-9_.-]")
+
+
+def _sanitize_log_filename(filename):
+    filename = Path(str(filename or "")).name[:160]
+    return _SAFE_LOG_FILENAME_RE.sub("_", filename)
 
 
 def _audit_backup_event(request, action, outcome, *, filename=""):
@@ -35,7 +43,7 @@ def _audit_backup_event(request, action, outcome, *, filename=""):
         current_schema_name(),
         getattr(user, "pk", None),
         request.get_host(),
-        filename,
+        _sanitize_log_filename(filename),
     )
 
 
@@ -143,7 +151,12 @@ def api_backup_criar_manual(request):
 
 @require_tenant_administrator
 def backup_download(request, nome_arquivo):
-    caminho = obter_caminho_backup(nome_arquivo)
+    try:
+        caminho = obter_caminho_backup(nome_arquivo)
+    except Http404:
+        _audit_backup_event(request, "download", "denied", filename=nome_arquivo)
+        raise
+
     _audit_backup_event(request, "download", "allowed", filename=nome_arquivo)
 
     response = FileResponse(

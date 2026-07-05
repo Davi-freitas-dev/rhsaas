@@ -18,7 +18,7 @@ Criado em: 2026-07-05
 | Métrica | Progresso |
 | --- | --- |
 | Áreas totalmente adaptadas | 11 / 30 |
-| Riscos altos concluídos | 8 / 8 |
+| Riscos altos concluídos | 9 / 9 |
 | Riscos médios concluídos | 1 / 9 |
 | Riscos baixos concluídos | 0 / 4 |
 
@@ -180,8 +180,8 @@ Uma área só pode ser marcada como "✅ Totalmente adaptada" quando:
 | Exportações | ✅ Totalmente adaptada | - | Export tenant-scoped, autorizado, auditado e testado com dois tenants para o escopo demo/teste |
 | Uploads | 🟡 Parcialmente adaptada | L-002 | Nao ha upload real na demo; definir arquitetura tenant-aware antes de qualquer upload real |
 | Media | 🟡 Parcialmente adaptada | L-002 | `MEDIA_ROOT`/`MEDIA_URL` estao explicitos; definir paths, URLs e limpeza por tenant antes de uploads reais |
-| Logs | 🟡 Parcialmente adaptada | M-003 | Incluir tenant/schema, usuário, IP e ação em eventos relevantes |
-| Auditoria | ❌ Não adaptada | M-003 | Criar trilha para login, logout, backup, export, download e ações administrativas |
+| Logs | 🟡 Parcialmente adaptada | M-003 | H-009 cobre logs mínimos da demo; ainda falta padronização ampla para produção real |
+| Auditoria | 🟡 Parcialmente adaptada | M-003 | H-009 cobre rastreabilidade mínima por log; ainda falta trilha persistente e cobertura ampla de ações administrativas |
 | Admin Django | ✅ Totalmente adaptada | - | Manter `/admin/` desativado por teste até existir admin público e tenant separados |
 | Services | 🟡 Parcialmente adaptada | M-006 | Revisar serviços sensíveis para schema ativo, permissões e ausência de globais |
 | Selectors | ✅ Totalmente adaptada | - | Seletores sensíveis revisados no escopo atual e cobertos por testes de exportação entre tenants |
@@ -499,6 +499,32 @@ Quando um risco for dividido em riscos menores, ele nunca deve ser removido. Dev
 - Histórico individual:
   - 2026-07-05: Criado e concluído como hardening mínimo de uploads/media/downloads para demo/teste, sem implementar upload real nem storage enterprise.
 
+#### H-009
+
+- ID: H-009
+- Domínio: Logs e Auditoria
+- Severidade: Alta
+- Status: Concluído
+- Responsável: Davi
+- Estimativa: Pequeno
+- Descrição: A demo precisava de rastreabilidade mínima para login, logout, falha de login e tentativa inválida de download de backup.
+- Motivo: Mais de um tester pode operar em tenants diferentes; incidentes básicos precisam indicar schema, host, usuário quando existir e IP sem registrar payload sensível.
+- Arquivos envolvidos: `caixa/views_api_auth.py`, `caixa/views_backups.py`, `tenancy/tests.py`.
+- Impacto: Sem esses eventos, falhas de autenticação, logout e tentativas inválidas de download ficariam difíceis de investigar por tenant durante a demo.
+- Estratégia de correção: Registrar eventos mínimos em log simples para login bem-sucedido, falha de login, logout e download de backup negado; nunca registrar senha, token, cookie, `SECRET_KEY` nem corpo da requisição; adicionar testes multi-tenant focados.
+- Dependências: H-007 e H-008 concluídos.
+- Critério de Aceite: Logs de auth incluem action, outcome, schema, host, user_id quando existir e IP; falha de login não registra username/senha/payload; tentativa inválida de download de backup é auditada como negada sem revelar existência do arquivo; validações locais passam.
+- Evidências:
+  - 2026-07-05: `api_auth_login` passou a registrar `auth_event action=login outcome=success` e `outcome=failed` sem payload.
+  - 2026-07-05: `api_auth_logout` passou a registrar `auth_event action=logout outcome=success` antes de destruir a sessão.
+  - 2026-07-05: `backup_download` passou a registrar `backup_event action=download outcome=denied` quando o arquivo solicitado retorna 404, com filename sanitizado.
+  - 2026-07-05: Adicionados testes `TenantAuthSessionIsolationTests.test_login_e_logout_registram_auditoria_minima_por_tenant`, `TenantAuthSessionIsolationTests.test_falha_de_login_registra_auditoria_minima_sem_payload` e `TenantBackupIsolationTests.test_download_de_backup_invalido_registra_tentativa_negada`.
+  - 2026-07-05: `$env:DEBUG='True'; venv\Scripts\python.exe manage.py test tenancy.tests.TenantAuthSessionIsolationTests tenancy.tests.TenantBackupIsolationTests` aprovado, 15 testes, 174.965s.
+  - 2026-07-05: `$env:DEBUG='True'; venv\Scripts\python.exe manage.py check` aprovado.
+  - 2026-07-05: `git diff --check` aprovado sem erros.
+- Histórico individual:
+  - 2026-07-05: Criado e concluído como hardening mínimo de logs/auditoria operacional para demo/teste, sem criar auditoria persistente nem logging enterprise.
+
 ### 🟠 Riscos MÉDIOS
 
 #### M-001
@@ -544,7 +570,7 @@ Quando um risco for dividido em riscos menores, ele nunca deve ser removido. Dev
 - ID: M-003
 - Domínio: Observabilidade
 - Severidade: Média
-- Status: Não iniciado
+- Status: Em andamento
 - Responsável: Davi
 - Estimativa: Médio
 - Descrição: Logs e auditoria ainda não são suficientes para SaaS.
@@ -554,9 +580,12 @@ Quando um risco for dividido em riscos menores, ele nunca deve ser removido. Dev
 - Estratégia de correção: Incluir `schema_name`, usuário, IP e ação nos logs; criar auditoria para ações sensíveis.
 - Dependências: H-001, H-005.
 - Critério de Aceite: Eventos sensíveis registram tenant/schema, usuário, IP, Host, ação e resultado; logs/auditoria permitem investigar acesso, exportação, backup e download por tenant.
-- Evidências: Nenhuma registrada ainda.
+- Evidências:
+  - 2026-07-05: H-001/H-005 adicionaram logs mínimos para backup e exportação com schema, user_id, host, ação e resultado.
+  - 2026-07-05: H-009 adicionou logs mínimos para login, falha de login, logout e download de backup negado.
 - Histórico individual:
   - 2026-07-05: Criado a partir da auditoria arquitetural.
+  - 2026-07-05: Parcialmente encaminhado por H-009 para o escopo demo/teste; permanece aberto para padronização ampla, auditoria persistente e observabilidade de produção real.
 
 #### M-004
 
@@ -766,6 +795,7 @@ Esta seção não duplica riscos. Ela apenas mapeia os IDs existentes no backlog
 
 - H-002
 - H-007
+- H-009
 - M-005
 
 ### Admin Django
@@ -776,6 +806,7 @@ Esta seção não duplica riscos. Ela apenas mapeia os IDs existentes no backlog
 
 - H-001
 - H-008
+- H-009
 
 ### Cache
 
@@ -812,6 +843,7 @@ Esta seção não duplica riscos. Ela apenas mapeia os IDs existentes no backlog
 - H-001
 - H-005
 - H-008
+- H-009
 
 ### Exportações
 
@@ -821,6 +853,11 @@ Esta seção não duplica riscos. Ela apenas mapeia os IDs existentes no backlog
 
 - H-008
 - L-002
+
+### Logs e Auditoria
+
+- H-009
+- M-003
 
 ### Observabilidade
 
@@ -1014,6 +1051,19 @@ Não será permitido:
 Riscos antigos devem permanecer no documento, mesmo quando concluídos ou desdobrados.
 
 ## Histórico
+
+### 2026-07-05 - H-009 concluído: logs mínimos de autenticação e downloads para demo
+
+- Riscos corrigidos: H-009.
+- Riscos parcialmente encaminhados: M-003 permanece em andamento para observabilidade/auditoria completa de produção real.
+- Arquivos alterados: `caixa/views_api_auth.py`, `caixa/views_backups.py`, `tenancy/tests.py`, `docs/PLANO_HARDENING_SAAS.md`.
+- Validações executadas:
+  - `$env:DEBUG='True'; venv\Scripts\python.exe manage.py test tenancy.tests.TenantAuthSessionIsolationTests tenancy.tests.TenantBackupIsolationTests`: aprovado, 15 testes.
+  - `$env:DEBUG='True'; venv\Scripts\python.exe manage.py check`: aprovado.
+  - `git diff --check`: aprovado sem erros.
+- Auditoria executada: revisão read-only de `LOGGING`, `logger.*`, `print`, fluxos de login/logout, backup/download/exportação, Axes, middleware, rate limit de reset de senha e testes existentes.
+- Novos riscos encontrados: nenhum risco alto novo. M-003 permanece para padronização de logs/auditoria mais ampla e futura auditoria persistente.
+- Decisão registrada: para a demo, logs simples em console são suficientes desde que incluam tenant/schema, host, IP, ação, resultado e usuário quando existir, sem payload sensível.
 
 ### 2026-07-05 - H-008 concluído: downloads de backup e política base de mídia para demo
 
