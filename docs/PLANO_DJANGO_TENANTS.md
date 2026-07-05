@@ -12,6 +12,14 @@ banco PostgreSQL de producao nem dados reais de clientes neste projeto. O
 projeto antigo pessoal permanece separado e nao sera migrado para o RH SaaS
 nesta fase.
 
+Nota de status do spike inicial em 2026-07-05: a primeira validacao tecnica ja
+instalou `django-tenants`, criou o app `tenancy`, separou URLs publicas e de
+tenant, configurou `TenantMainMiddleware`, `TenantSyncRouter`,
+`SHARED_APPS`/`TENANT_APPS` e criou o tenant local `rh_teste` em um PostgreSQL
+descartavel. O restante deste plano continua como referencia de arquitetura e
+ordem de implementacao; trechos que descrevem o estado anterior ao spike devem
+ser lidos como historico, nao como estado atual.
+
 ## Decisao de arquitetura
 
 O RH SaaS usara multi-tenancy por schema PostgreSQL com `django-tenants`.
