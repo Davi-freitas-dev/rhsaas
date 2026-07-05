@@ -5,9 +5,7 @@ from django.http import FileResponse
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.cache import never_cache
-from django.views.decorators.http import require_GET
-from django.views.decorators.http import require_POST
-from django.views.decorators.http import require_safe
+from django.views.decorators.http import require_GET, require_POST, require_safe
 from drf_spectacular.utils import OpenApiTypes, extend_schema
 from rest_framework.decorators import api_view, parser_classes, permission_classes
 from rest_framework.permissions import AllowAny
@@ -15,8 +13,10 @@ from rest_framework.response import Response
 
 from .frontend_bridge import legacy_frontend_redirect_required_response
 from .permissions import (
-    require_api_superuser,
-    require_superuser,
+    current_schema_name,
+    is_tenant_administrator,
+    require_api_tenant_administrator,
+    require_tenant_administrator,
 )
 from .selectors_backups import listar_backups_disponiveis, obter_caminho_backup
 from .services_backups import criar_backup_banco
@@ -26,7 +26,20 @@ from .views_api_auth import IgnoreBodyParser, csrf_protect_drf_view
 logger = logging.getLogger(__name__)
 
 
-@require_superuser
+def _audit_backup_event(request, action, outcome, *, filename=""):
+    user = getattr(request, "user", None)
+    logger.info(
+        "backup_event action=%s outcome=%s schema=%s user_id=%s host=%s filename=%s",
+        action,
+        outcome,
+        current_schema_name(),
+        getattr(user, "pk", None),
+        request.get_host(),
+        filename,
+    )
+
+
+@require_tenant_administrator
 @require_safe
 def backups_lista(request):
     return legacy_frontend_redirect_required_response(request, "backups_lista")
@@ -47,6 +60,8 @@ def serializar_backup(arquivo):
         "createdAt": criado_em.isoformat(),
         "criado_em": arquivo["criado_em"],
         "downloadPath": reverse("caixa:backup_download", args=[nome]),
+        "scope": arquivo["scope"],
+        "schemaName": arquivo["schema_name"],
     }
 
 
@@ -62,21 +77,17 @@ def api_backups(request):
             status=401,
         )
 
-    if not request.user.is_superuser:
+    if not is_tenant_administrator(request.user):
+        _audit_backup_event(request, "list", "denied")
         return Response({"detail": "Permission denied."}, status=403)
 
-    return Response(
-        {
-            "backups": [
-                serializar_backup(arquivo)
-                for arquivo in listar_backups_disponiveis()
-            ],
-        }
-    )
+    backups = [serializar_backup(arquivo) for arquivo in listar_backups_disponiveis()]
+    _audit_backup_event(request, "list", "allowed")
+    return Response({"backups": backups})
 
 
 @csrf_protect_drf_view
-@require_api_superuser
+@require_api_tenant_administrator
 @require_POST
 @extend_schema(
     request=None,
@@ -91,9 +102,10 @@ def api_backup_criar_manual(request):
         resultado = criar_backup_banco(force=True)
     except Exception:
         logger.exception("Falha ao criar backup manual pela API.")
+        _audit_backup_event(request, "create", "error")
         return Response(
             {
-                "detail": "Não foi possível criar o backup manual. Verifique os logs do servidor.",
+                "detail": "Nao foi possivel criar o backup manual. Verifique os logs do servidor.",
             },
             status=500,
         )
@@ -109,6 +121,12 @@ def api_backup_criar_manual(request):
             None,
         )
 
+    _audit_backup_event(
+        request,
+        "create",
+        "created" if resultado["criado"] else "unchanged",
+        filename=resultado.get("arquivo") or "",
+    )
     return Response(
         {
             "created": bool(resultado["criado"]),
@@ -123,9 +141,10 @@ def api_backup_criar_manual(request):
     )
 
 
-@require_superuser
+@require_tenant_administrator
 def backup_download(request, nome_arquivo):
     caminho = obter_caminho_backup(nome_arquivo)
+    _audit_backup_event(request, "download", "allowed", filename=nome_arquivo)
 
     return FileResponse(
         open(caminho, "rb"),

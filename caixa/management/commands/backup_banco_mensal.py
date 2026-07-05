@@ -1,6 +1,7 @@
 from django.core.management import BaseCommand
 
 from caixa.services_backups import criar_backup_banco
+from tenancy.command_guards import ensure_tenant_schema
 
 
 class Command(BaseCommand):
@@ -20,6 +21,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema("backup_banco_mensal", action="criar backup operacional")
         resultado = criar_backup_banco(
             force=options["force"],
             manter=options["manter"],

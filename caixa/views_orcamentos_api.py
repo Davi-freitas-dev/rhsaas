@@ -29,6 +29,7 @@ from .permissions import (
     api_authentication_required_response,
     api_no_store_json_response,
     api_permission_denied_response,
+    is_tenant_administrator,
     require_api_permission,
 )
 from .selectors_cadastros import (
@@ -427,7 +428,8 @@ def _permissions_payload(user):
             for permission in [ADD_BUDGET_PERMISSION, ADD_BUDGET_ITEM_PERMISSION]
         ),
         "canUpdate": user.has_perm(CHANGE_BUDGET_PERMISSION),
-        "canApprove": user.is_superuser and user.has_perm(CHANGE_BUDGET_PERMISSION),
+        "canApprove": is_tenant_administrator(user)
+        and user.has_perm(CHANGE_BUDGET_PERMISSION),
     }
 
 

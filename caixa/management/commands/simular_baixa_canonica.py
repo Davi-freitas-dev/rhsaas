@@ -4,6 +4,7 @@ from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
 
 from caixa.services_escrita_canonica import simular_baixa_canonica_primeiro
+from tenancy.command_guards import ensure_tenant_schema
 
 
 class Command(BaseCommand):
@@ -33,6 +34,10 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema(
+            "simular_baixa_canonica",
+            action="simular baixa com dados operacionais",
+        )
         payload = {
             "sourceDetail": options.get("source_detail"),
             "realizedAmount": options.get("realized_amount"),

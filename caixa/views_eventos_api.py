@@ -23,6 +23,7 @@ from .permissions import (
     api_authentication_required_response,
     api_no_store_json_response,
     api_permission_denied_response,
+    is_tenant_administrator,
     require_api_permission,
 )
 from .selectors_cadastros import (
@@ -264,7 +265,7 @@ def _eventos_response(request):
                 "permissions": {
                     "canView": request.user.has_perm(VIEW_EVENT_PERMISSION),
                     "canUpdate": request.user.has_perm(CHANGE_EVENT_PERMISSION),
-                    "canManageInAdmin": request.user.is_superuser,
+                    "canManageInAdmin": is_tenant_administrator(request.user),
                 },
                 "meta": {"source": "backend"},
             }
@@ -443,7 +444,7 @@ def api_evento_detalhe(request, pk):
                         "permissions": {
                             "canView": request.user.has_perm(VIEW_EVENT_PERMISSION),
                             "canUpdate": request.user.has_perm(CHANGE_EVENT_PERMISSION),
-                            "canManageInAdmin": request.user.is_superuser,
+                            "canManageInAdmin": is_tenant_administrator(request.user),
                         },
                         "meta": {"source": "backend"},
                     }

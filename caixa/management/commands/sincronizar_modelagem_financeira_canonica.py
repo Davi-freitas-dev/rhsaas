@@ -5,6 +5,7 @@ from django.core.management.base import BaseCommand
 from caixa.services_modelagem_canonica import (
     sincronizar_modelagem_financeira_canonica,
 )
+from tenancy.command_guards import ensure_tenant_schema
 
 
 class Command(BaseCommand):
@@ -27,6 +28,10 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema(
+            "sincronizar_modelagem_financeira_canonica",
+            action="sincronizar dados operacionais",
+        )
         resultado = sincronizar_modelagem_financeira_canonica(
             aplicar=options["aplicar"],
         )

@@ -3,6 +3,7 @@ import json
 from django.core.management.base import BaseCommand, CommandError
 
 from caixa.services_dividas import sincronizar_credores_dividas_fcf
+from tenancy.command_guards import ensure_tenant_schema
 
 
 class Command(BaseCommand):
@@ -36,6 +37,10 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema(
+            "sincronizar_credores_dividas_fcf",
+            action="sincronizar dados operacionais",
+        )
         if options["limit"] < 0:
             raise CommandError("--limit deve ser maior ou igual a 0.")
 

@@ -10,6 +10,7 @@ from caixa.services_dividas_fcf import (
     resumir_integridade_entradas_fcf_dividas,
     sincronizar_entrada_fcf_divida,
 )
+from tenancy.command_guards import ensure_tenant_schema
 
 
 class Command(BaseCommand):
@@ -43,6 +44,10 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema(
+            "sincronizar_entradas_fcf_dividas",
+            action="sincronizar dados operacionais",
+        )
         aplicar = options["aplicar"]
         limit = options["limit"]
         if limit < 0:

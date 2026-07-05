@@ -58,6 +58,8 @@ from .permissions import (
     VIEW_FIXED_COST_PERMISSION,
     VIEW_REVENUE_PERMISSION,
     VIEW_SERVICE_PERMISSION,
+    is_platform_operator,
+    is_tenant_administrator,
 )
 from .throttling import AuthLoginRateThrottle
 
@@ -125,7 +127,7 @@ def _user_payload(user):
             for permission in [ADD_BUDGET_PERMISSION, ADD_BUDGET_ITEM_PERMISSION]
         ),
         "canChangeBudget": user.has_perm(CHANGE_BUDGET_PERMISSION),
-        "canApproveBudget": user.is_superuser
+        "canApproveBudget": is_tenant_administrator(user)
         and user.has_perm(CHANGE_BUDGET_PERMISSION),
         "canViewFixedCosts": user.has_perm(VIEW_FIXED_COST_PERMISSION),
         "canAddFixedCost": user.has_perm(ADD_FIXED_COST_PERMISSION),
@@ -166,7 +168,7 @@ def _user_payload(user):
             user.has_perm(permission)
             for permission in PERMISSOES_BAIXA_NATIVA.values()
         ),
-        "canManageBackups": user.is_superuser,
+        "canManageBackups": is_platform_operator(user),
     }
 
     return {
@@ -175,6 +177,8 @@ def _user_payload(user):
         "displayName": user.get_full_name() or user.get_username(),
         "isStaff": user.is_staff,
         "isSuperuser": user.is_superuser,
+        "isTenantAdmin": is_tenant_administrator(user),
+        "isPlatformOperator": is_platform_operator(user),
         **permissions,
         "permissions": permissions,
     }

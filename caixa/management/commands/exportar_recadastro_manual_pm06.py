@@ -2,7 +2,6 @@ import json
 from decimal import Decimal
 from pathlib import Path
 
-from django.conf import settings
 from django.core.management import BaseCommand
 from django.utils import timezone
 
@@ -22,7 +21,9 @@ from caixa.models_dividas import Credor, DividaFinanceira
 from caixa.models_fcf import FinanciamentoMovimentacao
 from caixa.models_fci import Investimento
 from caixa.models_servico import EventoCustoServico
+from caixa.tenant_files import recadastro_dir_for_schema
 from caixa.utils_financeiros import decimal_zero
+from tenancy.command_guards import ensure_tenant_schema
 
 
 DEFAULT_OUTPUT_JSON = "pm06-recadastro-manual.json"
@@ -67,6 +68,10 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema(
+            "exportar_recadastro_manual_pm06",
+            action="exportar dados operacionais",
+        )
         output_files = resolver_arquivos_saida(options)
         payload = montar_pacote_recadastro_manual_pm06(output_files)
         registro = montar_registro_markdown(payload)
@@ -98,7 +103,7 @@ def resolver_arquivos_saida(options):
     elif json_path or record_path:
         base = None
     else:
-        base = Path(settings.BASE_DIR) / "backups" / "recadastro"
+        base = recadastro_dir_for_schema()
 
     if base is not None:
         json_path = json_path or str(base / DEFAULT_OUTPUT_JSON)

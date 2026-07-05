@@ -3,9 +3,10 @@ import json
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from django.conf import settings
 from django.core.management import call_command
 from django.utils import timezone
+
+from .tenant_files import artifact_scope_for_schema, backup_dir_for_schema
 
 
 def hash_conteudo(conteudo):
@@ -28,13 +29,21 @@ def ultimo_hash_backup(backup_dir):
 
 
 def criar_backup_banco(force=False, manter=3):
-    pasta_backup = Path(settings.BASE_DIR) / "backups" / "db"
+    scope, schema_name = artifact_scope_for_schema()
+    pasta_backup = backup_dir_for_schema(schema_name)
     pasta_backup.mkdir(parents=True, exist_ok=True)
+    pasta_temporarios = pasta_backup / ".tmp"
+    pasta_temporarios.mkdir(parents=True, exist_ok=True)
 
     agora = timezone.localtime()
     mes_referencia = agora.strftime("%Y-%m")
 
-    with NamedTemporaryFile("w+b", suffix=".json", delete=False) as temporario:
+    with NamedTemporaryFile(
+        "w+b",
+        suffix=".json",
+        dir=pasta_temporarios,
+        delete=False,
+    ) as temporario:
         caminho_temporario = Path(temporario.name)
 
     try:
@@ -57,6 +66,8 @@ def criar_backup_banco(force=False, manter=3):
                 "criado": False,
                 "arquivo": "",
                 "caminho": None,
+                "scope": scope,
+                "schema_name": schema_name,
                 "removidos": removidos,
                 "mensagem": "Nenhum backup criado: dados iguais ao ultimo backup.",
             }
@@ -71,6 +82,8 @@ def criar_backup_banco(force=False, manter=3):
             "arquivo": destino.name,
             "criado_em": agora.isoformat(),
             "mes_referencia": mes_referencia,
+            "scope": scope,
+            "schema_name": schema_name,
             "sha256": hash_atual,
             "tamanho_bytes": destino.stat().st_size,
         }
@@ -84,6 +97,8 @@ def criar_backup_banco(force=False, manter=3):
             "criado": True,
             "arquivo": destino.name,
             "caminho": destino,
+            "scope": scope,
+            "schema_name": schema_name,
             "removidos": removidos,
             "mensagem": f"Backup criado: {destino}",
         }

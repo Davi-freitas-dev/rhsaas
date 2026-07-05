@@ -26,6 +26,7 @@ from caixa.models_fcf import FinanciamentoMovimentacao
 from caixa.models_fci import Investimento
 from caixa.models_pagamentos import PagamentoEventoCustoExtra, PagamentoEventoCustoServico
 from caixa.models_servico import EventoCustoServico
+from tenancy.command_guards import ensure_tenant_schema
 
 
 CONFIRMATION_TOKEN = "LIMPAR_BASE_PM06_COM_BACKUP_E_RECADASTRO_MANUAL"
@@ -95,6 +96,10 @@ class Command(BaseCommand):
         parser.add_argument("--falhar", action="store_true")
 
     def handle(self, *args, **options):
+        ensure_tenant_schema(
+            "limpar_base_operacional_pm06",
+            action="limpar dados operacionais",
+        )
         mode = "execute" if options["executar"] else "dry-run"
         refs = _normalizar_referencias(options, mode)
         output_files = _normalizar_arquivos_saida(options, mode)

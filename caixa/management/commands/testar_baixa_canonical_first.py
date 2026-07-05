@@ -12,6 +12,7 @@ from caixa.contracts_obrigacoes import CANONICAL_FIRST_DIRECT_SETTLEMENT_SOURCES
 from caixa.models import ObrigacaoFinanceira
 from caixa.services_obrigacoes import liquidar_obrigacao_financeira_com_contexto_canonico
 from caixa.utils_financeiros import quantizar_moeda
+from tenancy.command_guards import ensure_tenant_schema
 
 
 class Command(BaseCommand):
@@ -38,6 +39,10 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema(
+            "testar_baixa_canonical_first",
+            action="testar baixa com dados operacionais",
+        )
         try:
             resultado = testar_baixa_canonical_first(
                 username=options["username"],

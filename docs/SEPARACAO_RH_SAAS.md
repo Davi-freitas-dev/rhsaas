@@ -27,9 +27,22 @@ Auditoria inicial da copia RH SaaS.
   legado de producao do projeto antigo; nao foram alterados por serem
   validacoes operacionais.
 
+## Frontend RH SaaS
+
+- Frontend novo do RH SaaS: `C:\Users\Davif\OneDrive\Desktop\Projetos\rhsaasfront`.
+- A pasta foi criada como copia limpa do frontend antigo, somente com arquivos
+  versionados.
+- Nao foram copiados `.git`, `.next`, `node_modules`, `.env.local`, `.vercel`,
+  `test-results` ou `playwright-report`.
+- Antes de integrar/deployar, revisar referencias legadas a `rhremoto`,
+  `adm.rhremoto.com`, `caixa.rhremoto.com`, CSP, variaveis `NEXT_PUBLIC_*`,
+  docs, nome do pacote e configuracoes de cookies/CORS/CSRF para subdominios de
+  tenant.
+
 ## Pendencias antes de producao
 
 - Confirmar dominio real do RH SaaS.
 - Confirmar nome definitivo do banco PostgreSQL.
 - Revisar ou substituir os roteiros de deploy herdados antes de qualquer uso.
-- Confirmar se o frontend Next.js tera repositorio separado e quais serao as URLs.
+- Criar repositorio/remote proprio para o frontend Next.js do RH SaaS e
+  confirmar quais serao as URLs.

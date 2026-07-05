@@ -21,6 +21,7 @@ from caixa.services_lancamentos import (
     sincronizar_lancamento_pagamento_parcela,
     sincronizar_lancamento_receita,
 )
+from tenancy.command_guards import ensure_tenant_schema
 
 
 ORIGENS_LEDGER = {
@@ -95,6 +96,10 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema(
+            "sincronizar_lancamentos_financeiros",
+            action="sincronizar dados operacionais",
+        )
         resultado = sincronizar_lancamentos_financeiros(
             aplicar=options["aplicar"],
             origens=options["origem"],

@@ -1,5 +1,7 @@
 from django.db import transaction
 
+from .permissions import is_tenant_administrator
+
 
 def criar_orcamento_com_itens(form, formset, custos_extras_formset=None):
     with transaction.atomic():
@@ -14,10 +16,10 @@ def criar_orcamento_com_itens(form, formset, custos_extras_formset=None):
 
 
 def aprovar_orcamento_como_superuser(orcamento, user):
-    if not user.is_superuser:
+    if not is_tenant_administrator(user):
         return {
             "ok": False,
-            "mensagem": "Apenas superusuários podem aprovar orçamentos por esta tela.",
+            "mensagem": "Apenas administradores do tenant podem aprovar orçamentos por esta tela.",
             "evento": None,
         }
 

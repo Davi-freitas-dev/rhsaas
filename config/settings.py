@@ -137,8 +137,8 @@ REST_FRAMEWORK = {
         "rest_framework.permissions.IsAuthenticated",
     ],
     "DEFAULT_THROTTLE_CLASSES": [
-        "rest_framework.throttling.AnonRateThrottle",
-        "rest_framework.throttling.UserRateThrottle",
+        "caixa.throttling.TenantAnonRateThrottle",
+        "caixa.throttling.TenantUserRateThrottle",
     ],
     "DEFAULT_THROTTLE_RATES": {
         "anon": DRF_THROTTLE_ANON_RATE,
@@ -245,6 +245,8 @@ CACHES = {
             default="django.core.cache.backends.locmem.LocMemCache",
         ),
         "LOCATION": env("CACHE_LOCATION", default="rhsaas-cache"),
+        "KEY_PREFIX": env("CACHE_KEY_PREFIX", default="rhsaas"),
+        "KEY_FUNCTION": "tenancy.cache.tenant_cache_key",
     }
 }
 
@@ -256,11 +258,7 @@ LOGOUT_REDIRECT_URL = "caixa:login"
 
 SESSION_ENGINE = env(
     "SESSION_ENGINE",
-    default=(
-        "django.contrib.sessions.backends.cached_db"
-        if not DEBUG
-        else "django.contrib.sessions.backends.db"
-    ),
+    default="django.contrib.sessions.backends.db",
 )
 SESSION_COOKIE_AGE = env.int("SESSION_COOKIE_AGE", default=1800)
 SESSION_EXPIRE_AT_BROWSER_CLOSE = env.bool("SESSION_EXPIRE_AT_BROWSER_CLOSE", default=True)

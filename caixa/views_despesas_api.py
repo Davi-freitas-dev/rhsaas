@@ -26,6 +26,7 @@ from .permissions import (
     api_authentication_required_response,
     api_no_store_json_response,
     api_permission_denied_response,
+    is_tenant_administrator,
 )
 from .serializers_dimensoes_operacionais import serializar_dimensao_operacional
 from .utils_financeiros import decimal_zero
@@ -260,7 +261,7 @@ def _despesa_detalhe_response(request, despesa):
                 "permissions": {
                     "canView": request.user.has_perm(VIEW_EXPENSE_PERMISSION),
                     "canUpdate": request.user.has_perm(CHANGE_EXPENSE_PERMISSION),
-                    "canManageInAdmin": request.user.is_superuser,
+                    "canManageInAdmin": is_tenant_administrator(request.user),
                 },
                 "meta": {"source": "backend"},
             }

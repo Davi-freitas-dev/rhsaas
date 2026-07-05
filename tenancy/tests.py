@@ -1,11 +1,25 @@
 import json
+from io import StringIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from datetime import date
+from decimal import Decimal
+from unittest.mock import patch
 
 from django.conf import settings
+from django.core.cache import cache
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.contrib.auth.models import Group
 from django.contrib.auth import get_user_model
 from django.db import connection
+from django.test import override_settings
 from django_tenants.utils import get_public_schema_name
 
+from caixa.models import ReceitaOperacional
+from caixa.permissions import is_platform_operator, is_tenant_administrator
+from caixa.tenant_files import backup_dir_for_schema
+from caixa.throttling import AuthLoginRateThrottle, TenantUserRateThrottle
 from tenancy.models import Domain, Tenant
 from tenancy.test_helpers import MultiTenantTestCase, OPERATIONAL_GROUPS
 
@@ -85,6 +99,65 @@ class TenantIsolationInfrastructureTests(MultiTenantTestCase):
                     )
 
                 self.assertEqual(tenant_groups, set(OPERATIONAL_GROUPS))
+
+
+class TenantAdminDisabledTests(MultiTenantTestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.add_allowed_host("admin-public.localhost")
+
+    def _route_strings(self, urlpatterns, prefix=""):
+        routes = []
+        for url_pattern in urlpatterns:
+            route = f"{prefix}{url_pattern.pattern}"
+            routes.append(route)
+            nested_patterns = getattr(url_pattern, "url_patterns", None)
+            if nested_patterns:
+                routes.extend(self._route_strings(nested_patterns, route))
+        return routes
+
+    def _admin_resolvers(self, urlpatterns, prefix=""):
+        resolvers = []
+        for url_pattern in urlpatterns:
+            route = f"{prefix}{url_pattern.pattern}"
+            app_name = getattr(url_pattern, "app_name", None)
+            namespace = getattr(url_pattern, "namespace", None)
+            if app_name == "admin" or namespace == "admin":
+                resolvers.append(route)
+            nested_patterns = getattr(url_pattern, "url_patterns", None)
+            if nested_patterns:
+                resolvers.extend(self._admin_resolvers(nested_patterns, route))
+        return resolvers
+
+    def test_urlconfs_nao_publicam_django_admin(self):
+        from config import public_urls, tenant_urls
+
+        routes = self._route_strings(public_urls.urlpatterns)
+        routes.extend(self._route_strings(tenant_urls.urlpatterns))
+        admin_resolvers = self._admin_resolvers(public_urls.urlpatterns)
+        admin_resolvers.extend(self._admin_resolvers(tenant_urls.urlpatterns))
+
+        self.assertEqual(
+            [route for route in routes if route.startswith("admin/")],
+            [],
+        )
+        self.assertEqual(admin_resolvers, [])
+
+    def test_admin_no_public_sem_tenant_retorna_404(self):
+        response = self.client.get("/admin/", HTTP_HOST="admin-public.localhost")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(connection.schema_name, get_public_schema_name())
+
+    def test_admin_no_tenant_retorna_404(self):
+        response = self.client_for_tenant(self.primary_tenant).get("/admin/")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(
+            response.wsgi_request.tenant.schema_name,
+            self.primary_tenant.schema_name,
+        )
 
 
 class TenantAuthSessionIsolationTests(MultiTenantTestCase):
@@ -230,3 +303,687 @@ class TenantAuthSessionIsolationTests(MultiTenantTestCase):
         self.assertEqual(response_b.status_code, 200)
         self.assertEqual(response_b.wsgi_request.tenant.schema_name, "tenant_b")
         self.assertEqual(response_b.json()["user"]["username"], username)
+
+
+class TenantPlatformRoleSeparationTests(MultiTenantTestCase):
+    def _login_json(self, client, username, password):
+        return client.post(
+            "/api/auth/login/",
+            data=json.dumps({"username": username, "password": password}),
+            content_type="application/json",
+        )
+
+    def test_superuser_de_tenant_nao_e_operador_da_plataforma(self):
+        self.create_user(
+            "tenant_a",
+            "admin-tenant",
+            "senha-admin-tenant",
+            is_staff=True,
+            is_superuser=True,
+        )
+
+        with self.in_schema("tenant_a"):
+            tenant_user = get_user_model().objects.get(username="admin-tenant")
+            self.assertTrue(is_tenant_administrator(tenant_user))
+            self.assertFalse(is_platform_operator(tenant_user))
+
+        self.switch_to_public()
+        platform_user = get_user_model().objects.create_superuser(
+            username="operador-plataforma",
+            email="operador-plataforma@example.com",
+            password="senha-operador-plataforma",
+        )
+
+        self.assertTrue(is_platform_operator(platform_user))
+        self.assertFalse(is_tenant_administrator(platform_user))
+
+    def test_payload_de_sessao_separa_admin_tenant_de_operador_plataforma(self):
+        self.create_user(
+            "tenant_a",
+            "admin-payload",
+            "senha-admin-payload",
+            is_staff=True,
+            is_superuser=True,
+        )
+        client = self.client_for_tenant(self.primary_tenant)
+
+        response = self._login_json(client, "admin-payload", "senha-admin-payload")
+        payload = response.json()["user"]
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload["isSuperuser"])
+        self.assertTrue(payload["isTenantAdmin"])
+        self.assertFalse(payload["isPlatformOperator"])
+        self.assertFalse(payload["canManageBackups"])
+
+    def test_admin_do_tenant_nao_recebe_permissao_de_backup_global(self):
+        self.create_user(
+            "tenant_a",
+            "admin-backup-global",
+            "senha-admin-backup-global",
+            is_staff=True,
+            is_superuser=True,
+        )
+        client = self.client_for_tenant(self.primary_tenant)
+        login_response = self._login_json(
+            client,
+            "admin-backup-global",
+            "senha-admin-backup-global",
+        )
+        self.assertEqual(login_response.status_code, 200)
+
+        list_response = client.get("/api/backups/")
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.json(), {"backups": []})
+
+
+class TenantBackupIsolationTests(MultiTenantTestCase):
+    backup_filename = "backup_banco_2026-07_20260705_010203_000001.json"
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.secondary_tenant, cls.secondary_domain = cls.create_tenant(
+            schema_name="tenant_b",
+            name="Tenant B",
+            domain="tenant-b.localhost",
+        )
+        cls.tenants = {
+            cls.primary_tenant.schema_name: cls.primary_tenant,
+            cls.secondary_tenant.schema_name: cls.secondary_tenant,
+        }
+
+    def _client_for_schema(self, schema_name):
+        return self.client_for_tenant(self.tenants[schema_name])
+
+    def _login_json(self, client, username, password):
+        return client.post(
+            "/api/auth/login/",
+            data=json.dumps({"username": username, "password": password}),
+            content_type="application/json",
+        )
+
+    def _authenticated_admin(self, schema_name):
+        username = f"admin-backup-{schema_name}-{self._testMethodName}"
+        password = "senha-backup-tenant"
+        self.create_user(
+            schema_name,
+            username,
+            password,
+            is_staff=True,
+            is_superuser=True,
+        )
+        client = self._client_for_schema(schema_name)
+        response = self._login_json(client, username, password)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.wsgi_request.tenant.schema_name, schema_name)
+        return client
+
+    def _write_backup(self, schema_name, filename=None, content=None):
+        filename = filename or self.backup_filename
+        content = content or f"conteudo-{schema_name}".encode("utf-8")
+        with self.in_schema(schema_name):
+            backup_dir = backup_dir_for_schema()
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            backup_path = backup_dir / filename
+            backup_path.write_bytes(content)
+            backup_path.with_name(f"{backup_path.stem}.meta.json").write_text(
+                json.dumps(
+                    {
+                        "arquivo": backup_path.name,
+                        "criado_em": "2026-07-05T00:00:00-03:00",
+                        "mes_referencia": "2026-07",
+                        "scope": "tenant",
+                        "schema_name": schema_name,
+                        "sha256": "sha256-teste",
+                        "tamanho_bytes": backup_path.stat().st_size,
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            return backup_path
+
+    def test_listagem_de_backups_mostra_apenas_arquivos_do_schema_atual(self):
+        with TemporaryDirectory() as temp_dir:
+            base_dir = Path(temp_dir)
+            with override_settings(BASE_DIR=base_dir):
+                self._write_backup("tenant_a", content=b"backup tenant a")
+                self._write_backup("tenant_b", content=b"backup tenant b")
+                client_a = self._authenticated_admin("tenant_a")
+                client_b = self._authenticated_admin("tenant_b")
+
+                response_a = client_a.get("/api/backups/")
+                response_b = client_b.get("/api/backups/")
+
+            self.assertEqual(response_a.status_code, 200)
+            self.assertEqual(response_b.status_code, 200)
+            self.assertEqual(response_a.wsgi_request.tenant.schema_name, "tenant_a")
+            self.assertEqual(response_b.wsgi_request.tenant.schema_name, "tenant_b")
+            self.assertEqual(len(response_a.json()["backups"]), 1)
+            self.assertEqual(len(response_b.json()["backups"]), 1)
+            self.assertEqual(response_a.json()["backups"][0]["schemaName"], "tenant_a")
+            self.assertEqual(response_b.json()["backups"][0]["schemaName"], "tenant_b")
+
+    def test_download_de_backup_nao_acessa_arquivo_de_outro_tenant(self):
+        with TemporaryDirectory() as temp_dir:
+            base_dir = Path(temp_dir)
+            with override_settings(BASE_DIR=base_dir):
+                self._write_backup("tenant_b")
+                client_a = self._authenticated_admin("tenant_a")
+                client_b = self._authenticated_admin("tenant_b")
+
+                response_a = client_a.get(f"/backups/{self.backup_filename}/download/")
+                response_b = client_b.get(f"/backups/{self.backup_filename}/download/")
+
+                if hasattr(response_b, "close"):
+                    response_b.close()
+
+            self.assertEqual(response_a.status_code, 404)
+            self.assertEqual(response_b.status_code, 200)
+            self.assertEqual(response_a.wsgi_request.tenant.schema_name, "tenant_a")
+            self.assertEqual(response_b.wsgi_request.tenant.schema_name, "tenant_b")
+
+    def test_criacao_manual_de_backup_grava_no_diretorio_do_tenant(self):
+        with TemporaryDirectory() as temp_dir:
+            base_dir = Path(temp_dir)
+            with override_settings(BASE_DIR=base_dir):
+                client_a = self._authenticated_admin("tenant_a")
+                with patch("caixa.services_backups.call_command"):
+                    response = client_a.post(
+                        "/api/backups/criar/",
+                        data="",
+                        content_type="application/octet-stream",
+                    )
+
+                self.assertEqual(response.status_code, 201)
+                self.assertEqual(response.wsgi_request.tenant.schema_name, "tenant_a")
+                payload = response.json()
+                self.assertEqual(payload["backup"]["schemaName"], "tenant_a")
+
+                with self.in_schema("tenant_a"):
+                    tenant_a_files = [
+                        path
+                        for path in backup_dir_for_schema().glob("backup_banco_*.json")
+                        if not path.name.endswith(".meta.json")
+                    ]
+                with self.in_schema("tenant_b"):
+                    tenant_b_files = [
+                        path
+                        for path in backup_dir_for_schema().glob("backup_banco_*.json")
+                        if not path.name.endswith(".meta.json")
+                    ]
+
+            self.assertEqual(len(tenant_a_files), 1)
+            self.assertEqual(tenant_b_files, [])
+            self.assertFalse((base_dir / "backups" / "db").exists())
+            self.assertIn(
+                base_dir / "backups" / "tenants" / "tenant_a" / "db",
+                [tenant_a_files[0].parent],
+            )
+
+
+class TenantExportDownloadIsolationTests(MultiTenantTestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.secondary_tenant, cls.secondary_domain = cls.create_tenant(
+            schema_name="tenant_b",
+            name="Tenant B",
+            domain="tenant-b.localhost",
+        )
+        cls.tenants = {
+            cls.primary_tenant.schema_name: cls.primary_tenant,
+            cls.secondary_tenant.schema_name: cls.secondary_tenant,
+        }
+        cls.password = "senha-export-tenant"
+        cls.create_user(
+            "tenant_a",
+            "admin-export-a",
+            cls.password,
+            is_staff=True,
+            is_superuser=True,
+        )
+        cls.create_user(
+            "tenant_b",
+            "admin-export-b",
+            cls.password,
+            is_staff=True,
+            is_superuser=True,
+        )
+        cliente_a = cls.create_basic_cliente("tenant_a", nome="Cliente Export A")
+        cliente_b = cls.create_basic_cliente("tenant_b", nome="Cliente Export B")
+        evento_a = cls.create_basic_evento(
+            "tenant_a",
+            cliente=cliente_a,
+            nome="Evento Export A",
+        )
+        evento_b = cls.create_basic_evento(
+            "tenant_b",
+            cliente=cliente_b,
+            nome="Evento Export B",
+        )
+        cls._create_receita(
+            "tenant_a",
+            evento_a.id,
+            cliente_a.id,
+            "Receita Export Tenant A",
+            Decimal("111.00"),
+        )
+        cls._create_receita(
+            "tenant_b",
+            evento_b.id,
+            cliente_b.id,
+            "Receita Export Tenant B",
+            Decimal("222.00"),
+        )
+
+    @classmethod
+    def _create_receita(cls, schema_name, evento_id, cliente_id, descricao, valor):
+        with cls.in_schema(schema_name):
+            ReceitaOperacional.objects.create(
+                evento_id=evento_id,
+                cliente_id=cliente_id,
+                descricao=descricao,
+                valor_previsto=valor,
+                valor_recebido=Decimal("0.00"),
+                data_vencimento=date(2026, 7, 5),
+            )
+
+    def _client_for_schema(self, schema_name):
+        return self.client_for_tenant(self.tenants[schema_name])
+
+    def _login_json(self, client, username):
+        return client.post(
+            "/api/auth/login/",
+            data=json.dumps({"username": username, "password": self.password}),
+            content_type="application/json",
+        )
+
+    def _authenticated_client(self, schema_name):
+        username = "admin-export-a" if schema_name == "tenant_a" else "admin-export-b"
+        client = self._client_for_schema(schema_name)
+        response = self._login_json(client, username)
+        self.assertEqual(response.status_code, 200)
+        return client
+
+    def test_exportacao_csv_retorna_apenas_dados_do_schema_do_host(self):
+        response_a = self._authenticated_client("tenant_a").get(
+            "/api/obrigacoes-financeiras/exportar/",
+            {
+                "exportScope": "revenues",
+                "startDate": "2026-07-01",
+                "endDate": "2026-07-31",
+            },
+        )
+        response_b = self._authenticated_client("tenant_b").get(
+            "/api/obrigacoes-financeiras/exportar/",
+            {
+                "exportScope": "revenues",
+                "startDate": "2026-07-01",
+                "endDate": "2026-07-31",
+            },
+        )
+
+        self.assertEqual(response_a.status_code, 200)
+        self.assertEqual(response_b.status_code, 200)
+        content_a = response_a.content.decode("utf-8-sig")
+        content_b = response_b.content.decode("utf-8-sig")
+        self.assertIn("Receita Export Tenant A", content_a)
+        self.assertNotIn("Receita Export Tenant B", content_a)
+        self.assertIn("Receita Export Tenant B", content_b)
+        self.assertNotIn("Receita Export Tenant A", content_b)
+        self.assertIn("no-store", response_a["Cache-Control"])
+        self.assertIn("attachment;", response_a["Content-Disposition"])
+
+
+class TenantApiIdorIsolationTests(MultiTenantTestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.secondary_tenant, cls.secondary_domain = cls.create_tenant(
+            schema_name="tenant_b",
+            name="Tenant B",
+            domain="tenant-b.localhost",
+        )
+        cls.tenants = {
+            cls.primary_tenant.schema_name: cls.primary_tenant,
+            cls.secondary_tenant.schema_name: cls.secondary_tenant,
+        }
+        cls.password = "senha-api-isolada"
+        cls.user_a = cls.create_user(
+            "tenant_a",
+            "usuario-api-a",
+            cls.password,
+            is_superuser=True,
+        )
+        cls.user_b = cls.create_user(
+            "tenant_b",
+            "usuario-api-b",
+            cls.password,
+            is_superuser=True,
+        )
+        cls.cliente_a_shared_id = cls.create_basic_cliente(
+            "tenant_a",
+            nome="Cliente API Tenant A",
+        ).id
+        cls.cliente_b_shared_id = cls.create_basic_cliente(
+            "tenant_b",
+            nome="Cliente API Tenant B",
+        ).id
+        cls.cliente_apenas_a_id = cls.create_basic_cliente(
+            "tenant_a",
+            nome="Cliente Apenas Tenant A",
+        ).id
+
+        cls.evento_a_id = cls.create_basic_evento(
+            "tenant_a",
+            cliente=cls._cliente("tenant_a", cls.cliente_a_shared_id),
+            nome="Evento Financeiro Tenant A",
+        ).id
+        cls.evento_b_id = cls.create_basic_evento(
+            "tenant_b",
+            cliente=cls._cliente("tenant_b", cls.cliente_b_shared_id),
+            nome="Evento Financeiro Tenant B",
+        ).id
+        cls._create_receita(
+            "tenant_a",
+            cls.evento_a_id,
+            cls.cliente_a_shared_id,
+            "Receita Tenant A",
+            Decimal("1000.00"),
+        )
+        cls._create_receita(
+            "tenant_b",
+            cls.evento_b_id,
+            cls.cliente_b_shared_id,
+            "Receita Tenant B",
+            Decimal("2000.00"),
+        )
+
+    @classmethod
+    def _cliente(cls, schema_name, cliente_id):
+        with cls.in_schema(schema_name):
+            from caixa.models import Cliente
+
+            return Cliente.objects.get(pk=cliente_id)
+
+    @classmethod
+    def _create_receita(cls, schema_name, evento_id, cliente_id, descricao, valor):
+        with cls.in_schema(schema_name):
+            ReceitaOperacional.objects.create(
+                evento_id=evento_id,
+                cliente_id=cliente_id,
+                descricao=descricao,
+                valor_previsto=valor,
+                valor_recebido=Decimal("0.00"),
+                data_vencimento=date(2026, 1, 15),
+            )
+
+    def _client_for_schema(self, schema_name):
+        return self.client_for_tenant(self.tenants[schema_name])
+
+    def _login_json(self, client, username, password):
+        return client.post(
+            "/api/auth/login/",
+            data=json.dumps({"username": username, "password": password}),
+            content_type="application/json",
+        )
+
+    def _authenticated_client(self, schema_name):
+        username = "usuario-api-a" if schema_name == "tenant_a" else "usuario-api-b"
+        client = self._client_for_schema(schema_name)
+        response = self._login_json(client, username, self.password)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.wsgi_request.tenant.schema_name, schema_name)
+        return client
+
+    def _client_names(self, schema_name):
+        response = self._authenticated_client(schema_name).get("/api/clientes/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.wsgi_request.tenant.schema_name, schema_name)
+        return {
+            item["name"]
+            for item in response.json()["data"]["clients"]
+        }
+
+    def _client_detail(self, schema_name, cliente_id):
+        response = self._authenticated_client(schema_name).get(
+            f"/api/clientes/{cliente_id}/"
+        )
+        self.assertEqual(response.wsgi_request.tenant.schema_name, schema_name)
+        return response
+
+    def test_dados_do_tenant_a_nao_aparecem_na_listagem_do_tenant_b(self):
+        nomes_tenant_b = self._client_names("tenant_b")
+
+        self.assertIn("Cliente API Tenant B 2", nomes_tenant_b)
+        self.assertNotIn("Cliente API Tenant A 1", nomes_tenant_b)
+        self.assertNotIn("Cliente Apenas Tenant A 3", nomes_tenant_b)
+
+    def test_dados_do_tenant_b_nao_aparecem_na_listagem_do_tenant_a(self):
+        nomes_tenant_a = self._client_names("tenant_a")
+
+        self.assertIn("Cliente API Tenant A 1", nomes_tenant_a)
+        self.assertIn("Cliente Apenas Tenant A 3", nomes_tenant_a)
+        self.assertNotIn("Cliente API Tenant B 2", nomes_tenant_a)
+
+    def test_mesmo_id_em_tenants_diferentes_retorna_dado_do_schema_do_host(self):
+        self.assertEqual(self.cliente_a_shared_id, self.cliente_b_shared_id)
+
+        response_a = self._client_detail("tenant_a", self.cliente_a_shared_id)
+        response_b = self._client_detail("tenant_b", self.cliente_b_shared_id)
+
+        self.assertEqual(response_a.status_code, 200)
+        self.assertEqual(response_b.status_code, 200)
+        self.assertEqual(
+            response_a.json()["data"]["client"]["name"],
+            "Cliente API Tenant A 1",
+        )
+        self.assertEqual(
+            response_b.json()["data"]["client"]["name"],
+            "Cliente API Tenant B 2",
+        )
+
+    def test_acessar_id_existente_apenas_no_outro_tenant_retorna_404(self):
+        response = self._client_detail("tenant_b", self.cliente_apenas_a_id)
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_dashboard_financeiro_nao_soma_dados_de_outro_tenant(self):
+        response_a = self._authenticated_client("tenant_a").get(
+            "/api/dashboard/financial-overview/?period=all"
+        )
+        response_b = self._authenticated_client("tenant_b").get(
+            "/api/dashboard/financial-overview/?period=all"
+        )
+
+        self.assertEqual(response_a.status_code, 200)
+        self.assertEqual(response_b.status_code, 200)
+        self.assertEqual(response_a.wsgi_request.tenant.schema_name, "tenant_a")
+        self.assertEqual(response_b.wsgi_request.tenant.schema_name, "tenant_b")
+        self.assertEqual(
+            response_a.json()["data"]["kpis"]["receitaTotal"]["value"],
+            1000.0,
+        )
+        self.assertEqual(
+            response_b.json()["data"]["kpis"]["receitaTotal"]["value"],
+            2000.0,
+        )
+
+
+class TenantCacheIsolationTests(MultiTenantTestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.secondary_tenant, cls.secondary_domain = cls.create_tenant(
+            schema_name="tenant_b",
+            name="Tenant B",
+            domain="tenant-b.localhost",
+        )
+
+    def setUp(self):
+        cache.clear()
+
+    def tearDown(self):
+        cache.clear()
+
+    def test_cache_key_isolada_por_schema(self):
+        with self.in_schema("tenant_a"):
+            cache.set("shared-cache-key", "valor-tenant-a", timeout=60)
+
+        with self.in_schema("tenant_b"):
+            self.assertIsNone(cache.get("shared-cache-key"))
+            cache.set("shared-cache-key", "valor-tenant-b", timeout=60)
+
+        self.switch_to_public()
+        self.assertIsNone(cache.get("shared-cache-key"))
+        cache.set("shared-cache-key", "valor-public", timeout=60)
+
+        with self.in_schema("tenant_a"):
+            self.assertEqual(cache.get("shared-cache-key"), "valor-tenant-a")
+
+        with self.in_schema("tenant_b"):
+            self.assertEqual(cache.get("shared-cache-key"), "valor-tenant-b")
+
+        self.switch_to_public()
+        self.assertEqual(cache.get("shared-cache-key"), "valor-public")
+
+
+class TenantCachedDbSessionIsolationTests(MultiTenantTestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.secondary_tenant, cls.secondary_domain = cls.create_tenant(
+            schema_name="tenant_b",
+            name="Tenant B",
+            domain="tenant-b.localhost",
+        )
+        cls.tenants = {
+            cls.primary_tenant.schema_name: cls.primary_tenant,
+            cls.secondary_tenant.schema_name: cls.secondary_tenant,
+        }
+
+    def _client_for_schema(self, schema_name):
+        return self.client_for_tenant(self.tenants[schema_name])
+
+    def _login_json(self, client, username, password):
+        return client.post(
+            "/api/auth/login/",
+            data=json.dumps({"username": username, "password": password}),
+            content_type="application/json",
+        )
+
+    @override_settings(SESSION_ENGINE="django.contrib.sessions.backends.cached_db")
+    def test_sessao_cached_db_nao_autentica_em_outro_tenant(self):
+        self.create_user("tenant_a", "usuario-cache-session-a", "senha-cache-session")
+        client_a = self._client_for_schema("tenant_a")
+        login_a = self._login_json(
+            client_a,
+            "usuario-cache-session-a",
+            "senha-cache-session",
+        )
+        self.assertEqual(login_a.status_code, 200)
+
+        session_cookie = client_a.cookies[settings.SESSION_COOKIE_NAME].value
+        client_b = self._client_for_schema("tenant_b")
+        client_b.cookies[settings.SESSION_COOKIE_NAME] = session_cookie
+
+        response_b = client_b.get("/api/auth/session/")
+
+        self.assertEqual(response_b.status_code, 200)
+        self.assertEqual(response_b.wsgi_request.tenant.schema_name, "tenant_b")
+        self.assertEqual(response_b.json(), {"authenticated": False})
+
+
+class TenantThrottleIsolationTests(MultiTenantTestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.secondary_tenant, cls.secondary_domain = cls.create_tenant(
+            schema_name="tenant_b",
+            name="Tenant B",
+            domain="tenant-b.localhost",
+        )
+        cls.tenants = {
+            cls.primary_tenant.schema_name: cls.primary_tenant,
+            cls.secondary_tenant.schema_name: cls.secondary_tenant,
+        }
+        cls.password = "senha-throttle-isolado"
+        cls.create_user("tenant_a", "usuario-throttle-a", cls.password)
+        cls.create_user("tenant_b", "usuario-throttle-b", cls.password)
+
+    def setUp(self):
+        cache.clear()
+
+    def tearDown(self):
+        cache.clear()
+
+    def _client_for_schema(self, schema_name):
+        return self.client_for_tenant(self.tenants[schema_name])
+
+    def _login_json(self, client, username, password):
+        return client.post(
+            "/api/auth/login/",
+            data=json.dumps({"username": username, "password": password}),
+            content_type="application/json",
+        )
+
+    def test_throttle_de_usuario_inclui_schema_usuario_e_ip(self):
+        client_a = self._client_for_schema("tenant_a")
+        client_b = self._client_for_schema("tenant_b")
+        self.assertEqual(
+            self._login_json(client_a, "usuario-throttle-a", self.password).status_code,
+            200,
+        )
+        self.assertEqual(
+            self._login_json(client_b, "usuario-throttle-b", self.password).status_code,
+            200,
+        )
+
+        request_a = client_a.get("/api/auth/session/").wsgi_request
+        request_b = client_b.get("/api/auth/session/").wsgi_request
+        key_a = TenantUserRateThrottle().get_cache_key(request_a, None)
+        key_b = TenantUserRateThrottle().get_cache_key(request_b, None)
+
+        self.assertIn("tenant_a", key_a)
+        self.assertIn("tenant_b", key_b)
+        self.assertIn("user:", key_a)
+        self.assertIn("ip:", key_a)
+        self.assertNotEqual(key_a, key_b)
+
+    def test_throttle_de_login_anonimo_inclui_schema_e_ip(self):
+        request_a = self._client_for_schema("tenant_a").get(
+            "/api/auth/csrf/"
+        ).wsgi_request
+        request_b = self._client_for_schema("tenant_b").get(
+            "/api/auth/csrf/"
+        ).wsgi_request
+
+        key_a = AuthLoginRateThrottle().get_cache_key(request_a, None)
+        key_b = AuthLoginRateThrottle().get_cache_key(request_b, None)
+
+        self.assertIn("tenant_a", key_a)
+        self.assertIn("tenant_b", key_b)
+        self.assertIn("anon:ip:", key_a)
+        self.assertNotEqual(key_a, key_b)
+
+
+class TenantCommandGuardTests(MultiTenantTestCase):
+    def test_comando_operacional_recusa_schema_public(self):
+        self.switch_to_public()
+
+        with self.assertRaisesMessage(CommandError, "schema de tenant"):
+            call_command("backup_banco_mensal", stdout=StringIO())
+
+    def test_comando_operacional_permite_schema_de_tenant(self):
+        resultado = {"criado": False, "mensagem": "Sem alteracao.", "removidos": 0}
+
+        with self.in_schema("tenant_a"):
+            with patch(
+                "caixa.management.commands.backup_banco_mensal.criar_backup_banco",
+                return_value=resultado,
+            ) as criar_backup:
+                call_command("backup_banco_mensal", stdout=StringIO())
+
+        criar_backup.assert_called_once_with(force=False, manter=3)

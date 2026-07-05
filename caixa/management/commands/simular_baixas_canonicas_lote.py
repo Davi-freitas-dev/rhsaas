@@ -7,6 +7,7 @@ from django.utils import timezone
 from caixa.contracts_obrigacoes import NATIVE_SETTLEMENT_CAPABILITIES
 from caixa.models import ObrigacaoFinanceira
 from caixa.services_escrita_canonica import simular_baixa_canonica_primeiro
+from tenancy.command_guards import ensure_tenant_schema
 
 
 class Command(BaseCommand):
@@ -32,6 +33,10 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        ensure_tenant_schema(
+            "simular_baixas_canonicas_lote",
+            action="simular baixas com dados operacionais",
+        )
         try:
             resultado = simular_baixas_canonicas_lote(
                 source=options.get("source"),

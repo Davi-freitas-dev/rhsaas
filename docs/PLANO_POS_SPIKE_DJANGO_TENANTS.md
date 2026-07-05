@@ -9,6 +9,40 @@ Este documento nao implementa codigo, nao instala bibliotecas e nao executa
 migrations. Ele registra as pendencias de seguranca, isolamento e operacao que
 devem ser tratadas depois do spike inicial com `django-tenants`.
 
+## Progresso da infraestrutura tenant-aware
+
+Decisoes aplicadas no spike de infraestrutura:
+
+- cache Django usa chave tenant-aware com prefixo por `schema_name`;
+- `SESSION_ENGINE` padrao passa a ser `django.contrib.sessions.backends.db`,
+  mantendo a sessao na tabela `django_session` do schema ativo;
+- `cached_db` so deve ser usado se o cache continuar com chave tenant-aware;
+- throttling DRF padrao passa a incluir schema, usuario e IP na chave;
+- throttle de login tambem passa a incluir schema e IP;
+- comandos operacionais selecionados passam a recusar execucao em `public`;
+- testes `tenancy` devem ser executados explicitamente com
+  `python manage.py test tenancy` enquanto `pytest.ini` estiver ignorado pelo
+  Git.
+
+Risco reduzido:
+
+- sessao cacheada nao deve ser reaproveitada entre tenants;
+- cache compartilhado entre workers/Redis nao deve colidir entre tenants;
+- rate limit de um tenant nao deve consumir cota de outro tenant;
+- backup/export/sincronizacao operacional nao deve rodar acidentalmente no
+  schema `public`.
+
+Pendencia mantida:
+
+- revisar todos os comandos legados restantes e classificar formalmente como
+  `read-only`, `tenant-only` ou `platform-only`;
+- definir uma estrategia tenant-aware para `django-axes` caso algum dia ele use
+  storage/cache global fora do schema ativo;
+- criar testes para exportacoes, backups e uploads tenant-scoped antes de
+  liberar essas telas para clientes.
+- decidir se a configuracao de descoberta do `pytest` deve ser versionada ou se
+  o comando oficial de teste multi-tenant sera `python manage.py test tenancy`.
+
 ## Objetivo
 
 Garantir que a evolucao multi-tenant avance com uma regra central:
@@ -24,7 +58,7 @@ Estes itens devem ser tratados como bloqueadores, nao como melhorias opcionais:
 - backup global acessivel, direta ou indiretamente, a administrador de cliente;
 - exportacao de dados sem prova de escopo pelo schema ativo;
 - sessao ou cookie reutilizavel entre tenants por configuracao de dominio
-  compartilhado;
+  compartilhado, ou por uso de cache sem prefixo por schema;
 - API nova sem permissao explicita ou sem teste de acesso negado;
 - `/admin/` exposto com models globais e operacionais no mesmo `admin.site`;
 - uploads ou downloads sem caminho/permite de leitura tenant-aware.
@@ -36,6 +70,7 @@ Regra de aceite:
   clientes reais;
 - endpoint novo que manipule dado operacional precisa nascer com teste de
   isolamento por host/schema.
+- cache, sessao cacheada e throttling precisam manter schema na chave.
 
 ## Obrigatorio antes de continuar multi-tenant
 
@@ -141,6 +176,33 @@ Pontos obrigatorios:
   entre tenants;
 - logout e reset de senha sempre operando no tenant do host atual.
 
+### 4.1. Sessao, cache e throttling tenant-aware
+
+Status: base inicial aplicada.
+
+Arquitetura definitiva:
+
+- cookies de sessao e CSRF devem permanecer host-only;
+- `SESSION_COOKIE_DOMAIN` e `CSRF_COOKIE_DOMAIN` devem ficar vazios por padrao;
+- sessao padrao deve usar banco do tenant (`django_session` no schema ativo);
+- cache deve usar prefixo por `schema_name`;
+- throttling deve usar schema, usuario e IP;
+- nenhum identificador de tenant enviado pelo frontend deve ser confiavel.
+
+Testes obrigatorios continuos:
+
+- cookie de tenant A nao autentica tenant B;
+- `cached_db` nao reaproveita cache de sessao entre tenants;
+- chave de cache igual em tenants diferentes guarda valores diferentes;
+- throttle anonimo diferencia tenants com mesmo IP;
+- throttle autenticado diferencia tenants com mesmo `user.pk` e mesmo IP.
+
+Pendencias:
+
+- validar integracao completa com frontend real por subdominio;
+- revisar `django-axes` em ambiente com Redis/DB de producao;
+- garantir `Cache-Control: no-store` em endpoints sensiveis do frontend.
+
 ## Obrigatorio antes de deploy
 
 ### 5. Backup/export tenant-scoped
@@ -169,6 +231,8 @@ Plano recomendado:
 - expirar arquivos de exportacao temporarios;
 - assinar URLs ou servir downloads por view autenticada, nunca por diretorio
   publico.
+- comandos de backup/export operacional devem exigir schema de tenant explicito
+  quando manipularem dados de cliente.
 
 ### 6. Admin Django
 
