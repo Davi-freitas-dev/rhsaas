@@ -6,7 +6,12 @@ from django.http import HttpResponse
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_GET, require_POST
 from drf_spectacular.utils import OpenApiTypes, extend_schema
-from rest_framework.decorators import api_view, content_negotiation_class, permission_classes
+from rest_framework.decorators import (
+    api_view,
+    content_negotiation_class,
+    permission_classes,
+    throttle_classes,
+)
 from rest_framework.negotiation import DefaultContentNegotiation
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -40,6 +45,7 @@ from .serializers_obrigacoes import (
     normalizar_filtros_obrigacoes,
 )
 from .services_obrigacoes import liquidar_obrigacao_financeira_com_contexto_canonico
+from .throttling import ExportCsvRateThrottle
 
 
 logger = logging.getLogger(__name__)
@@ -147,6 +153,7 @@ def api_obrigacoes_financeiras(request):
 @extend_schema(responses=OpenApiTypes.BINARY, auth=[{"cookieAuth": []}])
 @api_view(["GET"])
 @content_negotiation_class(_ExportacaoObrigacoesContentNegotiation)
+@throttle_classes([ExportCsvRateThrottle])
 @permission_classes([AllowAny])
 def api_exportar_obrigacoes_financeiras(request):
     def drf_response_from_json_response(response):

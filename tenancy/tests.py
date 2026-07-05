@@ -8,6 +8,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 from django.conf import settings
+from django.core import mail
 from django.core.cache import cache
 from django.core.management import call_command
 from django.core.management.base import CommandError
@@ -16,11 +17,18 @@ from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import Client, override_settings
 from django_tenants.utils import get_public_schema_name
+from rest_framework.throttling import SimpleRateThrottle
 
 from caixa.models import ReceitaOperacional
 from caixa.permissions import is_platform_operator, is_tenant_administrator
 from caixa.tenant_files import backup_dir_for_schema
-from caixa.throttling import AuthLoginRateThrottle, TenantUserRateThrottle
+from caixa.throttling import (
+    AuthLoginRateThrottle,
+    BackupCreateRateThrottle,
+    BackupDownloadRateThrottle,
+    ExportCsvRateThrottle,
+    TenantUserRateThrottle,
+)
 from tenancy.command_guards import (
     COMMAND_SCOPES,
     SCOPE_TENANT_ONLY,
@@ -702,6 +710,84 @@ class TenantBackupIsolationTests(MultiTenantTestCase):
                 [tenant_a_files[0].parent],
             )
 
+    def test_criacao_manual_de_backup_tem_rate_limit_por_tenant(self):
+        rates = dict(SimpleRateThrottle.THROTTLE_RATES)
+        rates["backup_create"] = "1/minute"
+        cache.clear()
+        try:
+            with TemporaryDirectory() as temp_dir:
+                base_dir = Path(temp_dir)
+                with override_settings(BASE_DIR=base_dir):
+                    client_a = self._authenticated_admin("tenant_a")
+                    client_b = self._authenticated_admin("tenant_b")
+
+                    with patch.object(SimpleRateThrottle, "THROTTLE_RATES", rates):
+                        with patch("caixa.services_backups.call_command"):
+                            primeira_a = client_a.post(
+                                "/api/backups/criar/",
+                                data="",
+                                content_type="application/octet-stream",
+                            )
+                            segunda_a = client_a.post(
+                                "/api/backups/criar/",
+                                data="",
+                                content_type="application/octet-stream",
+                            )
+                            primeira_b = client_b.post(
+                                "/api/backups/criar/",
+                                data="",
+                                content_type="application/octet-stream",
+                            )
+
+                self.assertEqual(primeira_a.status_code, 201)
+                self.assertEqual(segunda_a.status_code, 429)
+                self.assertIn("Retry-After", segunda_a.headers)
+                self.assertEqual(primeira_b.status_code, 201)
+                self.assertEqual(primeira_a.wsgi_request.tenant.schema_name, "tenant_a")
+                self.assertEqual(segunda_a.wsgi_request.tenant.schema_name, "tenant_a")
+                self.assertEqual(primeira_b.wsgi_request.tenant.schema_name, "tenant_b")
+        finally:
+            cache.clear()
+
+    def test_download_de_backup_tem_rate_limit_por_tenant(self):
+        rates = dict(SimpleRateThrottle.THROTTLE_RATES)
+        rates["backup_download"] = "1/minute"
+        cache.clear()
+        try:
+            with TemporaryDirectory() as temp_dir:
+                base_dir = Path(temp_dir)
+                with override_settings(BASE_DIR=base_dir):
+                    self._write_backup("tenant_a")
+                    self._write_backup("tenant_b")
+                    client_a = self._authenticated_admin("tenant_a")
+                    client_b = self._authenticated_admin("tenant_b")
+
+                    with patch.object(SimpleRateThrottle, "THROTTLE_RATES", rates):
+                        primeira_a = client_a.get(
+                            f"/backups/{self.backup_filename}/download/"
+                        )
+                        segunda_a = client_a.get(
+                            f"/backups/{self.backup_filename}/download/"
+                        )
+                        primeira_b = client_b.get(
+                            f"/backups/{self.backup_filename}/download/"
+                        )
+
+                    for response in (primeira_a, primeira_b):
+                        if hasattr(response, "close"):
+                            response.close()
+
+                self.assertEqual(primeira_a.status_code, 200)
+                self.assertEqual(segunda_a.status_code, 429)
+                self.assertIn("Retry-After", segunda_a.headers)
+                self.assertEqual(segunda_a["Cache-Control"], "no-store")
+                self.assertEqual(primeira_b.status_code, 200)
+                self.assertEqual(primeira_a.wsgi_request.tenant.schema_name, "tenant_a")
+                self.assertEqual(segunda_a.wsgi_request.tenant.schema_name, "tenant_a")
+                self.assertEqual(primeira_b.wsgi_request.tenant.schema_name, "tenant_b")
+        finally:
+            cache.clear()
+
 
 class TenantExportDownloadIsolationTests(MultiTenantTestCase):
     @classmethod
@@ -846,6 +932,43 @@ class TenantExportDownloadIsolationTests(MultiTenantTestCase):
         audit_output = "\n".join(logs.output)
         self.assertIn("export_event action=obligations_csv outcome=denied_permission", audit_output)
         self.assertIn("schema=tenant_a", audit_output)
+
+    def test_exportacao_csv_tem_rate_limit_por_tenant(self):
+        rates = dict(SimpleRateThrottle.THROTTLE_RATES)
+        rates["export_csv"] = "1/minute"
+        cache.clear()
+        try:
+            client_a = self._authenticated_client("tenant_a")
+            client_b = self._authenticated_client("tenant_b")
+            params = {
+                "exportScope": "revenues",
+                "startDate": "2026-07-01",
+                "endDate": "2026-07-31",
+            }
+
+            with patch.object(SimpleRateThrottle, "THROTTLE_RATES", rates):
+                primeira_a = client_a.get(
+                    "/api/obrigacoes-financeiras/exportar/",
+                    params,
+                )
+                segunda_a = client_a.get(
+                    "/api/obrigacoes-financeiras/exportar/",
+                    params,
+                )
+                primeira_b = client_b.get(
+                    "/api/obrigacoes-financeiras/exportar/",
+                    params,
+                )
+
+            self.assertEqual(primeira_a.status_code, 200)
+            self.assertEqual(segunda_a.status_code, 429)
+            self.assertIn("Retry-After", segunda_a.headers)
+            self.assertEqual(primeira_b.status_code, 200)
+            self.assertEqual(primeira_a.wsgi_request.tenant.schema_name, "tenant_a")
+            self.assertEqual(segunda_a.wsgi_request.tenant.schema_name, "tenant_a")
+            self.assertEqual(primeira_b.wsgi_request.tenant.schema_name, "tenant_b")
+        finally:
+            cache.clear()
 
 
 class TenantApiIdorIsolationTests(MultiTenantTestCase):
@@ -1163,6 +1286,37 @@ class TenantThrottleIsolationTests(MultiTenantTestCase):
         self.assertIn("ip:", key_a)
         self.assertNotEqual(key_a, key_b)
 
+    def test_throttles_de_operacoes_sensiveis_incluem_schema_usuario_e_ip(self):
+        client_a = self._client_for_schema("tenant_a")
+        client_b = self._client_for_schema("tenant_b")
+        self.assertEqual(
+            self._login_json(client_a, "usuario-throttle-a", self.password).status_code,
+            200,
+        )
+        self.assertEqual(
+            self._login_json(client_b, "usuario-throttle-b", self.password).status_code,
+            200,
+        )
+
+        request_a = client_a.get("/api/auth/session/").wsgi_request
+        request_b = client_b.get("/api/auth/session/").wsgi_request
+
+        for throttle_class, scope in (
+            (BackupCreateRateThrottle, "backup_create"),
+            (BackupDownloadRateThrottle, "backup_download"),
+            (ExportCsvRateThrottle, "export_csv"),
+        ):
+            with self.subTest(scope=scope):
+                key_a = throttle_class().get_cache_key(request_a, None)
+                key_b = throttle_class().get_cache_key(request_b, None)
+
+                self.assertIn(scope, key_a)
+                self.assertIn("tenant_a", key_a)
+                self.assertIn("tenant_b", key_b)
+                self.assertIn("user:", key_a)
+                self.assertIn("ip:", key_a)
+                self.assertNotEqual(key_a, key_b)
+
     def test_throttle_de_login_anonimo_inclui_schema_e_ip(self):
         request_a = self._client_for_schema("tenant_a").get(
             "/api/auth/csrf/"
@@ -1178,6 +1332,35 @@ class TenantThrottleIsolationTests(MultiTenantTestCase):
         self.assertIn("tenant_b", key_b)
         self.assertIn("anon:ip:", key_a)
         self.assertNotEqual(key_a, key_b)
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        PASSWORD_RESET_RATE_LIMIT_ATTEMPTS=1,
+        PASSWORD_RESET_RATE_LIMIT_WINDOW=3600,
+    )
+    def test_rate_limit_de_reset_de_senha_e_isolado_por_schema(self):
+        email = "reset-compartilhado@example.com"
+        self.create_user("tenant_a", "reset-tenant-a", self.password, email=email)
+        self.create_user("tenant_b", "reset-tenant-b", self.password, email=email)
+        cache.clear()
+        mail.outbox = []
+        try:
+            client_a = self._client_for_schema("tenant_a")
+            client_b = self._client_for_schema("tenant_b")
+
+            primeira_a = client_a.post("/password-reset/", {"email": email})
+            segunda_a = client_a.post("/password-reset/", {"email": email})
+            primeira_b = client_b.post("/password-reset/", {"email": email})
+
+            self.assertEqual(primeira_a.status_code, 302)
+            self.assertEqual(segunda_a.status_code, 302)
+            self.assertEqual(primeira_b.status_code, 302)
+            self.assertEqual(primeira_a.wsgi_request.tenant.schema_name, "tenant_a")
+            self.assertEqual(segunda_a.wsgi_request.tenant.schema_name, "tenant_a")
+            self.assertEqual(primeira_b.wsgi_request.tenant.schema_name, "tenant_b")
+            self.assertEqual(len(mail.outbox), 2)
+        finally:
+            cache.clear()
 
 
 class TenantCommandGuardTests(MultiTenantTestCase):

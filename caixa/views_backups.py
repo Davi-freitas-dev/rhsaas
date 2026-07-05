@@ -9,7 +9,12 @@ from django.utils import timezone
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_POST, require_safe
 from drf_spectacular.utils import OpenApiTypes, extend_schema
-from rest_framework.decorators import api_view, parser_classes, permission_classes
+from rest_framework.decorators import (
+    api_view,
+    parser_classes,
+    permission_classes,
+    throttle_classes,
+)
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
@@ -22,6 +27,11 @@ from .permissions import (
 )
 from .selectors_backups import listar_backups_disponiveis, obter_caminho_backup
 from .services_backups import criar_backup_banco
+from .throttling import (
+    BackupCreateRateThrottle,
+    BackupDownloadRateThrottle,
+    check_django_rate_limit,
+)
 from .views_api_auth import IgnoreBodyParser, csrf_protect_drf_view
 
 
@@ -104,6 +114,7 @@ def api_backups(request):
 )
 @api_view(["POST"])
 @parser_classes([IgnoreBodyParser])
+@throttle_classes([BackupCreateRateThrottle])
 @permission_classes([AllowAny])
 def api_backup_criar_manual(request):
     try:
@@ -151,6 +162,11 @@ def api_backup_criar_manual(request):
 
 @require_tenant_administrator
 def backup_download(request, nome_arquivo):
+    throttled_response = check_django_rate_limit(request, BackupDownloadRateThrottle)
+    if throttled_response is not None:
+        _audit_backup_event(request, "download", "throttled", filename=nome_arquivo)
+        return throttled_response
+
     try:
         caminho = obter_caminho_backup(nome_arquivo)
     except Http404:

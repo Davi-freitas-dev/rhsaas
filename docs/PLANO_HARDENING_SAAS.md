@@ -17,8 +17,8 @@ Criado em: 2026-07-05
 
 | Métrica | Progresso |
 | --- | --- |
-| Áreas totalmente adaptadas | 11 / 30 |
-| Riscos altos concluídos | 9 / 9 |
+| Áreas totalmente adaptadas | 12 / 31 |
+| Riscos altos concluídos | 10 / 10 |
 | Riscos médios concluídos | 1 / 9 |
 | Riscos baixos concluídos | 0 / 4 |
 
@@ -171,13 +171,14 @@ Uma área só pode ser marcada como "✅ Totalmente adaptada" quando:
 | Cookies | 🟡 Parcialmente adaptada | M-002 | Garantir cookies host-only em produção e checks contra domínio compartilhado |
 | CORS | 🟡 Parcialmente adaptada | M-002 | Definir integração final frontend/backend sem wildcard inseguro |
 | DRF | 🟡 Parcialmente adaptada | M-001 | Reduzir `AllowAny` e padronizar permissões explícitas por tenant |
+| Rate limiting | ✅ Totalmente adaptada | - | Operações caras/sensíveis da demo têm limites tenant-aware por schema, usuário/IP e testes multi-tenant |
 | Middleware | ✅ Totalmente adaptada | - | Manter `TenantMainMiddleware` no início e testes de resolução por Host |
 | Database Router | ✅ Totalmente adaptada | - | Manter `TenantSyncRouter` e validações de migrations por schema |
 | django-tenants | ✅ Totalmente adaptada | - | Manter modelo de um schema por empresa e tenant identificado por Host |
 | Commands | 🟡 Parcialmente adaptada | M-008 | Classificar e proteger todos os comandos operacionais |
 | Signals | ✅ Totalmente adaptada | - | Manter signals operacionais bloqueados no `public` e cobertos por testes quando críticos |
-| Backups | ✅ Totalmente adaptada | - | Backup/download tenant-scoped por schema, com autorização explícita, auditoria mínima por log e headers seguros |
-| Exportações | ✅ Totalmente adaptada | - | Export tenant-scoped, autorizado, auditado e testado com dois tenants para o escopo demo/teste |
+| Backups | ✅ Totalmente adaptada | - | Backup/download tenant-scoped por schema, com autorização explícita, auditoria mínima por log, headers seguros e rate limit tenant-aware |
+| Exportações | ✅ Totalmente adaptada | - | Export tenant-scoped, autorizado, auditado, limitado e testado com dois tenants para o escopo demo/teste |
 | Uploads | 🟡 Parcialmente adaptada | L-002 | Nao ha upload real na demo; definir arquitetura tenant-aware antes de qualquer upload real |
 | Media | 🟡 Parcialmente adaptada | L-002 | `MEDIA_ROOT`/`MEDIA_URL` estao explicitos; definir paths, URLs e limpeza por tenant antes de uploads reais |
 | Logs | 🟡 Parcialmente adaptada | M-003 | H-009 cobre logs mínimos da demo; ainda falta padronização ampla para produção real |
@@ -525,6 +526,36 @@ Quando um risco for dividido em riscos menores, ele nunca deve ser removido. Dev
 - Histórico individual:
   - 2026-07-05: Criado e concluído como hardening mínimo de logs/auditoria operacional para demo/teste, sem criar auditoria persistente nem logging enterprise.
 
+#### H-010
+
+- ID: H-010
+- Domínio: Rate limiting
+- Severidade: Alta
+- Status: Concluído
+- Responsável: Davi
+- Estimativa: Pequeno
+- Descrição: Operações caras/sensíveis da demo precisavam de limites tenant-aware.
+- Motivo: Criação de backup, download de backup, exportação CSV e reset de senha podem ser abusados ou colidir entre tenants se o rate limit não considerar schema/tenant.
+- Arquivos envolvidos: `config/settings.py`, `.env.example`, `.env.production.example`, `caixa/throttling.py`, `caixa/views_backups.py`, `caixa/views_obrigacoes.py`, `tenancy/tests.py`.
+- Impacto: Sem limites específicos, um usuário poderia acionar operações caras repetidamente; sem chave por tenant, um tenant poderia afetar o limite de outro.
+- Estratégia de correção: Adicionar throttles específicos para criação de backup e exportação CSV; aplicar rate limit manual ao download Django comum; garantir chave com schema, usuário/IP; documentar variáveis de ambiente; testar isolamento entre tenants.
+- Dependências: H-001, H-005, H-007, H-008 e H-009 concluídos.
+- Critério de Aceite: Criação de backup, download de backup e exportação CSV possuem limites configuráveis; limites não colidem entre tenants; reset de senha continua isolado por schema; validações locais passam.
+- Evidências:
+  - 2026-07-05: `config/settings.py` passou a expor os escopos `backup_create`, `backup_download` e `export_csv` em `REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]`.
+  - 2026-07-05: `.env.example` e `.env.production.example` passaram a documentar `DRF_THROTTLE_BACKUP_CREATE_RATE`, `DRF_THROTTLE_BACKUP_DOWNLOAD_RATE` e `DRF_THROTTLE_EXPORT_CSV_RATE`.
+  - 2026-07-05: `caixa/throttling.py` recebeu throttles tenant-aware para operações sensíveis, com chave por schema, usuário/IP e resposta segura para views Django comuns.
+  - 2026-07-05: `api_backup_criar_manual` passou a usar `BackupCreateRateThrottle`.
+  - 2026-07-05: `backup_download` passou a usar `BackupDownloadRateThrottle` antes de consultar arquivo, retornando 429 com `Retry-After`, `Cache-Control: no-store`, `Pragma: no-cache` e `X-Content-Type-Options: nosniff`.
+  - 2026-07-05: `api_exportar_obrigacoes_financeiras` passou a usar `ExportCsvRateThrottle`.
+  - 2026-07-05: Adicionados testes provando rate limit tenant-aware para criação de backup, download de backup e exportação CSV.
+  - 2026-07-05: Adicionado teste provando que o rate limit de reset de senha é isolado por schema.
+  - 2026-07-05: `$env:DEBUG='True'; .\venv\Scripts\python.exe manage.py test tenancy.tests.TenantThrottleIsolationTests tenancy.tests.TenantBackupIsolationTests tenancy.tests.TenantExportDownloadIsolationTests` aprovado, 14 testes, 189.848s.
+  - 2026-07-05: `$env:DEBUG='True'; .\venv\Scripts\python.exe manage.py check` aprovado.
+  - 2026-07-05: `$env:DEBUG='True'; .\venv\Scripts\python.exe manage.py makemigrations --check --dry-run` aprovado, sem mudanças detectadas.
+- Histórico individual:
+  - 2026-07-05: Criado e concluído como hardening mínimo de rate limiting para operações caras/sensíveis da demo multi-tenant.
+
 ### 🟠 Riscos MÉDIOS
 
 #### M-001
@@ -807,6 +838,7 @@ Esta seção não duplica riscos. Ela apenas mapeia os IDs existentes no backlog
 - H-001
 - H-008
 - H-009
+- H-010
 
 ### Cache
 
@@ -844,10 +876,12 @@ Esta seção não duplica riscos. Ela apenas mapeia os IDs existentes no backlog
 - H-005
 - H-008
 - H-009
+- H-010
 
 ### Exportações
 
 - H-005
+- H-010
 
 ### Media
 
@@ -862,6 +896,11 @@ Esta seção não duplica riscos. Ela apenas mapeia os IDs existentes no backlog
 ### Observabilidade
 
 - M-003
+
+### Rate limiting
+
+- H-010
+- M-005
 
 ### Recuperação de desastre
 
@@ -1051,6 +1090,18 @@ Não será permitido:
 Riscos antigos devem permanecer no documento, mesmo quando concluídos ou desdobrados.
 
 ## Histórico
+
+### 2026-07-05 - H-010 concluído: rate limiting mínimo para operações caras da demo
+
+- Riscos corrigidos: H-010.
+- Arquivos alterados: `config/settings.py`, `.env.example`, `.env.production.example`, `caixa/throttling.py`, `caixa/views_backups.py`, `caixa/views_obrigacoes.py`, `tenancy/tests.py`, `docs/PLANO_HARDENING_SAAS.md`.
+- Validações executadas:
+  - `$env:DEBUG='True'; .\venv\Scripts\python.exe manage.py test tenancy.tests.TenantThrottleIsolationTests tenancy.tests.TenantBackupIsolationTests tenancy.tests.TenantExportDownloadIsolationTests`: aprovado, 14 testes.
+  - `$env:DEBUG='True'; .\venv\Scripts\python.exe manage.py check`: aprovado.
+  - `$env:DEBUG='True'; .\venv\Scripts\python.exe manage.py makemigrations --check --dry-run`: aprovado, sem mudanças detectadas.
+- Auditoria executada: revisão focada das operações caras/sensíveis de backup, download, exportação CSV, reset de senha e chaves de throttle tenant-aware.
+- Novos riscos encontrados: nenhum risco alto novo.
+- Decisão registrada: para a demo, operações caras/sensíveis devem ter limite específico e chave incluindo schema/tenant, usuário quando autenticado e IP; views Django comuns também devem respeitar rate limit.
 
 ### 2026-07-05 - H-009 concluído: logs mínimos de autenticação e downloads para demo
 
