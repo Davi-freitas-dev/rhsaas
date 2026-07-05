@@ -77,18 +77,36 @@ CANONICAL_FIRST_SETTLEMENT_SOURCES = env.list(
 
 
 # Aplicacoes
-INSTALLED_APPS = [
-    "django.contrib.admin",
-    "django.contrib.auth",
+SHARED_APPS = [
+    "django_tenants",
+    "tenancy",
     "django.contrib.contenttypes",
+    "django.contrib.auth",
     "django.contrib.sessions",
     "django.contrib.messages",
+    "django.contrib.admin",
+    "django.contrib.staticfiles",
+    "rest_framework",
+    "drf_spectacular",
+    "axes",
+]
+
+TENANT_APPS = [
+    "django.contrib.contenttypes",
+    "django.contrib.auth",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.admin",
     "django.contrib.staticfiles",
     "rest_framework",
     "drf_spectacular",
     "caixa",
     "simple_history",
     "axes",
+]
+
+INSTALLED_APPS = list(SHARED_APPS) + [
+    app for app in TENANT_APPS if app not in SHARED_APPS
 ]
 
 
@@ -140,6 +158,7 @@ SPECTACULAR_SETTINGS = {
 
 # Middleware
 MIDDLEWARE = [
+    "django_tenants.middleware.main.TenantMainMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "caixa.middleware.SecurityHeadersMiddleware",
@@ -156,7 +175,11 @@ MIDDLEWARE = [
 
 
 # URLs e templates
-ROOT_URLCONF = "config.urls"
+ROOT_URLCONF = "config.tenant_urls"
+PUBLIC_SCHEMA_URLCONF = "config.public_urls"
+PUBLIC_SCHEMA_NAME = "public"
+TENANT_MODEL = "tenancy.Tenant"
+TENANT_DOMAIN_MODEL = "tenancy.Domain"
 
 TEMPLATES = [
     {
@@ -195,6 +218,14 @@ DATABASES = {
         default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
     )
 }
+POSTGRESQL_ENGINES = {
+    "django.db.backends.postgresql",
+    "django.db.backends.postgresql_psycopg2",
+    "django_tenants.postgresql_backend",
+}
+if DATABASES["default"]["ENGINE"] not in POSTGRESQL_ENGINES:
+    raise ImproperlyConfigured("django-tenants requer DATABASE_URL PostgreSQL.")
+DATABASES["default"]["ENGINE"] = "django_tenants.postgresql_backend"
 DATABASES["default"]["CONN_MAX_AGE"] = env.int(
     "DB_CONN_MAX_AGE",
     default=60 if not DEBUG else 0,
@@ -203,6 +234,7 @@ DATABASES["default"]["CONN_HEALTH_CHECKS"] = env.bool(
     "DB_CONN_HEALTH_CHECKS",
     default=not DEBUG,
 )
+DATABASE_ROUTERS = ("django_tenants.routers.TenantSyncRouter",)
 
 
 # Cache

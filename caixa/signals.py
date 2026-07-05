@@ -1,7 +1,8 @@
-from django.db import transaction
+from django.db import connections, transaction
 from django.db.models.signals import post_migrate, post_save, post_delete
 from django.dispatch import receiver
 from django.utils import timezone
+from django_tenants.utils import get_public_schema_name
 
 from .models import DespesaOperacional, Evento, Orcamento, OrcamentoItem, ReceitaOperacional
 from .models_servico import EventoCustoServico
@@ -38,8 +39,12 @@ from .services_pagamentos_servico import sincronizar_pagamento_servico_e_recalcu
 from .services_sincronizacao import sincronizar_evento_financeiro
 
 @receiver(post_migrate)
-def criar_grupos_permissoes(sender, **kwargs):
+def criar_grupos_permissoes(sender, using, **kwargs):
     if sender.name != "caixa":
+        return
+
+    schema_name = getattr(connections[using], "schema_name", None)
+    if not schema_name or schema_name == get_public_schema_name():
         return
 
     sincronizar_grupos_permissoes()
