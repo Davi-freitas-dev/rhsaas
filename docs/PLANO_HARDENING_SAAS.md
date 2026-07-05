@@ -17,9 +17,9 @@ Criado em: 2026-07-05
 
 | Métrica | Progresso |
 | --- | --- |
-| Áreas totalmente adaptadas | 10 / 30 |
-| Riscos altos concluídos | 6 / 6 |
-| Riscos médios concluídos | 0 / 9 |
+| Áreas totalmente adaptadas | 11 / 30 |
+| Riscos altos concluídos | 7 / 7 |
+| Riscos médios concluídos | 1 / 9 |
 | Riscos baixos concluídos | 0 / 4 |
 
 Este painel deve ser atualizado a cada implementação, auditoria ou reclassificação de riscos.
@@ -164,7 +164,7 @@ Uma área só pode ser marcada como "✅ Totalmente adaptada" quando:
 
 | Área | Status atual | Bloqueado por | Condição para encerrar como totalmente adaptada |
 | --- | --- | --- | --- |
-| Autenticação | 🟡 Parcialmente adaptada | M-005 | Separar operador da plataforma, usuário de tenant, superuser de tenant e staff sem ambiguidade |
+| Autenticação | ✅ Totalmente adaptada | - | Papéis de plataforma/tenant separados e autenticação/lockout testados entre tenants no escopo demo/teste |
 | Sessões | ✅ Totalmente adaptada | - | Manter testes provando que sessão de um tenant não autentica outro tenant |
 | Cache | 🟡 Parcialmente adaptada | L-001 | Manter prefixo por schema e revisar cache estático/frontend antes de produção |
 | CSRF | 🟡 Parcialmente adaptada | M-002 | Validar política final para subdomínios, trusted origins e produção |
@@ -188,7 +188,7 @@ Uma área só pode ser marcada como "✅ Totalmente adaptada" quando:
 | Models | ✅ Totalmente adaptada | - | Separação validada entre models de `public` e models de tenant para a arquitetura atual |
 | Managers | 🟡 Parcialmente adaptada | M-006 | Garantir que managers não escondam consultas globais nem dependam de single-tenant |
 | QuerySets | 🟡 Parcialmente adaptada | M-001 | Testar listagem, detalhe, IDs iguais e filtros entre tenants |
-| Testes | 🟡 Parcialmente adaptada | M-001, M-005, L-004 | Cobrir autenticação, permissões, API, backups, exportações, comandos e produção |
+| Testes | 🟡 Parcialmente adaptada | M-001, L-004 | Cobrir autenticação, permissões, API, backups, exportações, comandos e produção |
 | Configurações de produção | 🟡 Parcialmente adaptada | M-002, M-007 | Adicionar checks para Host, cookies, CSRF, CORS, cache, debug e secrets |
 | Deploy | 🟡 Parcialmente adaptada | M-007, M-008 | Documentar e validar deploy separado do projeto antigo, sem comandos legados |
 | Observabilidade mínima | ❌ Não adaptada | M-003 | Ter logs, auditoria, alertas mínimos e identificação do tenant em eventos sensíveis |
@@ -446,6 +446,33 @@ Quando um risco for dividido em riscos menores, ele nunca deve ser removido. Dev
 - Histórico individual:
   - 2026-07-05: Criado e concluído como ajuste mínimo para demo/teste/portfólio multi-tenant, sem transformar o projeto em hardening enterprise.
 
+#### H-007
+
+- ID: H-007
+- Domínio: Autenticação e Sessões
+- Severidade: Alta
+- Status: Concluído
+- Responsável: Davi
+- Estimativa: Pequeno
+- Descrição: A demo precisava de provas automatizadas adicionais para autenticação, sessão e CSRF entre tenants.
+- Motivo: Mais de um usuário poderá testar a aplicação simultaneamente; sessão, CSRF e lockout não podem atravessar schemas/hosts.
+- Arquivos envolvidos: `tenancy/tests.py`.
+- Impacto: Sem esses testes, uma regressão em login, sessão, CSRF ou lockout poderia permitir comportamento compartilhado entre tenants durante a demo.
+- Estratégia de correção: Adicionar testes multi-tenant focados em session fixation, CSRF cross-host e `django-axes` por tenant.
+- Dependências: H-001, H-002, H-003, H-004, H-005 e H-006 concluídos.
+- Critério de Aceite: Login rotaciona session key preexistente; token CSRF de um tenant não valida POST sensível em outro host; falhas de login no tenant A não bloqueiam login válido no tenant B; validações locais passam.
+- Evidências:
+  - 2026-07-05: Adicionado teste `TenantAuthSessionIsolationTests.test_login_rotaciona_session_key_preexistente`.
+  - 2026-07-05: Adicionado teste `TenantAuthSessionIsolationTests.test_csrf_obtido_em_um_tenant_nao_valida_post_em_outro_host`.
+  - 2026-07-05: Adicionado teste `TenantAuthSessionIsolationTests.test_falhas_do_django_axes_em_um_tenant_nao_bloqueiam_outro`.
+  - 2026-07-05: `$env:DEBUG='True'; venv\Scripts\python.exe manage.py test tenancy.tests.TenantAuthSessionIsolationTests` aprovado, 8 testes, 80.006s.
+  - 2026-07-05: `$env:DEBUG='True'; venv\Scripts\python.exe manage.py test tenancy.tests.TenantAuthSessionIsolationTests tenancy.tests.TenantApiIdorIsolationTests tenancy.tests.TenantBackupIsolationTests tenancy.tests.TenantExportDownloadIsolationTests` aprovado, 18 testes, 354.996s.
+  - 2026-07-05: `$env:DEBUG='True'; venv\Scripts\python.exe manage.py check` aprovado.
+  - 2026-07-05: `git diff --check` aprovado sem erros.
+  - 2026-07-05: Tentativa de rodar recorte antigo de `caixa.tests.PermissoesTests` falhou porque esses testes usam `Client` sem `HTTP_HOST` de tenant e recebem HTML em vez de JSON; registrado como dívida de teste legado em L-004, não como falha do fluxo multi-tenant coberto em `tenancy`.
+- Histórico individual:
+  - 2026-07-05: Criado e concluído como hardening mínimo de autenticação/sessão para demo multi-tenant.
+
 ### 🟠 Riscos MÉDIOS
 
 #### M-001
@@ -529,7 +556,7 @@ Quando um risco for dividido em riscos menores, ele nunca deve ser removido. Dev
 - ID: M-005
 - Domínio: Autenticação
 - Severidade: Média
-- Status: Não iniciado
+- Status: Concluído
 - Responsável: Davi
 - Estimativa: Pequeno
 - Descrição: `django-axes` precisa teste explícito por tenant.
@@ -539,9 +566,13 @@ Quando um risco for dividido em riscos menores, ele nunca deve ser removido. Dev
 - Estratégia de correção: Criar teste de login falho em tenant A sem afetar tenant B; ajustar se necessário.
 - Dependências: Suite de testes auth multi-tenant.
 - Critério de Aceite: Tentativas inválidas em tenant A não bloqueiam login válido em tenant B; evidência de teste fica registrada.
-- Evidências: Nenhuma registrada ainda.
+- Evidências:
+  - 2026-07-05: H-007 adicionou `TenantAuthSessionIsolationTests.test_falhas_do_django_axes_em_um_tenant_nao_bloqueiam_outro`.
+  - 2026-07-05: O teste força `AXES_FAILURE_LIMIT` falhas no tenant A com o mesmo username/IP e confirma login válido no tenant B com o mesmo username.
+  - 2026-07-05: `$env:DEBUG='True'; venv\Scripts\python.exe manage.py test tenancy.tests.TenantAuthSessionIsolationTests` aprovado, 8 testes, 80.006s.
 - Histórico individual:
   - 2026-07-05: Criado a partir da auditoria arquitetural.
+  - 2026-07-05: Concluído por H-007 com teste explícito de lockout tenant-scoped.
 
 #### M-006
 
@@ -693,9 +724,11 @@ Quando um risco for dividido em riscos menores, ele nunca deve ser removido. Dev
 - Estratégia de correção: Atualizar fixtures para domínios RH SaaS quando os testes forem revisitados.
 - Dependências: M-008.
 - Critério de Aceite: Testes ativos usam domínios coerentes com RH SaaS ou deixam explícito que são fixtures legadas sem efeito em runtime.
-- Evidências: Nenhuma registrada ainda.
+- Evidências:
+  - 2026-07-05: Recorte antigo de `caixa.tests.PermissoesTests` para auth/CSRF falhou porque usa `Client` sem `HTTP_HOST` de tenant e recebe HTML em vez de JSON. A cobertura multi-tenant equivalente para demo foi adicionada em `tenancy.tests.TenantAuthSessionIsolationTests`.
 - Histórico individual:
   - 2026-07-05: Criado a partir da auditoria arquitetural.
+  - 2026-07-05: Registrada dívida de adaptação dos testes legados de auth para uso explícito de Host/tenant.
 
 ## Visão por Domínio
 
@@ -704,6 +737,7 @@ Esta seção não duplica riscos. Ela apenas mapeia os IDs existentes no backlog
 ### Autenticação
 
 - H-002
+- H-007
 - M-005
 
 ### Admin Django
@@ -763,6 +797,10 @@ Esta seção não duplica riscos. Ela apenas mapeia os IDs existentes no backlog
 ### Segurança Operacional
 
 - M-006
+
+### Sessões
+
+- H-007
 
 ### Testes
 
@@ -940,6 +978,20 @@ Não será permitido:
 Riscos antigos devem permanecer no documento, mesmo quando concluídos ou desdobrados.
 
 ## Histórico
+
+### 2026-07-05 - H-007 concluído: testes de autenticação e sessão entre tenants
+
+- Riscos corrigidos: H-007 e M-005.
+- Arquivos alterados: `tenancy/tests.py`, `docs/PLANO_HARDENING_SAAS.md`.
+- Validações executadas:
+  - `$env:DEBUG='True'; venv\Scripts\python.exe manage.py test tenancy.tests.TenantAuthSessionIsolationTests`: aprovado, 8 testes.
+  - `$env:DEBUG='True'; venv\Scripts\python.exe manage.py test tenancy.tests.TenantAuthSessionIsolationTests tenancy.tests.TenantApiIdorIsolationTests tenancy.tests.TenantBackupIsolationTests tenancy.tests.TenantExportDownloadIsolationTests`: aprovado, 18 testes.
+  - `$env:DEBUG='True'; venv\Scripts\python.exe manage.py check`: aprovado.
+  - `git diff --check`: aprovado sem erros.
+  - Recorte antigo de `caixa.tests.PermissoesTests` para auth/CSRF: falhou porque os testes legados não configuram `HTTP_HOST` de tenant; registrado em L-004.
+- Auditoria executada: revisão read-only de `caixa/views_api_auth.py`, `caixa/views_auth.py`, `caixa/permissions.py`, `config/settings.py`, `config/public_urls.py`, `config/tenant_urls.py`, `tenancy/tests.py`, backups/exportações e buscas por seleção de tenant via parâmetro/header/payload.
+- Novos riscos encontrados: nenhum risco alto novo. L-004 permanece como dívida de adaptação de testes legados para Host/tenant.
+- Decisão registrada: para a demo, a proteção de autenticação/sessão deve ser validada por testes multi-tenant no app `tenancy`; testes legados que não usam Host explícito não devem ser usados como evidência de segurança multi-tenant até serem adaptados.
 
 ### 2026-07-05 - H-006 concluído: configuração mínima para demo multi-tenant local
 

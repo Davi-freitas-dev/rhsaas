@@ -14,7 +14,7 @@ from django.core.management.base import CommandError
 from django.contrib.auth.models import Group
 from django.contrib.auth import get_user_model
 from django.db import connection
-from django.test import override_settings
+from django.test import Client, override_settings
 from django_tenants.utils import get_public_schema_name
 
 from caixa.models import ReceitaOperacional
@@ -182,6 +182,14 @@ class TenantAuthSessionIsolationTests(MultiTenantTestCase):
     def _client_for_schema(self, schema_name):
         return self.client_for_tenant(self.tenants[schema_name])
 
+    def _csrf_client_for_schema(self, schema_name):
+        domain = (
+            "tenant-a.localhost"
+            if schema_name == "tenant_a"
+            else "tenant-b.localhost"
+        )
+        return Client(enforce_csrf_checks=True, HTTP_HOST=domain)
+
     def _login_json(self, client, username, password):
         return client.post(
             "/api/auth/login/",
@@ -308,6 +316,87 @@ class TenantAuthSessionIsolationTests(MultiTenantTestCase):
         self.assertEqual(response_b.status_code, 200)
         self.assertEqual(response_b.wsgi_request.tenant.schema_name, "tenant_b")
         self.assertEqual(response_b.json()["user"]["username"], username)
+
+    def test_login_rotaciona_session_key_preexistente(self):
+        self.create_user("tenant_a", "usuario-fixation", "senha-fixation")
+        client = self._client_for_schema("tenant_a")
+        session = client.session
+        session["pre_login_marker"] = "fixation-check"
+        session.save()
+        session_key_antes_login = session.session_key
+
+        response = self._login_json(client, "usuario-fixation", "senha-fixation")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.wsgi_request.tenant.schema_name, "tenant_a")
+        self.assertIn(settings.SESSION_COOKIE_NAME, client.cookies)
+        self.assertNotEqual(
+            client.cookies[settings.SESSION_COOKIE_NAME].value,
+            session_key_antes_login,
+        )
+
+    def test_csrf_obtido_em_um_tenant_nao_valida_post_em_outro_host(self):
+        self.create_user("tenant_b", "usuario-csrf-b", "senha-csrf-b")
+        client_a = self._csrf_client_for_schema("tenant_a")
+        csrf_response_a = client_a.get("/api/auth/csrf/")
+        csrf_token_a = csrf_response_a.json()["csrfToken"]
+        self.assertIn(settings.CSRF_COOKIE_NAME, client_a.cookies)
+
+        client_b = self._csrf_client_for_schema("tenant_b")
+        self.assertNotIn(settings.CSRF_COOKIE_NAME, client_b.cookies)
+        cross_host_response = client_b.post(
+            "/api/auth/login/",
+            data=json.dumps(
+                {
+                    "username": "usuario-csrf-b",
+                    "password": "senha-csrf-b",
+                }
+            ),
+            content_type="application/json",
+            HTTP_X_CSRFTOKEN=csrf_token_a,
+        )
+
+        self.assertEqual(cross_host_response.status_code, 403)
+        self.assertEqual(
+            cross_host_response.wsgi_request.tenant.schema_name,
+            "tenant_b",
+        )
+
+        csrf_token_b = client_b.get("/api/auth/csrf/").json()["csrfToken"]
+        login_b = client_b.post(
+            "/api/auth/login/",
+            data=json.dumps(
+                {
+                    "username": "usuario-csrf-b",
+                    "password": "senha-csrf-b",
+                }
+            ),
+            content_type="application/json",
+            HTTP_X_CSRFTOKEN=csrf_token_b,
+        )
+
+        self.assertEqual(login_b.status_code, 200)
+        self.assertEqual(login_b.wsgi_request.tenant.schema_name, "tenant_b")
+
+    def test_falhas_do_django_axes_em_um_tenant_nao_bloqueiam_outro(self):
+        username = "usuario-axes-compartilhado"
+        self.create_user("tenant_a", username, "senha-axes-a")
+        self.create_user("tenant_b", username, "senha-axes-b")
+        client_a = self._client_for_schema("tenant_a")
+
+        for _ in range(settings.AXES_FAILURE_LIMIT):
+            response = self._login_json(client_a, username, "senha-incorreta")
+            self.assertNotEqual(response.status_code, 200)
+            self.assertEqual(response.wsgi_request.tenant.schema_name, "tenant_a")
+
+        response_b = self._login_json(
+            self._client_for_schema("tenant_b"),
+            username,
+            "senha-axes-b",
+        )
+
+        self.assertEqual(response_b.status_code, 200)
+        self.assertEqual(response_b.wsgi_request.tenant.schema_name, "tenant_b")
 
 
 class TenantPlatformRoleSeparationTests(MultiTenantTestCase):
