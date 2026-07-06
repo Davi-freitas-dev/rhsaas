@@ -47,6 +47,10 @@ from .views_obrigacoes import (
 from .views_investimentos import api_investimentos, lista_investimentos
 from .views_custos_extras_api import api_criar_custo_extra_evento
 from .views_clientes_api import api_cliente_detalhe, api_clientes
+from .views_configuracoes_financeiras_api import (
+    api_configuracao_financeira_detalhe,
+    api_configuracoes_financeiras,
+)
 from .views_custos_fixos_api import api_custo_fixo_detalhe, api_custos_fixos
 from .views_despesas_api import api_despesa_detalhe
 from .views_eventos_api import api_evento_detalhe, api_eventos
@@ -182,6 +186,16 @@ urlpatterns = [
     path("api/eventos/<int:pk>/", api_evento_detalhe, name="api_evento_detalhe"),
     path("api/clientes/", api_clientes, name="api_clientes"),
     path("api/clientes/<int:pk>/", api_cliente_detalhe, name="api_cliente_detalhe"),
+    path(
+        "api/configuracoes-financeiras/",
+        api_configuracoes_financeiras,
+        name="api_configuracoes_financeiras",
+    ),
+    path(
+        "api/configuracoes-financeiras/<int:pk>/",
+        api_configuracao_financeira_detalhe,
+        name="api_configuracao_financeira_detalhe",
+    ),
     path("api/servicos/", api_servicos, name="api_servicos"),
     path("api/servicos/<int:pk>/", api_servico_detalhe, name="api_servico_detalhe"),
     path("api/orcamentos/", api_orcamentos, name="api_orcamentos"),

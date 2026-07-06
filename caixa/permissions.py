@@ -32,6 +32,9 @@ CHANGE_CLIENT_PERMISSION = "caixa.change_cliente"
 VIEW_SERVICE_PERMISSION = "caixa.view_servico"
 ADD_SERVICE_PERMISSION = "caixa.add_servico"
 CHANGE_SERVICE_PERMISSION = "caixa.change_servico"
+VIEW_FINANCIAL_CONFIGURATION_PERMISSION = "caixa.view_configuracaofinanceira"
+ADD_FINANCIAL_CONFIGURATION_PERMISSION = "caixa.add_configuracaofinanceira"
+CHANGE_FINANCIAL_CONFIGURATION_PERMISSION = "caixa.change_configuracaofinanceira"
 VIEW_FIXED_COST_PERMISSION = "caixa.view_custofixo"
 ADD_FIXED_COST_PERMISSION = "caixa.add_custofixo"
 CHANGE_FIXED_COST_PERMISSION = "caixa.change_custofixo"
@@ -71,6 +74,9 @@ PERMISSION_PROFILES = {
         "view_servico",
         "add_servico",
         "change_servico",
+        "view_configuracaofinanceira",
+        "add_configuracaofinanceira",
+        "change_configuracaofinanceira",
         "view_evento",
         "view_receitaoperacional",
         "add_receitaoperacional",
@@ -119,6 +125,7 @@ PERMISSION_PROFILES = {
     "Operacional": [
         "view_cliente",
         "view_servico",
+        "view_configuracaofinanceira",
         "view_orcamento",
         "view_orcamentoitem",
         "view_evento",

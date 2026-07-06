@@ -78,3 +78,39 @@ corepack pnpm run lint
 corepack pnpm run typecheck
 corepack pnpm test:e2e tests/e2e/rh-teste-demo.spec.ts
 ```
+
+## Fase futura: pool de tenants demo
+
+A demo atual usa o tenant fixo `rh_teste`. Ela e indicada para teste
+controlado; varios usuarios simultaneos podem acessar a demo, mas compartilham
+os mesmos dados operacionais desse tenant.
+
+A proxima fase sera um pool limitado de tenants demo, por exemplo
+`demo1`...`demo10`. Cada testador recebera um tenant/schema proprio, preservando
+o isolamento multi-tenant ja existente no backend.
+
+Diretrizes planejadas:
+
+- limite inicial de 10 vagas/testadores simultaneos;
+- duracao sugerida de 3 dias por testador;
+- limite sugerido de 50 MB por tenant;
+- ao expirar o prazo, bloquear o acesso do testador;
+- apagar sessoes, backups temporarios e dados associados ao teste;
+- limpar ou recriar o schema do tenant demo;
+- liberar a vaga para um novo testador.
+
+O frontend publico continua unico em `demo-rh.taquiondev.com.br`. O backend
+deve usar dominios tecnicos por tenant, como:
+
+```txt
+demo1.api-demo-rh.taquiondev.com.br
+demo2.api-demo-rh.taquiondev.com.br
+...
+demo10.api-demo-rh.taquiondev.com.br
+```
+
+No DNS futuro, o subdominio tecnico pode usar wildcard:
+
+```txt
+*.api-demo-rh.taquiondev.com.br
+```

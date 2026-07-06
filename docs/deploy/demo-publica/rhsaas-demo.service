@@ -1,0 +1,16 @@
+[Unit]
+Description=RH SaaS Demo Django
+After=network.target postgresql.service redis-server.service
+
+[Service]
+User=ubuntu
+Group=www-data
+WorkingDirectory=/opt/rhsaas
+Environment="DJANGO_SETTINGS_MODULE=config.settings"
+Environment="PATH=/opt/rhsaas/venv/bin"
+ExecStart=/opt/rhsaas/venv/bin/gunicorn config.wsgi:application --bind 127.0.0.1:8000 --workers 3 --timeout 90 --access-logfile - --error-logfile -
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
