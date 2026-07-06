@@ -567,9 +567,11 @@ class TenantBackupIsolationTests(MultiTenantTestCase):
         self.assertEqual(response.wsgi_request.tenant.schema_name, schema_name)
         return client
 
-    def _write_backup(self, schema_name, filename=None, content=None):
+    def _write_backup(self, schema_name, filename=None, content=None, sha256=None):
         filename = filename or self.backup_filename
-        content = content or f"conteudo-{schema_name}".encode("utf-8")
+        if content is None:
+            content = f"conteudo-{schema_name}".encode("utf-8")
+        metadata_sha256 = sha256 or hashlib.sha256(content).hexdigest()
         with self.in_schema(schema_name):
             backup_dir = backup_dir_for_schema()
             backup_dir.mkdir(parents=True, exist_ok=True)
@@ -583,7 +585,7 @@ class TenantBackupIsolationTests(MultiTenantTestCase):
                         "mes_referencia": "2026-07",
                         "scope": "tenant",
                         "schema_name": schema_name,
-                        "sha256": "sha256-teste",
+                        "sha256": metadata_sha256,
                         "tamanho_bytes": backup_path.stat().st_size,
                     },
                     ensure_ascii=False,
@@ -612,6 +614,51 @@ class TenantBackupIsolationTests(MultiTenantTestCase):
             self.assertEqual(len(response_b.json()["backups"]), 1)
             self.assertEqual(response_a.json()["backups"][0]["schemaName"], "tenant_a")
             self.assertEqual(response_b.json()["backups"][0]["schemaName"], "tenant_b")
+
+    def test_backup_com_sha256_invalido_nao_lista_nem_baixa(self):
+        with TemporaryDirectory() as temp_dir:
+            base_dir = Path(temp_dir)
+            with override_settings(BASE_DIR=base_dir):
+                self._write_backup("tenant_a", sha256="sha256-invalido")
+                client_a = self._authenticated_admin("tenant_a")
+
+                list_response = client_a.get("/api/backups/")
+                download_response = client_a.get(
+                    f"/backups/{self.backup_filename}/download/"
+                )
+
+            self.assertEqual(list_response.status_code, 200)
+            self.assertEqual(list_response.json(), {"backups": []})
+            self.assertEqual(download_response.status_code, 404)
+            self.assertEqual(list_response.wsgi_request.tenant.schema_name, "tenant_a")
+            self.assertEqual(download_response.wsgi_request.tenant.schema_name, "tenant_a")
+
+    def test_backup_com_sha256_valido_continua_listando_e_baixando(self):
+        content = b"backup tenant a valido"
+        with TemporaryDirectory() as temp_dir:
+            base_dir = Path(temp_dir)
+            with override_settings(BASE_DIR=base_dir):
+                self._write_backup("tenant_a", content=content)
+                client_a = self._authenticated_admin("tenant_a")
+
+                list_response = client_a.get("/api/backups/")
+                download_response = client_a.get(
+                    f"/backups/{self.backup_filename}/download/"
+                )
+
+                downloaded = b"".join(download_response.streaming_content)
+                download_response.close()
+
+            self.assertEqual(list_response.status_code, 200)
+            self.assertEqual(download_response.status_code, 200)
+            self.assertEqual(len(list_response.json()["backups"]), 1)
+            self.assertEqual(
+                list_response.json()["backups"][0]["name"],
+                self.backup_filename,
+            )
+            self.assertEqual(downloaded, content)
+            self.assertEqual(list_response.wsgi_request.tenant.schema_name, "tenant_a")
+            self.assertEqual(download_response.wsgi_request.tenant.schema_name, "tenant_a")
 
     def test_download_de_backup_nao_acessa_arquivo_de_outro_tenant(self):
         with TemporaryDirectory() as temp_dir:

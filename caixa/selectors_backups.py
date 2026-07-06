@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 
@@ -14,6 +15,14 @@ def _metadata_path(caminho):
     return caminho.with_name(f"{caminho.stem}.meta.json")
 
 
+def _sha256_file(caminho):
+    digest = hashlib.sha256()
+    with caminho.open("rb") as arquivo:
+        for bloco in iter(lambda: arquivo.read(1024 * 1024), b""):
+            digest.update(bloco)
+    return digest.hexdigest()
+
+
 def _metadata_valida_para_schema(caminho, schema_name, scope):
     metadata_path = _metadata_path(caminho)
     if not metadata_path.is_file():
@@ -24,11 +33,21 @@ def _metadata_valida_para_schema(caminho, schema_name, scope):
     except (OSError, json.JSONDecodeError):
         return False
 
-    return (
-        metadata.get("arquivo") == caminho.name
-        and metadata.get("schema_name") == schema_name
-        and metadata.get("scope") == scope
-    )
+    if (
+        metadata.get("arquivo") != caminho.name
+        or metadata.get("schema_name") != schema_name
+        or metadata.get("scope") != scope
+    ):
+        return False
+
+    expected_sha256 = metadata.get("sha256")
+    if not expected_sha256:
+        return False
+
+    try:
+        return _sha256_file(caminho) == expected_sha256
+    except OSError:
+        return False
 
 
 def listar_backups_disponiveis():

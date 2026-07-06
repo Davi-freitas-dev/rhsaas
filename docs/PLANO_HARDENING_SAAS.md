@@ -18,7 +18,7 @@ Criado em: 2026-07-05
 | Métrica | Progresso |
 | --- | --- |
 | Áreas totalmente adaptadas | 12 / 31 |
-| Riscos altos concluídos | 10 / 10 |
+| Riscos altos concluídos | 11 / 11 |
 | Riscos médios concluídos | 1 / 9 |
 | Riscos baixos concluídos | 0 / 4 |
 
@@ -150,6 +150,19 @@ O registro de modelos no `admin.site` padrão não deve ser tratado como superf�
 - Antes de reativar qualquer admin, devem existir testes provando que modelos de plataforma não aparecem no admin do tenant e modelos de tenant não aparecem no admin público.
 - Enquanto esse desenho não for implementado, `/admin/` deve continuar retornando 404 no public e nos tenants.
 
+## Nota operacional de backup/restore da demo
+
+Esta demo não possui restore habilitado pela aplicação.
+
+Regras mínimas enquanto não existir um runbook completo de disaster recovery:
+
+- qualquer restore manual deve ser feito com schema explícito, nunca no schema inferido por engano;
+- antes de restaurar dados em um tenant real da demo, validar o procedimento em um schema temporário;
+- conferir metadata do backup antes de qualquer uso: `scope`, `schema_name`, nome do arquivo e `sha256`;
+- não copiar, compactar, publicar ou expor a pasta `backups/` inteira;
+- arquivos locais em `backups/` são artefatos operacionais sensíveis, mesmo quando ignorados pelo Git;
+- restore por tenant, criptografia e política completa de retenção permanecem no backlog de recuperação de desastre.
+
 ## Matriz de Adaptação SaaS
 
 Esta matriz deve ser reavaliada após cada implementação e a cada nova auditoria.
@@ -177,7 +190,7 @@ Uma área só pode ser marcada como "✅ Totalmente adaptada" quando:
 | django-tenants | ✅ Totalmente adaptada | - | Manter modelo de um schema por empresa e tenant identificado por Host |
 | Commands | 🟡 Parcialmente adaptada | M-008 | Classificar e proteger todos os comandos operacionais |
 | Signals | ✅ Totalmente adaptada | - | Manter signals operacionais bloqueados no `public` e cobertos por testes quando críticos |
-| Backups | ✅ Totalmente adaptada | - | Backup/download tenant-scoped por schema, com autorização explícita, auditoria mínima por log, headers seguros e rate limit tenant-aware |
+| Backups | ✅ Totalmente adaptada | - | Backup/download tenant-scoped por schema, com autorização explícita, metadata por schema, validação de sha256, auditoria mínima por log, headers seguros e rate limit tenant-aware |
 | Exportações | ✅ Totalmente adaptada | - | Export tenant-scoped, autorizado, auditado, limitado e testado com dois tenants para o escopo demo/teste |
 | Uploads | 🟡 Parcialmente adaptada | L-002 | Nao ha upload real na demo; definir arquitetura tenant-aware antes de qualquer upload real |
 | Media | 🟡 Parcialmente adaptada | L-002 | `MEDIA_ROOT`/`MEDIA_URL` estao explicitos; definir paths, URLs e limpeza por tenant antes de uploads reais |
@@ -556,6 +569,34 @@ Quando um risco for dividido em riscos menores, ele nunca deve ser removido. Dev
 - Histórico individual:
   - 2026-07-05: Criado e concluído como hardening mínimo de rate limiting para operações caras/sensíveis da demo multi-tenant.
 
+#### H-011
+
+- ID: H-011
+- Domínio: Backups
+- Severidade: Alta
+- Status: Concluído
+- Responsável: Davi
+- Estimativa: Pequeno
+- Descrição: Backups da demo precisavam validar integridade por `sha256` antes de listagem/download.
+- Motivo: A metadata já registrava `sha256`, mas a validação de listagem/download ainda aceitava arquivo com metadata de schema válida mesmo se o conteúdo tivesse sido corrompido ou trocado localmente.
+- Arquivos envolvidos: `caixa/selectors_backups.py`, `tenancy/tests.py`, `docs/PLANO_HARDENING_SAAS.md`.
+- Impacto: Um arquivo de backup corrompido poderia aparecer na listagem ou ser baixado, gerando falsa confiança operacional.
+- Estratégia de correção: Recalcular `sha256` do arquivo antes de considerar a metadata válida; manter comportamento seguro de não listar e retornar 404 quando o hash divergir; adicionar nota operacional mínima sobre restore manual.
+- Dependências: H-001, H-008 e H-010 concluídos.
+- Critério de Aceite: Backup íntegro continua listando e baixando; backup com `sha256` inválido não aparece na listagem nem baixa; isolamento por tenant permanece preservado; restore pela aplicação continua não habilitado.
+- Evidências:
+  - 2026-07-05: `caixa/selectors_backups.py` passou a recalcular `sha256` em leitura e exigir correspondência com a metadata.
+  - 2026-07-05: Teste `TenantBackupIsolationTests.test_backup_com_sha256_invalido_nao_lista_nem_baixa` cobre backup corrompido.
+  - 2026-07-05: Teste `TenantBackupIsolationTests.test_backup_com_sha256_valido_continua_listando_e_baixando` cobre backup íntegro.
+  - 2026-07-05: Testes existentes de criação/listagem/download continuam cobrindo isolamento entre `tenant_a` e `tenant_b`.
+  - 2026-07-05: Nota operacional de backup/restore da demo adicionada neste plano.
+  - 2026-07-05: `$env:DEBUG='True'; .\venv\Scripts\python.exe manage.py test tenancy.tests.TenantBackupIsolationTests` aprovado, 9 testes.
+  - 2026-07-05: `$env:DEBUG='True'; .\venv\Scripts\python.exe manage.py check` aprovado.
+  - 2026-07-05: `$env:DEBUG='True'; .\venv\Scripts\python.exe manage.py makemigrations --check --dry-run` aprovado, sem mudanças detectadas.
+  - 2026-07-05: `git diff --check` aprovado sem erros.
+- Histórico individual:
+  - 2026-07-05: Criado e concluído como H-011 Final para fechar integridade mínima de backups e nota operacional de restore da demo, sem implementar restore ou criptografia.
+
 ### 🟠 Riscos MÉDIOS
 
 #### M-001
@@ -732,9 +773,11 @@ Quando um risco for dividido em riscos menores, ele nunca deve ser removido. Dev
 - Estratégia de correção: Definir procedimento de restore por tenant, validar restore em banco temporário, garantir que restore nunca sobrescreva outro schema e documentar runbook de desastre.
 - Dependências: H-001 concluído em 2026-07-05.
 - Critério de Aceite: Existe runbook de restore por tenant e plataforma; restore é testado em ambiente temporário; evidências demonstram que restaurar tenant A não altera tenant B.
-- Evidências: Nenhuma registrada ainda.
+- Evidências:
+  - 2026-07-05: H-011 adicionou nota operacional mínima deixando explícito que restore não está habilitado na aplicação demo e que qualquer restore manual deve usar schema explícito, preferencialmente validado antes em schema temporário.
 - Histórico individual:
   - 2026-07-05: Criado durante auditoria final do H-001.
+  - 2026-07-05: Parcialmente encaminhado por H-011 apenas no nível de orientação operacional mínima; permanece aberto para runbook e teste real de restore por tenant.
 
 ### 🟢 Riscos BAIXOS
 
@@ -839,6 +882,7 @@ Esta seção não duplica riscos. Ela apenas mapeia os IDs existentes no backlog
 - H-008
 - H-009
 - H-010
+- H-011
 
 ### Cache
 
@@ -877,6 +921,7 @@ Esta seção não duplica riscos. Ela apenas mapeia os IDs existentes no backlog
 - H-008
 - H-009
 - H-010
+- H-011
 
 ### Exportações
 
@@ -904,6 +949,7 @@ Esta seção não duplica riscos. Ela apenas mapeia os IDs existentes no backlog
 
 ### Recuperação de desastre
 
+- H-011
 - M-009
 
 ### Segurança Operacional
@@ -1090,6 +1136,20 @@ Não será permitido:
 Riscos antigos devem permanecer no documento, mesmo quando concluídos ou desdobrados.
 
 ## Histórico
+
+### 2026-07-05 - H-011 Final concluído: integridade de backups e nota operacional de restore da demo
+
+- Riscos corrigidos: H-011.
+- Riscos parcialmente encaminhados: M-009 recebeu nota operacional mínima, mas permanece aberto para runbook e teste real de restore por tenant.
+- Arquivos alterados: `caixa/selectors_backups.py`, `tenancy/tests.py`, `docs/PLANO_HARDENING_SAAS.md`.
+- Validações executadas:
+  - `$env:DEBUG='True'; .\venv\Scripts\python.exe manage.py test tenancy.tests.TenantBackupIsolationTests`: aprovado, 9 testes.
+  - `$env:DEBUG='True'; .\venv\Scripts\python.exe manage.py check`: aprovado.
+  - `$env:DEBUG='True'; .\venv\Scripts\python.exe manage.py makemigrations --check --dry-run`: aprovado, sem mudanças detectadas.
+  - `git diff --check`: aprovado sem erros.
+- Auditoria executada: revisão focada do fluxo de criação, listagem, download, metadata, hash, isolamento por tenant, restore ausente e pasta `backups/`.
+- Novos riscos encontrados: nenhum risco alto novo.
+- Decisão registrada: para a demo, backup só é considerado válido quando metadata de schema/scope e `sha256` batem com o arquivo; restore pela aplicação permanece desabilitado.
 
 ### 2026-07-05 - H-010 concluído: rate limiting mínimo para operações caras da demo
 
