@@ -502,7 +502,7 @@ class TenantPlatformRoleSeparationTests(MultiTenantTestCase):
         self.assertTrue(payload["isSuperuser"])
         self.assertTrue(payload["isTenantAdmin"])
         self.assertFalse(payload["isPlatformOperator"])
-        self.assertFalse(payload["canManageBackups"])
+        self.assertTrue(payload["canManageBackups"])
 
     def test_admin_do_tenant_nao_recebe_permissao_de_backup_global(self):
         self.create_user(

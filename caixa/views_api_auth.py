@@ -172,7 +172,7 @@ def _user_payload(user):
             user.has_perm(permission)
             for permission in PERMISSOES_BAIXA_NATIVA.values()
         ),
-        "canManageBackups": is_platform_operator(user),
+        "canManageBackups": is_platform_operator(user) or is_tenant_administrator(user),
     }
 
     return {
