@@ -3,20 +3,22 @@ import hashlib
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from unittest.mock import patch
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.core import mail
 from django.core.cache import cache
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.contrib.auth.models import Group
 from django.contrib.auth import get_user_model
-from django.db import connection
-from django.test import Client, override_settings
-from django_tenants.utils import get_public_schema_name
+from django.db import IntegrityError, connection, transaction
+from django.test import Client, TransactionTestCase, override_settings
+from django.utils import timezone
+from django_tenants.utils import get_public_schema_name, schema_context
 from rest_framework.throttling import SimpleRateThrottle
 
 from caixa.models import ReceitaOperacional
@@ -31,9 +33,13 @@ from caixa.throttling import (
 )
 from tenancy.command_guards import (
     COMMAND_SCOPES,
+    DEMO_POOL_SCHEMA_NAMES,
     SCOPE_TENANT_ONLY,
+    ensure_demo_pool_confirmation,
+    ensure_demo_pool_schema,
+    is_demo_pool_schema,
 )
-from tenancy.models import Domain, Tenant
+from tenancy.models import DemoTenantSlot, Domain, Tenant
 from tenancy.test_helpers import MultiTenantTestCase, OPERATIONAL_GROUPS
 
 
@@ -112,6 +118,635 @@ class TenantIsolationInfrastructureTests(MultiTenantTestCase):
                     )
 
                 self.assertEqual(tenant_groups, set(OPERATIONAL_GROUPS))
+
+
+class DemoTenantSlotModelTests(MultiTenantTestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.demo1_tenant, cls.demo1_domain = cls.create_tenant(
+            schema_name="demo1",
+            name="Demo 1",
+            domain="demo1.localhost",
+        )
+        cls.demo2_tenant, cls.demo2_domain = cls.create_tenant(
+            schema_name="demo2",
+            name="Demo 2",
+            domain="demo2.localhost",
+        )
+        cls.demo11_tenant, cls.demo11_domain = cls.create_tenant(
+            schema_name="demo11",
+            name="Demo 11",
+            domain="demo11.localhost",
+        )
+
+    def setUp(self):
+        super().setUp()
+        self.switch_to_public()
+        DemoTenantSlot.objects.all().delete()
+
+    def test_cria_slot_com_defaults_operacionais(self):
+        slot = DemoTenantSlot.objects.create(
+            tenant=self.demo1_tenant,
+            slot_code="demo1",
+        )
+
+        self.assertEqual(slot.status, DemoTenantSlot.Status.LIVRE)
+        self.assertEqual(slot.max_storage_mb, 50)
+        self.assertEqual(slot.assigned_name, "")
+        self.assertIsNone(slot.lease_started_at)
+        self.assertIsNone(slot.lease_expires_at)
+        self.assertEqual(str(slot), "demo1 (Livre)")
+
+    def test_slot_code_deve_ficar_no_pool_demo1_demo10(self):
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            DemoTenantSlot.objects.create(
+                tenant=self.demo11_tenant,
+                slot_code="demo11",
+            )
+
+    def test_slot_deve_corresponder_ao_schema_do_tenant(self):
+        slot = DemoTenantSlot(
+            tenant=self.demo1_tenant,
+            slot_code="demo2",
+        )
+
+        with self.assertRaises(ValidationError) as error:
+            slot.full_clean()
+
+        self.assertIn("slot_code", error.exception.message_dict)
+
+    def test_tenant_nao_pode_ter_mais_de_um_slot_demo(self):
+        DemoTenantSlot.objects.create(
+            tenant=self.demo1_tenant,
+            slot_code="demo1",
+        )
+
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            DemoTenantSlot.objects.create(
+                tenant=self.demo1_tenant,
+                slot_code="demo2",
+            )
+
+    def test_limite_de_armazenamento_deve_ficar_entre_1_e_50_mb(self):
+        for max_storage_mb in (0, 51):
+            with self.subTest(max_storage_mb=max_storage_mb):
+                with self.assertRaises(IntegrityError), transaction.atomic():
+                    DemoTenantSlot.objects.create(
+                        tenant=self.demo1_tenant,
+                        slot_code="demo1",
+                        max_storage_mb=max_storage_mb,
+                    )
+
+    def test_expiracao_deve_ser_posterior_ao_inicio_do_lease(self):
+        now = timezone.now()
+
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            DemoTenantSlot.objects.create(
+                tenant=self.demo1_tenant,
+                slot_code="demo1",
+                lease_started_at=now,
+                lease_expires_at=now - timedelta(days=1),
+            )
+
+    def test_status_deve_ficar_nas_opcoes_planejadas(self):
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            DemoTenantSlot.objects.create(
+                tenant=self.demo1_tenant,
+                slot_code="demo1",
+                status="invalido",
+            )
+
+
+class ProvisionarPoolDemoCommandTests(TransactionTestCase):
+    technical_domain_suffix = "api-demo-rh.taquiondev.com.br"
+    cleanup_schema_names = set(DEMO_POOL_SCHEMA_NAMES) | {"tenant_a"}
+
+    def setUp(self):
+        super().setUp()
+        self._cleanup_demo_pool()
+
+    def tearDown(self):
+        self._cleanup_demo_pool()
+        super().tearDown()
+
+    @classmethod
+    def _cleanup_demo_pool(cls):
+        connection.set_schema_to_public()
+        Domain.objects.filter(domain__endswith=f".{cls.technical_domain_suffix}").delete()
+        DemoTenantSlot.objects.filter(slot_code__in=DEMO_POOL_SCHEMA_NAMES).delete()
+        for tenant in list(Tenant.objects.filter(schema_name__in=cls.cleanup_schema_names)):
+            tenant.delete(force_drop=True)
+        connection.set_schema_to_public()
+
+    def _call_command(self, *args):
+        stdout = StringIO()
+        call_command(
+            "provisionar_pool_demo",
+            *args,
+            verbosity=0,
+            stdout=stdout,
+        )
+        return stdout.getvalue()
+
+    def _technical_domain(self, slot_code):
+        return f"{slot_code}.{self.technical_domain_suffix}"
+
+    def test_dry_run_nao_cria_tenants_domains_ou_slots(self):
+        output = self._call_command("--slots=2", "--dry-run")
+
+        self.assertIn("DRY-RUN", output)
+        self.assertEqual(
+            Tenant.objects.filter(schema_name__in=["demo1", "demo2"]).count(),
+            0,
+        )
+        self.assertEqual(
+            Domain.objects.filter(
+                domain__in=[
+                    self._technical_domain("demo1"),
+                    self._technical_domain("demo2"),
+                ]
+            ).count(),
+            0,
+        )
+        self.assertEqual(
+            DemoTenantSlot.objects.filter(slot_code__in=["demo1", "demo2"]).count(),
+            0,
+        )
+
+    def test_provisiona_tenants_domains_tecnicos_e_slots(self):
+        output = self._call_command("--slots=2")
+
+        self.assertIn("Pool demo provisionado", output)
+        self.assertEqual(
+            set(Tenant.objects.filter(schema_name__in=["demo1", "demo2"]).values_list(
+                "schema_name",
+                flat=True,
+            )),
+            {"demo1", "demo2"},
+        )
+
+        for slot_code in ("demo1", "demo2"):
+            with self.subTest(slot_code=slot_code):
+                tenant = Tenant.objects.get(schema_name=slot_code)
+                domain = Domain.objects.get(domain=self._technical_domain(slot_code))
+                slot = DemoTenantSlot.objects.get(slot_code=slot_code)
+
+                self.assertEqual(domain.tenant, tenant)
+                self.assertTrue(domain.is_primary)
+                self.assertEqual(slot.tenant, tenant)
+                self.assertEqual(slot.status, DemoTenantSlot.Status.LIVRE)
+                self.assertEqual(slot.max_storage_mb, 50)
+
+    def test_comando_e_idempotente(self):
+        self._call_command("--slots=2")
+
+        first_counts = (
+            Tenant.objects.filter(schema_name__in=["demo1", "demo2"]).count(),
+            Domain.objects.filter(
+                domain__in=[
+                    self._technical_domain("demo1"),
+                    self._technical_domain("demo2"),
+                ]
+            ).count(),
+            DemoTenantSlot.objects.filter(slot_code__in=["demo1", "demo2"]).count(),
+        )
+
+        output = self._call_command("--slots=2")
+
+        second_counts = (
+            Tenant.objects.filter(schema_name__in=["demo1", "demo2"]).count(),
+            Domain.objects.filter(
+                domain__in=[
+                    self._technical_domain("demo1"),
+                    self._technical_domain("demo2"),
+                ]
+            ).count(),
+            DemoTenantSlot.objects.filter(slot_code__in=["demo1", "demo2"]).count(),
+        )
+
+        self.assertEqual(second_counts, first_counts)
+        self.assertIn("Tenants criados=0 existentes=2", output)
+        self.assertIn("Domains criados=0 existentes=2", output)
+        self.assertIn("Slots criados=0 existentes=2", output)
+
+    def test_slots_deve_ficar_entre_um_e_dez(self):
+        for slots in (0, 11):
+            with self.subTest(slots=slots):
+                with self.assertRaisesMessage(CommandError, "--slots deve estar"):
+                    self._call_command(f"--slots={slots}")
+
+    def test_recusa_domain_tecnico_apontando_para_outro_tenant(self):
+        tenant = Tenant(schema_name="tenant_a", name="Tenant A")
+        tenant.save(verbosity=0)
+        Domain.objects.create(
+            tenant=tenant,
+            domain=self._technical_domain("demo1"),
+            is_primary=False,
+        )
+
+        with self.assertRaisesMessage(CommandError, "ja pertence ao tenant tenant_a"):
+            self._call_command("--slots=1")
+
+        self.assertFalse(Tenant.objects.filter(schema_name="demo1").exists())
+        self.assertFalse(DemoTenantSlot.objects.filter(slot_code="demo1").exists())
+
+
+class OcuparTenantDemoCommandTests(TransactionTestCase):
+    technical_domain_suffix = "api-demo-rh.taquiondev.com.br"
+    cleanup_schema_names = set(DEMO_POOL_SCHEMA_NAMES) | {"tenant_a"}
+
+    def setUp(self):
+        super().setUp()
+        self._cleanup_demo_pool()
+
+    def tearDown(self):
+        self._cleanup_demo_pool()
+        super().tearDown()
+
+    @classmethod
+    def _cleanup_demo_pool(cls):
+        connection.set_schema_to_public()
+        Domain.objects.filter(domain__endswith=f".{cls.technical_domain_suffix}").delete()
+        DemoTenantSlot.objects.filter(slot_code__in=DEMO_POOL_SCHEMA_NAMES).delete()
+        for tenant in list(Tenant.objects.filter(schema_name__in=cls.cleanup_schema_names)):
+            tenant.delete(force_drop=True)
+        connection.set_schema_to_public()
+
+    def _call_provisionar(self, *args):
+        stdout = StringIO()
+        call_command(
+            "provisionar_pool_demo",
+            *args,
+            verbosity=0,
+            stdout=stdout,
+        )
+        return stdout.getvalue()
+
+    def _call_ocupar(self, *args, password="senha-demo-segura"):
+        stdout = StringIO()
+        with patch.dict("os.environ", {"DEMO_TENANT_PASSWORD": password}, clear=False):
+            call_command(
+                "ocupar_tenant_demo",
+                *args,
+                "--password-env=DEMO_TENANT_PASSWORD",
+                verbosity=0,
+                stdout=stdout,
+            )
+        return stdout.getvalue()
+
+    def _technical_domain(self, slot_code):
+        return f"{slot_code}.{self.technical_domain_suffix}"
+
+    def test_ocupa_primeira_vaga_livre_com_sucesso(self):
+        self._call_provisionar("--slots=2")
+
+        output = self._call_ocupar(
+            "--nome=Ana Teste",
+            "--email=ana@example.com",
+            "--telefone=11999990000",
+            "--username=demo-user",
+        )
+
+        self.assertIn("Tenant demo ocupado", output)
+        self.assertIn("slot=demo1", output)
+        self.assertNotIn("senha-demo-segura", output)
+        self.assertNotIn("ana@example.com", output)
+
+        slot = DemoTenantSlot.objects.get(slot_code="demo1")
+        self.assertEqual(slot.status, DemoTenantSlot.Status.OCUPADO)
+        self.assertEqual(slot.assigned_name, "Ana Teste")
+        self.assertEqual(slot.assigned_email, "ana@example.com")
+        self.assertEqual(slot.assigned_phone, "11999990000")
+        self.assertIsNotNone(slot.lease_started_at)
+        self.assertIsNotNone(slot.lease_expires_at)
+        self.assertGreater(slot.lease_expires_at, slot.lease_started_at)
+
+        User = get_user_model()
+        with schema_context("demo1"):
+            user = User.objects.get(username="demo-user")
+            self.assertTrue(user.is_active)
+            self.assertTrue(user.is_staff)
+            self.assertTrue(user.is_superuser)
+            self.assertEqual(user.email, "ana@example.com")
+            self.assertTrue(user.check_password("senha-demo-segura"))
+
+        with schema_context("demo2"):
+            self.assertFalse(User.objects.filter(username="demo-user").exists())
+
+        connection.set_schema_to_public()
+        self.assertFalse(User.objects.filter(username="demo-user").exists())
+
+    def test_permite_ocupar_slot_especifico(self):
+        self._call_provisionar("--slots=2")
+
+        output = self._call_ocupar(
+            "--slot=demo2",
+            "--nome=Bruno Teste",
+            "--email=bruno@example.com",
+            "--username=demo-slot-2",
+        )
+
+        self.assertIn("slot=demo2", output)
+        self.assertEqual(
+            DemoTenantSlot.objects.get(slot_code="demo1").status,
+            DemoTenantSlot.Status.LIVRE,
+        )
+        self.assertEqual(
+            DemoTenantSlot.objects.get(slot_code="demo2").status,
+            DemoTenantSlot.Status.OCUPADO,
+        )
+
+    def test_slot_inexistente_falha_fechado(self):
+        self._call_provisionar("--slots=1")
+
+        with self.assertRaisesMessage(CommandError, "nao existe"):
+            self._call_ocupar(
+                "--slot=demo2",
+                "--nome=Carla Teste",
+                "--email=carla@example.com",
+            )
+
+    def test_slot_ocupado_falha_fechado(self):
+        self._call_provisionar("--slots=1")
+        slot = DemoTenantSlot.objects.get(slot_code="demo1")
+        slot.status = DemoTenantSlot.Status.OCUPADO
+        slot.save(update_fields=["status", "updated_at"])
+
+        with self.assertRaisesMessage(CommandError, "nao esta livre"):
+            self._call_ocupar(
+                "--slot=demo1",
+                "--nome=Daniel Teste",
+                "--email=daniel@example.com",
+            )
+
+    def test_schema_invalido_e_recusado_pelo_guard(self):
+        with self.assertRaisesMessage(CommandError, "demo1...demo10"):
+            self._call_ocupar(
+                "--slot=demo11",
+                "--nome=Eva Teste",
+                "--email=eva@example.com",
+            )
+
+    def test_rh_teste_e_recusado_explicitamente(self):
+        with self.assertRaisesMessage(CommandError, "schema rh_teste"):
+            self._call_ocupar(
+                "--slot=rh_teste",
+                "--nome=Fabi Teste",
+                "--email=fabi@example.com",
+            )
+
+    def test_public_e_recusado_explicitamente(self):
+        with self.assertRaisesMessage(CommandError, "schema public"):
+            self._call_ocupar(
+                "--slot=public",
+                "--nome=Gabi Teste",
+                "--email=gabi@example.com",
+            )
+
+    def test_usa_guards_compartilhados_para_validar_slot_e_tenant(self):
+        self._call_provisionar("--slots=1")
+
+        with patch(
+            "tenancy.management.commands.ocupar_tenant_demo.ensure_demo_pool_schema",
+            wraps=ensure_demo_pool_schema,
+        ) as guard:
+            self._call_ocupar(
+                "--slot=demo1",
+                "--nome=Hugo Teste",
+                "--email=hugo@example.com",
+            )
+
+        guard.assert_any_call(
+            "demo1",
+            command_name="ocupar_tenant_demo",
+            action="ocupar tenant demo",
+        )
+
+    def test_ativa_usuario_existente_apenas_no_schema_correto(self):
+        self._call_provisionar("--slots=2")
+        User = get_user_model()
+        with schema_context("demo1"):
+            User.objects.create_user(
+                username="demo-existente",
+                email="antigo@example.com",
+                password="senha-antiga",
+                is_active=False,
+            )
+        with schema_context("demo2"):
+            User.objects.create_user(
+                username="demo-existente",
+                email="outro@example.com",
+                password="senha-outro-tenant",
+                is_active=False,
+            )
+
+        output = self._call_ocupar(
+            "--slot=demo1",
+            "--nome=Iara Teste",
+            "--email=iara@example.com",
+            "--username=demo-existente",
+            password="senha-nova-demo",
+        )
+
+        self.assertIn("usuario=ativado", output)
+        with schema_context("demo1"):
+            user_demo1 = User.objects.get(username="demo-existente")
+            self.assertTrue(user_demo1.is_active)
+            self.assertTrue(user_demo1.is_superuser)
+            self.assertEqual(user_demo1.email, "iara@example.com")
+            self.assertTrue(user_demo1.check_password("senha-nova-demo"))
+
+        with schema_context("demo2"):
+            user_demo2 = User.objects.get(username="demo-existente")
+            self.assertFalse(user_demo2.is_active)
+            self.assertEqual(user_demo2.email, "outro@example.com")
+            self.assertTrue(user_demo2.check_password("senha-outro-tenant"))
+
+
+class ExpirarLeasesDemoCommandTests(TransactionTestCase):
+    technical_domain_suffix = "api-demo-rh.taquiondev.com.br"
+    cleanup_schema_names = set(DEMO_POOL_SCHEMA_NAMES) | {"tenant_a"}
+
+    def setUp(self):
+        super().setUp()
+        self._cleanup_demo_pool()
+
+    def tearDown(self):
+        self._cleanup_demo_pool()
+        super().tearDown()
+
+    @classmethod
+    def _cleanup_demo_pool(cls):
+        connection.set_schema_to_public()
+        Domain.objects.filter(domain__endswith=f".{cls.technical_domain_suffix}").delete()
+        DemoTenantSlot.objects.filter(slot_code__in=DEMO_POOL_SCHEMA_NAMES).delete()
+        for tenant in list(Tenant.objects.filter(schema_name__in=cls.cleanup_schema_names)):
+            tenant.delete(force_drop=True)
+        connection.set_schema_to_public()
+
+    def _call_provisionar(self, *args):
+        stdout = StringIO()
+        call_command(
+            "provisionar_pool_demo",
+            *args,
+            verbosity=0,
+            stdout=stdout,
+        )
+        return stdout.getvalue()
+
+    def _call_ocupar(self, *args, password="senha-demo-segura"):
+        stdout = StringIO()
+        with patch.dict("os.environ", {"DEMO_TENANT_PASSWORD": password}, clear=False):
+            call_command(
+                "ocupar_tenant_demo",
+                *args,
+                "--password-env=DEMO_TENANT_PASSWORD",
+                verbosity=0,
+                stdout=stdout,
+            )
+        return stdout.getvalue()
+
+    def _call_expirar(self, *args):
+        stdout = StringIO()
+        call_command(
+            "expirar_leases_demo",
+            *args,
+            verbosity=0,
+            stdout=stdout,
+        )
+        return stdout.getvalue()
+
+    def _expire_slot(self, slot_code):
+        slot = DemoTenantSlot.objects.get(slot_code=slot_code)
+        now = timezone.now()
+        slot.lease_started_at = now - timedelta(days=4)
+        slot.lease_expires_at = now - timedelta(days=1)
+        slot.save(
+            update_fields=[
+                "lease_started_at",
+                "lease_expires_at",
+                "updated_at",
+            ]
+        )
+        return slot
+
+    def _technical_domain(self, slot_code):
+        return f"{slot_code}.{self.technical_domain_suffix}"
+
+    def test_lease_vencido_e_expirado(self):
+        self._call_provisionar("--slots=1")
+        self._call_ocupar(
+            "--slot=demo1",
+            "--nome=Ana Expira",
+            "--email=ana-expira@example.com",
+            "--username=demo-user",
+        )
+        self._expire_slot("demo1")
+
+        output = self._call_expirar("--slot=demo1", "--username=demo-user")
+
+        self.assertIn("Leases demo expirados", output)
+        self.assertIn("slots=1", output)
+        self.assertNotIn("senha-demo-segura", output)
+        self.assertNotIn("token", output.lower())
+        slot = DemoTenantSlot.objects.get(slot_code="demo1")
+        self.assertEqual(slot.status, DemoTenantSlot.Status.EXPIRADO)
+
+    def test_lease_ainda_valido_nao_e_alterado(self):
+        self._call_provisionar("--slots=1")
+        self._call_ocupar(
+            "--slot=demo1",
+            "--nome=Bruno Valido",
+            "--email=bruno-valido@example.com",
+            "--username=demo-user",
+        )
+
+        output = self._call_expirar("--slot=demo1", "--username=demo-user")
+
+        self.assertIn("slots=0", output)
+        slot = DemoTenantSlot.objects.get(slot_code="demo1")
+        self.assertEqual(slot.status, DemoTenantSlot.Status.OCUPADO)
+        with schema_context("demo1"):
+            self.assertTrue(get_user_model().objects.get(username="demo-user").is_active)
+
+    def test_dry_run_nao_altera_banco(self):
+        self._call_provisionar("--slots=1")
+        self._call_ocupar(
+            "--slot=demo1",
+            "--nome=Carla Dry Run",
+            "--email=carla-dry-run@example.com",
+            "--username=demo-user",
+        )
+        self._expire_slot("demo1")
+
+        output = self._call_expirar("--slot=demo1", "--username=demo-user", "--dry-run")
+
+        self.assertIn("DRY-RUN", output)
+        slot = DemoTenantSlot.objects.get(slot_code="demo1")
+        self.assertEqual(slot.status, DemoTenantSlot.Status.OCUPADO)
+        with schema_context("demo1"):
+            self.assertTrue(get_user_model().objects.get(username="demo-user").is_active)
+
+    def test_usuario_demo_e_desativado_no_schema_correto(self):
+        self._call_provisionar("--slots=2")
+        self._call_ocupar(
+            "--slot=demo1",
+            "--nome=Daniel Demo1",
+            "--email=daniel-demo1@example.com",
+            "--username=demo-user",
+        )
+        with schema_context("demo2"):
+            get_user_model().objects.create_user(
+                username="demo-user",
+                email="demo2@example.com",
+                password="senha-demo2",
+                is_active=True,
+            )
+        self._expire_slot("demo1")
+
+        self._call_expirar("--slot=demo1", "--username=demo-user")
+
+        with schema_context("demo1"):
+            self.assertFalse(get_user_model().objects.get(username="demo-user").is_active)
+        with schema_context("demo2"):
+            self.assertTrue(get_user_model().objects.get(username="demo-user").is_active)
+
+    def test_rh_teste_e_public_sao_recusados(self):
+        for slot_code, expected in (("rh_teste", "schema rh_teste"), ("public", "schema public")):
+            with self.subTest(slot_code=slot_code):
+                with self.assertRaisesMessage(CommandError, expected):
+                    self._call_expirar(f"--slot={slot_code}")
+
+    def test_schema_fora_de_demo1_demo10_e_recusado(self):
+        for slot_code in ("demo11", "tenant_a"):
+            with self.subTest(slot_code=slot_code):
+                with self.assertRaisesMessage(CommandError, "demo1...demo10"):
+                    self._call_expirar(f"--slot={slot_code}")
+
+    def test_inconsistencia_de_domain_tenant_falha_fechado(self):
+        self._call_provisionar("--slots=2")
+        self._call_ocupar(
+            "--slot=demo1",
+            "--nome=Eva Inconsistente",
+            "--email=eva-inconsistente@example.com",
+            "--username=demo-user",
+        )
+        self._expire_slot("demo1")
+        demo2 = Tenant.objects.get(schema_name="demo2")
+        Domain.objects.filter(domain=self._technical_domain("demo1")).update(
+            tenant=demo2
+        )
+
+        with self.assertRaisesMessage(CommandError, "pertence a outro tenant"):
+            self._call_expirar("--slot=demo1", "--username=demo-user")
+
+        self.assertEqual(
+            DemoTenantSlot.objects.get(slot_code="demo1").status,
+            DemoTenantSlot.Status.OCUPADO,
+        )
+        with schema_context("demo1"):
+            self.assertTrue(get_user_model().objects.get(username="demo-user").is_active)
 
 
 class TenantAdminDisabledTests(MultiTenantTestCase):
@@ -1450,6 +2085,106 @@ class TenantCommandGuardTests(MultiTenantTestCase):
 
         with self.assertRaisesMessage(CommandError, "schema de tenant"):
             call_command("backup_banco_mensal", stdout=StringIO())
+
+    def test_identifica_apenas_schemas_do_pool_demo(self):
+        self.assertEqual(
+            DEMO_POOL_SCHEMA_NAMES,
+            {
+                "demo1",
+                "demo2",
+                "demo3",
+                "demo4",
+                "demo5",
+                "demo6",
+                "demo7",
+                "demo8",
+                "demo9",
+                "demo10",
+            },
+        )
+        self.assertTrue(is_demo_pool_schema("demo1"))
+        self.assertTrue(is_demo_pool_schema("demo10"))
+
+        for schema_name in ("public", "rh_teste", "demo0", "demo11", "tenant_a"):
+            with self.subTest(schema_name=schema_name):
+                self.assertFalse(is_demo_pool_schema(schema_name))
+
+    def test_guard_demo_pool_permite_apenas_demo1_a_demo10(self):
+        self.assertEqual(
+            ensure_demo_pool_schema(
+                "demo1",
+                command_name="resetar_tenant_demo",
+            ),
+            "demo1",
+        )
+        self.assertEqual(
+            ensure_demo_pool_schema(
+                "demo10",
+                command_name="resetar_tenant_demo",
+            ),
+            "demo10",
+        )
+
+    def test_guard_demo_pool_recusa_public_explicitamente(self):
+        with self.assertRaisesMessage(CommandError, "schema public"):
+            ensure_demo_pool_schema(
+                "public",
+                command_name="resetar_tenant_demo",
+            )
+
+    def test_guard_demo_pool_recusa_rh_teste_explicitamente(self):
+        with self.assertRaisesMessage(CommandError, "schema rh_teste"):
+            ensure_demo_pool_schema(
+                "rh_teste",
+                command_name="resetar_tenant_demo",
+            )
+
+    def test_guard_demo_pool_recusa_schemas_fora_do_padrao(self):
+        for schema_name in ("demo0", "demo11", "tenant_a"):
+            with self.subTest(schema_name=schema_name):
+                with self.assertRaisesMessage(CommandError, "demo1...demo10"):
+                    ensure_demo_pool_schema(
+                        schema_name,
+                        command_name="resetar_tenant_demo",
+                    )
+
+    def test_guard_demo_pool_recusa_schema_vazio(self):
+        with self.assertRaisesMessage(CommandError, "exige um schema"):
+            ensure_demo_pool_schema(
+                "",
+                command_name="resetar_tenant_demo",
+            )
+
+    def test_guard_demo_pool_sem_argumento_usa_schema_atual_e_recusa_public(self):
+        self.switch_to_public()
+
+        with self.assertRaisesMessage(CommandError, "schema public"):
+            ensure_demo_pool_schema(command_name="resetar_tenant_demo")
+
+    def test_confirmacao_textual_do_pool_demo_deve_bater_com_schema(self):
+        self.assertEqual(
+            ensure_demo_pool_confirmation(
+                "demo3",
+                "demo3",
+                command_name="resetar_tenant_demo",
+            ),
+            "demo3",
+        )
+
+        with self.assertRaisesMessage(CommandError, "--confirm demo3"):
+            ensure_demo_pool_confirmation(
+                "demo3",
+                "demo4",
+                command_name="resetar_tenant_demo",
+            )
+
+    def test_confirmacao_textual_tambem_recusa_schema_protegido(self):
+        with self.assertRaisesMessage(CommandError, "schema rh_teste"):
+            ensure_demo_pool_confirmation(
+                "rh_teste",
+                "rh_teste",
+                command_name="resetar_tenant_demo",
+            )
 
     def test_commands_tenant_only_criticos_recusam_schema_public(self):
         self.switch_to_public()

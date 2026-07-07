@@ -2,11 +2,16 @@ from django.core.management.base import CommandError
 from django.db import connection
 from django_tenants.utils import get_public_schema_name
 
+from tenancy.models import DEMO_SLOT_CODES
+
 
 SCOPE_TENANT_ONLY = "tenant-only"
 SCOPE_PLATFORM_ONLY = "platform-only"
 SCOPE_READ_ONLY = "read-only"
 SCOPE_LEGACY_READ_ONLY = "legacy/read-only"
+
+DEMO_POOL_SCHEMA_NAMES = frozenset(DEMO_SLOT_CODES)
+FIXED_DEMO_SCHEMA_NAME = "rh_teste"
 
 
 TENANT_ONLY_COMMANDS = frozenset(
@@ -94,4 +99,71 @@ def ensure_tenant_schema(command_name, *, action="manipular dados operacionais")
             f"O comando '{command_name}' deve ser executado em um schema de tenant "
             f"para {action}. Use tenant_command com --schema=<schema_name>."
         )
+    return schema_name
+
+
+def is_demo_pool_schema(schema_name):
+    return schema_name in DEMO_POOL_SCHEMA_NAMES
+
+
+def ensure_demo_pool_schema(
+    schema_name=None,
+    *,
+    command_name="comando demo",
+    action="manipular tenant demo",
+):
+    schema_name = (
+        current_schema_name() if schema_name is None else str(schema_name).strip()
+    )
+
+    if not schema_name:
+        raise CommandError(
+            f"O comando '{command_name}' exige um schema do pool demo "
+            f"para {action}. Informe um valor entre demo1 e demo10."
+        )
+
+    public_schema_name = get_public_schema_name()
+    if schema_name == public_schema_name:
+        raise CommandError(
+            f"O comando '{command_name}' recusou o schema public. "
+            "Operacoes do pool demo nunca devem atingir o schema publico."
+        )
+
+    if schema_name == FIXED_DEMO_SCHEMA_NAME:
+        raise CommandError(
+            f"O comando '{command_name}' recusou o schema rh_teste. "
+            "A demo fixa nao faz parte do pool demo1...demo10."
+        )
+
+    if not is_demo_pool_schema(schema_name):
+        raise CommandError(
+            f"O comando '{command_name}' aceita somente schemas do pool "
+            "demo1...demo10. "
+            f"Recebido: {schema_name!r}."
+        )
+
+    return schema_name
+
+
+def ensure_demo_pool_confirmation(
+    schema_name,
+    confirmation,
+    *,
+    command_name="comando demo",
+    option_name="--confirm",
+    action="executar operacao destrutiva",
+):
+    schema_name = ensure_demo_pool_schema(
+        schema_name,
+        command_name=command_name,
+        action=action,
+    )
+    confirmation = "" if confirmation is None else str(confirmation).strip()
+
+    if confirmation != schema_name:
+        raise CommandError(
+            f"Confirmacao textual invalida para '{command_name}'. "
+            f"Para {action}, informe {option_name} {schema_name}."
+        )
+
     return schema_name
