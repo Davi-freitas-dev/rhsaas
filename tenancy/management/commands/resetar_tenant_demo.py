@@ -1,7 +1,10 @@
 import hashlib
+import shutil
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 
+from django.conf import settings
 from django.contrib.auth.models import Group
 from django.contrib.sessions.models import Session
 from django.core.management.base import BaseCommand, CommandError
@@ -14,6 +17,7 @@ from django_tenants.utils import (
 )
 
 from caixa.permissions import PERMISSION_PROFILES, sincronizar_grupos_permissoes
+from caixa.tenant_files import artifacts_root_for_schema
 from tenancy.command_guards import (
     ensure_demo_pool_reset_confirmation,
     ensure_demo_pool_schema,
@@ -108,6 +112,7 @@ class Command(BaseCommand):
                 self._recreate_schema(slot.tenant, verbosity=options.get("verbosity", 1))
                 self._validate_recreated_schema(plan.slot_code)
                 self._sync_minimal_seed(plan.slot_code)
+                artifacts_removed = self._delete_tenant_artifacts(plan.slot_code)
                 self._release_slot(plan.slot_id, plan.slot_code)
             except Exception as exc:
                 self._mark_slot_blocked(plan.slot_id)
@@ -122,6 +127,7 @@ class Command(BaseCommand):
                 "Tenant demo resetado. "
                 f"slot={plan.slot_code}; "
                 f"sessoes_removidas={sessions_removed}; "
+                f"artefatos_removidos={artifacts_removed}; "
                 "status=livre."
             )
         )
@@ -285,6 +291,43 @@ class Command(BaseCommand):
                 raise CommandError(
                     f"Seed minimo de grupos nao foi recriado para {schema_name}."
                 )
+
+    def _delete_tenant_artifacts(self, schema_name):
+        schema_name = ensure_demo_pool_schema(
+            schema_name,
+            command_name="resetar_tenant_demo",
+            action="limpar artefatos tenant-scoped",
+        )
+        tenant_artifacts_root = artifacts_root_for_schema(schema_name)
+        tenants_root = (Path(settings.BASE_DIR) / "backups" / "tenants").resolve()
+        resolved_artifacts_root = tenant_artifacts_root.resolve()
+
+        try:
+            resolved_artifacts_root.relative_to(tenants_root)
+        except ValueError as exc:
+            raise CommandError(
+                f"Diretorio de artefatos de {schema_name} fora da raiz tenant-scoped."
+            ) from exc
+
+        if resolved_artifacts_root == tenants_root:
+            raise CommandError("Recusa limpar a raiz de artefatos de tenants.")
+
+        if tenant_artifacts_root.is_symlink():
+            raise CommandError(
+                f"Diretorio de artefatos de {schema_name} nao e uma pasta segura."
+            )
+
+        if not tenant_artifacts_root.exists():
+            return 0
+
+        if not tenant_artifacts_root.is_dir():
+            raise CommandError(
+                f"Diretorio de artefatos de {schema_name} nao e uma pasta segura."
+            )
+
+        removed_count = sum(1 for _path in tenant_artifacts_root.rglob("*"))
+        shutil.rmtree(tenant_artifacts_root)
+        return removed_count
 
     def _release_slot(self, slot_id, schema_name):
         with transaction.atomic():

@@ -119,19 +119,19 @@ INSTALLED_APPS = list(SHARED_APPS) + [
 
 
 # API schema/documentacao
-DEFAULT_DRF_THROTTLE_ANON_RATE = "100000/day" if IS_RUNNING_TESTS else "120/minute"
-DEFAULT_DRF_THROTTLE_USER_RATE = "100000/day" if IS_RUNNING_TESTS else "1200/minute"
+DEFAULT_DRF_THROTTLE_ANON_RATE = "100000/day" if IS_RUNNING_TESTS else "60/minute"
+DEFAULT_DRF_THROTTLE_USER_RATE = "100000/day" if IS_RUNNING_TESTS else "300/minute"
 DEFAULT_DRF_THROTTLE_AUTH_LOGIN_RATE = (
-    "100000/day" if IS_RUNNING_TESTS else "20/minute"
+    "100000/day" if IS_RUNNING_TESTS else "10/minute"
 )
 DEFAULT_DRF_THROTTLE_BACKUP_CREATE_RATE = (
-    "100000/day" if IS_RUNNING_TESTS else "3/hour"
+    "100000/day" if IS_RUNNING_TESTS else "1/hour"
 )
 DEFAULT_DRF_THROTTLE_BACKUP_DOWNLOAD_RATE = (
-    "100000/day" if IS_RUNNING_TESTS else "30/minute"
+    "100000/day" if IS_RUNNING_TESTS else "5/minute"
 )
 DEFAULT_DRF_THROTTLE_EXPORT_CSV_RATE = (
-    "100000/day" if IS_RUNNING_TESTS else "10/minute"
+    "100000/day" if IS_RUNNING_TESTS else "3/minute"
 )
 DRF_THROTTLE_ANON_RATE = env_runtime_str(
     "DRF_THROTTLE_ANON_RATE",
@@ -270,12 +270,24 @@ DATABASE_ROUTERS = ("django_tenants.routers.TenantSyncRouter",)
 
 
 # Cache
+CACHE_BACKEND = env(
+    "CACHE_BACKEND",
+    default="django.core.cache.backends.locmem.LocMemCache",
+)
+UNSAFE_PRODUCTION_CACHE_BACKENDS = {
+    "django.core.cache.backends.locmem.LocMemCache",
+    "django.core.cache.backends.dummy.DummyCache",
+    "django.core.cache.backends.filebased.FileBasedCache",
+}
+if not DEBUG and CACHE_BACKEND in UNSAFE_PRODUCTION_CACHE_BACKENDS:
+    raise ImproperlyConfigured(
+        "CACHE_BACKEND em producao deve usar backend compartilhado, como Redis, "
+        "para rate limit, lockout e sessoes de seguranca."
+    )
+
 CACHES = {
     "default": {
-        "BACKEND": env(
-            "CACHE_BACKEND",
-            default="django.core.cache.backends.locmem.LocMemCache",
-        ),
+        "BACKEND": CACHE_BACKEND,
         "LOCATION": env("CACHE_LOCATION", default="rhsaas-cache"),
         "KEY_PREFIX": env("CACHE_KEY_PREFIX", default="rhsaas"),
         "KEY_FUNCTION": "tenancy.cache.tenant_cache_key",
@@ -412,6 +424,14 @@ USE_TZ = True
 # downloads autenticados quando o arquivo nao for publico.
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
+DATA_UPLOAD_MAX_MEMORY_SIZE = env.int(
+    "DATA_UPLOAD_MAX_MEMORY_SIZE",
+    default=1024 * 1024,
+)
+FILE_UPLOAD_MAX_MEMORY_SIZE = env.int(
+    "FILE_UPLOAD_MAX_MEMORY_SIZE",
+    default=1024 * 1024,
+)
 
 
 # Arquivos estaticos

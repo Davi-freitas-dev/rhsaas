@@ -845,6 +845,13 @@ class ResetarTenantDemoCommandTests(TransactionTestCase):
                 expire_date=timezone.now() + timedelta(days=1),
             )
 
+    def _write_tenant_artifact(self, schema_name, filename="backup_banco_teste.json"):
+        backup_dir = backup_dir_for_schema(schema_name)
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        artifact_path = backup_dir / filename
+        artifact_path.write_text("artefato tenant demo", encoding="utf-8")
+        return artifact_path
+
     def _core_table_exists(self, schema_name, table_name):
         with connection.cursor() as cursor:
             cursor.execute(
@@ -885,11 +892,17 @@ class ResetarTenantDemoCommandTests(TransactionTestCase):
         self._set_slot_status("demo1", DemoTenantSlot.Status.EXPIRADO)
         self._create_tenant_content("demo1", session_key="sessao-demo1-dry-run")
 
-        output = self._call_resetar(
-            "--slot=demo1",
-            self._confirm_arg("demo1"),
-            "--dry-run",
-        )
+        with TemporaryDirectory() as temp_dir:
+            with override_settings(BASE_DIR=Path(temp_dir)):
+                artifact_path = self._write_tenant_artifact("demo1")
+
+                output = self._call_resetar(
+                    "--slot=demo1",
+                    self._confirm_arg("demo1"),
+                    "--dry-run",
+                )
+
+                self.assertTrue(artifact_path.exists())
 
         self.assertIn("DRY-RUN", output)
         self.assertNotIn("senha-demo-segura", output)
@@ -1020,7 +1033,17 @@ class ResetarTenantDemoCommandTests(TransactionTestCase):
         self._create_tenant_content("demo2", session_key="sessao-demo2-isolamento")
         self._set_slot_status("demo1", DemoTenantSlot.Status.EXPIRADO)
 
-        self._call_resetar("--slot=demo1", self._confirm_arg("demo1"))
+        with TemporaryDirectory() as temp_dir:
+            with override_settings(BASE_DIR=Path(temp_dir)):
+                demo1_artifact = self._write_tenant_artifact("demo1")
+                demo2_artifact = self._write_tenant_artifact("demo2")
+
+                output = self._call_resetar("--slot=demo1", self._confirm_arg("demo1"))
+
+                self.assertIn("artefatos_removidos=", output)
+                self.assertFalse(demo1_artifact.exists())
+                self.assertFalse((Path(temp_dir) / "backups" / "tenants" / "demo1").exists())
+                self.assertTrue(demo2_artifact.exists())
 
         self.assertEqual(
             DemoTenantSlot.objects.get(slot_code="demo1").status,

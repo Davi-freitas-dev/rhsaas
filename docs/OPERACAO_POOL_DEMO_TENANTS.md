@@ -255,6 +255,8 @@ O reset e destrutivo para o schema do tenant demo selecionado. Ele:
 - recusa slot `ocupado`;
 - permite apenas slot `expirado` ou `bloqueado`;
 - dropa e recria somente o schema validado;
+- limpa artefatos locais tenant-scoped derivados internamente de
+  `BASE_DIR/backups/tenants/demoN`;
 - nao apaga `Tenant`, `Domain` nem `DemoTenantSlot` publicos.
 
 Dry-run:
@@ -327,6 +329,8 @@ Esperado:
 - Nunca tente adaptar o comando para aceitar schema livre.
 - Nunca use `tenant.delete(force_drop=True)` como operacao manual do pool.
 - Nunca remova a confirmacao forte `--confirm "RESETAR demoN"`.
+- Nunca passe caminho de arquivo para reset; o comando deve derivar o diretorio
+  tenant-scoped somente a partir do schema demo validado.
 - Nunca compartilhe senha temporaria em commit, issue, log ou print.
 - Nao execute reset enquanto um testador ainda estiver usando o slot.
 - Se o reset falhar, o slot deve ficar `bloqueado`; revise antes de liberar.
@@ -343,7 +347,8 @@ Esperado:
 
 ## Riscos restantes antes de producao
 
-- O reset ainda nao limpa arquivos/backups tenant-scoped em disco.
+- O reset limpa artefatos locais em `BASE_DIR/backups/tenants/demoN`, mas nao
+  cobre storage externo, buckets ou anexos futuros fora desse padrao.
 - Nao ha rotina agendada oficial para expirar e resetar tenants.
 - Nao ha tela publica de cadastro nem distribuicao automatica de vagas.
 - Nao ha limite operacional automatizado de 50 MB por tenant.
@@ -396,9 +401,11 @@ preserve o estado, revise logs e identifique a causa.
 
 ## Observacoes finais
 
-O comando `resetar_tenant_demo` limpa o schema do tenant demo, mas ainda nao
-remove arquivos, backups, snapshots ou artefatos tenant-scoped em disco. Essa
-limpeza deve ser implementada e testada em fase separada.
+O comando `resetar_tenant_demo` limpa o schema do tenant demo e remove
+artefatos locais em `BASE_DIR/backups/tenants/demoN`. Ele nao recebe caminho de
+arquivo do operador; o caminho e derivado internamente do schema demo validado.
+Se no futuro houver storage externo, bucket, anexos ou outra arvore de arquivos,
+essa limpeza precisara ser expandida e testada em fase separada.
 
 DNS, Nginx e frontend ainda nao fazem distribuicao publica automatica entre
 `demo1...demo10`. Nesta fase, a operacao do pool continua manual e restrita a
