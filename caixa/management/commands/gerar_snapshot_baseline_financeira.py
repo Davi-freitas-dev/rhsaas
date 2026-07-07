@@ -39,16 +39,16 @@ PM02_STRICT_SERVER_COMMAND_WITH_DEPLOY_URL = (
     "--backup-ref=<arquivo-ou-id-backup> "
     "--json"
 )
-PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION = (
+PM02_STRICT_SERVER_COMMAND_LEGACY_PRODUCTION = (
     "DESATIVADO no RH SaaS: perfil legado do projeto antigo."
 )
-PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION_WITH_DEPLOY_URL = (
+PM02_STRICT_SERVER_COMMAND_LEGACY_PRODUCTION_WITH_DEPLOY_URL = (
     "DESATIVADO no RH SaaS: perfil legado do projeto antigo."
 )
-PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION_WITH_EVIDENCE = (
+PM02_STRICT_SERVER_COMMAND_LEGACY_PRODUCTION_WITH_EVIDENCE = (
     "DESATIVADO no RH SaaS: perfil legado do projeto antigo."
 )
-PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION_WITH_DEPLOY_URL_AND_EVIDENCE = (
+PM02_STRICT_SERVER_COMMAND_LEGACY_PRODUCTION_WITH_DEPLOY_URL_AND_EVIDENCE = (
     "DESATIVADO no RH SaaS: perfil legado do projeto antigo."
 )
 DEFAULT_FRONTEND_PATH = (
@@ -196,16 +196,16 @@ class Command(BaseCommand):
         self.stdout.write(f"- {snapshot['pm02StrictServerCommand']}")
         self.stdout.write(f"- {snapshot['pm02StrictServerCommandWithDeployUrl']}")
         self.stdout.write(
-            f"- {snapshot['pm02StrictServerCommandRhremotoProduction']}"
+            f"- {snapshot['pm02StrictServerCommandLegacyProduction']}"
         )
         self.stdout.write(
-            f"- {snapshot['pm02StrictServerCommandRhremotoProductionWithDeployUrl']}"
+            f"- {snapshot['pm02StrictServerCommandLegacyProductionWithDeployUrl']}"
         )
         self.stdout.write(
-            f"- {snapshot['pm02StrictServerCommandRhremotoProductionWithEvidence']}"
+            f"- {snapshot['pm02StrictServerCommandLegacyProductionWithEvidence']}"
         )
         self.stdout.write(
-            f"- {snapshot['pm02StrictServerCommandRhremotoProductionWithDeployUrlAndEvidence']}"
+            f"- {snapshot['pm02StrictServerCommandLegacyProductionWithDeployUrlAndEvidence']}"
         )
         for command in snapshot["pm02Commands"]:
             self.stdout.write(f"- {command}")
@@ -273,17 +273,17 @@ def gerar_snapshot_baseline_financeira(
         "pm02StrictServerCommandWithDeployUrl": (
             PM02_STRICT_SERVER_COMMAND_WITH_DEPLOY_URL
         ),
-        "pm02StrictServerCommandRhremotoProduction": (
-            PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION
+        "pm02StrictServerCommandLegacyProduction": (
+            PM02_STRICT_SERVER_COMMAND_LEGACY_PRODUCTION
         ),
-        "pm02StrictServerCommandRhremotoProductionWithDeployUrl": (
-            PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION_WITH_DEPLOY_URL
+        "pm02StrictServerCommandLegacyProductionWithDeployUrl": (
+            PM02_STRICT_SERVER_COMMAND_LEGACY_PRODUCTION_WITH_DEPLOY_URL
         ),
-        "pm02StrictServerCommandRhremotoProductionWithEvidence": (
-            PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION_WITH_EVIDENCE
+        "pm02StrictServerCommandLegacyProductionWithEvidence": (
+            PM02_STRICT_SERVER_COMMAND_LEGACY_PRODUCTION_WITH_EVIDENCE
         ),
-        "pm02StrictServerCommandRhremotoProductionWithDeployUrlAndEvidence": (
-            PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION_WITH_DEPLOY_URL_AND_EVIDENCE
+        "pm02StrictServerCommandLegacyProductionWithDeployUrlAndEvidence": (
+            PM02_STRICT_SERVER_COMMAND_LEGACY_PRODUCTION_WITH_DEPLOY_URL_AND_EVIDENCE
         ),
         "pm02Commands": PM02_COMMANDS,
         "notes": [

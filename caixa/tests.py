@@ -6134,7 +6134,7 @@ class PermissoesTests(TestCase):
                 self.assertEqual(response.status_code, 405)
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         SECURE_SSL_REDIRECT=False,
         STORAGES=TEST_STATICFILES_STORAGES,
     )
@@ -6146,13 +6146,13 @@ class PermissoesTests(TestCase):
 
         dashboard = self.client.get(reverse("caixa:dashboard_financeiro"))
         self.assertEqual(dashboard.status_code, 302)
-        self.assertEqual(dashboard["Location"], "https://app.rhremoto.test/")
+        self.assertEqual(dashboard["Location"], "https://demo-rh.taquiondev.test/")
 
         mes_financeiro = self.client.get(reverse("caixa:mes_financeiro"))
         self.assertEqual(mes_financeiro.status_code, 302)
         self.assertEqual(
             mes_financeiro["Location"],
-            "https://app.rhremoto.test/obrigacoes-financeiras",
+            "https://demo-rh.taquiondev.test/obrigacoes-financeiras",
         )
 
         urls = [
@@ -6170,7 +6170,7 @@ class PermissoesTests(TestCase):
                 self.assertEqual(response.status_code, 200)
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         SECURE_SSL_REDIRECT=False,
         STORAGES=TEST_STATICFILES_STORAGES,
     )
@@ -6182,7 +6182,7 @@ class PermissoesTests(TestCase):
 
         dashboard = self.client.get(reverse("caixa:dashboard_financeiro"))
         self.assertEqual(dashboard.status_code, 302)
-        self.assertEqual(dashboard["Location"], "https://app.rhremoto.test/")
+        self.assertEqual(dashboard["Location"], "https://demo-rh.taquiondev.test/")
 
         urls = [
             reverse("caixa:api_dashboard_financial_overview"),
@@ -6205,16 +6205,16 @@ class SmokeViewsTests(TestCase):
         self.client.force_login(self.superuser)
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         SECURE_SSL_REDIRECT=False,
         STORAGES=TEST_STATICFILES_STORAGES,
     )
     def test_superuser_telas_operacionais_html_redirecionam_para_next(self):
         rotas = [
-            (reverse("caixa:dashboard_financeiro"), "https://app.rhremoto.test/"),
+            (reverse("caixa:dashboard_financeiro"), "https://demo-rh.taquiondev.test/"),
             (
                 reverse("caixa:mes_financeiro"),
-                "https://app.rhremoto.test/obrigacoes-financeiras",
+                "https://demo-rh.taquiondev.test/obrigacoes-financeiras",
             ),
         ]
 
@@ -6225,7 +6225,7 @@ class SmokeViewsTests(TestCase):
                 self.assertEqual(response["Location"], next_url)
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         SECURE_SSL_REDIRECT=False,
         STORAGES={
             "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
@@ -6233,55 +6233,55 @@ class SmokeViewsTests(TestCase):
         },
     )
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         SECURE_SSL_REDIRECT=False,
     )
     def test_telas_html_removidas_redirecionam_para_next(self):
         parcela = self.criar_parcela()
         rotas = [
-            (reverse("caixa:dashboard_financeiro"), "https://app.rhremoto.test/"),
+            (reverse("caixa:dashboard_financeiro"), "https://demo-rh.taquiondev.test/"),
             (
                 reverse("caixa:mes_financeiro"),
-                "https://app.rhremoto.test/obrigacoes-financeiras",
+                "https://demo-rh.taquiondev.test/obrigacoes-financeiras",
             ),
-            (reverse("caixa:clientes_lista"), "https://app.rhremoto.test/clientes"),
-            (reverse("caixa:orcamentos_lista"), "https://app.rhremoto.test/orcamentos"),
-            (reverse("caixa:orcamento_adicionar"), "https://app.rhremoto.test/orcamentos"),
-            (reverse("caixa:eventos_lista"), "https://app.rhremoto.test/eventos"),
-            (reverse("caixa:backups_lista"), "https://app.rhremoto.test/backups"),
-            (reverse("caixa:receitas_lista"), "https://app.rhremoto.test/receitas"),
-            (reverse("caixa:despesas_lista"), "https://app.rhremoto.test/despesas"),
+            (reverse("caixa:clientes_lista"), "https://demo-rh.taquiondev.test/clientes"),
+            (reverse("caixa:orcamentos_lista"), "https://demo-rh.taquiondev.test/orcamentos"),
+            (reverse("caixa:orcamento_adicionar"), "https://demo-rh.taquiondev.test/orcamentos"),
+            (reverse("caixa:eventos_lista"), "https://demo-rh.taquiondev.test/eventos"),
+            (reverse("caixa:backups_lista"), "https://demo-rh.taquiondev.test/backups"),
+            (reverse("caixa:receitas_lista"), "https://demo-rh.taquiondev.test/receitas"),
+            (reverse("caixa:despesas_lista"), "https://demo-rh.taquiondev.test/despesas"),
             (
                 reverse("caixa:custo_extra_adicionar"),
-                "https://app.rhremoto.test/custos-extras",
+                "https://demo-rh.taquiondev.test/custos-extras",
             ),
             (
                 reverse("caixa:custos_fixos_lista"),
-                "https://app.rhremoto.test/custos-fixos",
+                "https://demo-rh.taquiondev.test/custos-fixos",
             ),
             (
                 reverse("caixa:custos_por_evento"),
-                "https://app.rhremoto.test/custos-por-evento",
+                "https://demo-rh.taquiondev.test/custos-por-evento",
             ),
-            (reverse("caixa:lista_investimentos"), "https://app.rhremoto.test/fci"),
-            (reverse("caixa:lista_financiamentos"), "https://app.rhremoto.test/fcf"),
-            (reverse("caixa:pagamentos"), "https://app.rhremoto.test/pagamentos"),
+            (reverse("caixa:lista_investimentos"), "https://demo-rh.taquiondev.test/fci"),
+            (reverse("caixa:lista_financiamentos"), "https://demo-rh.taquiondev.test/fcf"),
+            (reverse("caixa:pagamentos"), "https://demo-rh.taquiondev.test/pagamentos"),
             (
                 reverse("caixa:pagamentos_custos_servico"),
-                "https://app.rhremoto.test/pagamentos?source=custo_servico",
+                "https://demo-rh.taquiondev.test/pagamentos?source=custo_servico",
             ),
             (
                 reverse("caixa:pagamentos_custos_extras"),
-                "https://app.rhremoto.test/pagamentos?source=custo_extra",
+                "https://demo-rh.taquiondev.test/pagamentos?source=custo_extra",
             ),
             (
                 reverse("caixa:pagamentos_fcf"),
-                "https://app.rhremoto.test/pagamentos?source=parcela_divida",
+                "https://demo-rh.taquiondev.test/pagamentos?source=parcela_divida",
             ),
             (
                 reverse("caixa:pagar_parcela", args=[parcela.id]),
                 (
-                    "https://app.rhremoto.test/pagamentos?"
+                    "https://demo-rh.taquiondev.test/pagamentos?"
                     f"source=parcela_divida&sourceId={parcela.id}"
                 ),
             ),
@@ -6296,22 +6296,22 @@ class SmokeViewsTests(TestCase):
                 self.assertEqual(response["Location"], f"{next_url}{separator}search=abc")
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         SECURE_SSL_REDIRECT=False,
     )
     def test_pagamentos_especializados_publicam_ponte_next_migrada(self):
         rotas = [
             (
                 reverse("caixa:pagamentos_custos_servico"),
-                "https://app.rhremoto.test/pagamentos?source=custo_servico",
+                "https://demo-rh.taquiondev.test/pagamentos?source=custo_servico",
             ),
             (
                 reverse("caixa:pagamentos_custos_extras"),
-                "https://app.rhremoto.test/pagamentos?source=custo_extra",
+                "https://demo-rh.taquiondev.test/pagamentos?source=custo_extra",
             ),
             (
                 reverse("caixa:pagamentos_fcf"),
-                "https://app.rhremoto.test/pagamentos?source=parcela_divida",
+                "https://demo-rh.taquiondev.test/pagamentos?source=parcela_divida",
             ),
         ]
 
@@ -6323,7 +6323,7 @@ class SmokeViewsTests(TestCase):
                 self.assertEqual(response["Location"], next_url)
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         SECURE_SSL_REDIRECT=False,
     )
     def test_pagar_parcela_publica_ponte_next_com_source_id(self):
@@ -6335,7 +6335,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(
             response["Location"],
             (
-                "https://app.rhremoto.test/pagamentos?"
+                "https://demo-rh.taquiondev.test/pagamentos?"
                 f"source=parcela_divida&sourceId={parcela.id}"
             ),
         )
@@ -6345,7 +6345,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(build_next_frontend_url("/receitas"), "")
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True,
         NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=["receitas_lista"],
         SECURE_SSL_REDIRECT=False,
@@ -6364,16 +6364,16 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(receitas.status_code, 302)
         self.assertEqual(
             receitas["Location"],
-            "https://app.rhremoto.test/receitas?periodo_rapido=todos&status=aberta",
+            "https://demo-rh.taquiondev.test/receitas?periodo_rapido=todos&status=aberta",
         )
         self.assertEqual(despesas.status_code, 302)
         self.assertEqual(
             despesas["Location"],
-            "https://app.rhremoto.test/despesas?periodo_rapido=todos",
+            "https://demo-rh.taquiondev.test/despesas?periodo_rapido=todos",
         )
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True,
         NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=["pagar_parcela"],
         SECURE_SSL_REDIRECT=False,
@@ -6390,13 +6390,13 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(
             response["Location"],
             (
-                "https://app.rhremoto.test/pagamentos?"
+                "https://demo-rh.taquiondev.test/pagamentos?"
                 f"source=parcela_divida&sourceId={parcela.id}&periodo_rapido=todos"
             ),
         )
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True,
         NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=[
             "dashboard_financeiro",
@@ -6412,27 +6412,27 @@ class SmokeViewsTests(TestCase):
             (
                 reverse("caixa:dashboard_financeiro"),
                 {"period": "all"},
-                "https://app.rhremoto.test/?period=all",
+                "https://demo-rh.taquiondev.test/?period=all",
             ),
             (
                 reverse("caixa:clientes_lista"),
                 {"search": "sebrae"},
-                "https://app.rhremoto.test/clientes?search=sebrae",
+                "https://demo-rh.taquiondev.test/clientes?search=sebrae",
             ),
             (
                 reverse("caixa:orcamentos_lista"),
                 {"status": "rascunho"},
-                "https://app.rhremoto.test/orcamentos?status=rascunho",
+                "https://demo-rh.taquiondev.test/orcamentos?status=rascunho",
             ),
             (
                 reverse("caixa:orcamento_adicionar"),
                 {"status": "rascunho"},
-                "https://app.rhremoto.test/orcamentos?status=rascunho",
+                "https://demo-rh.taquiondev.test/orcamentos?status=rascunho",
             ),
             (
                 reverse("caixa:eventos_lista"),
                 {"contractCode": "03685/25"},
-                "https://app.rhremoto.test/eventos?contractCode=03685%2F25",
+                "https://demo-rh.taquiondev.test/eventos?contractCode=03685%2F25",
             ),
         ]
 
@@ -6444,7 +6444,7 @@ class SmokeViewsTests(TestCase):
                 self.assertEqual(response["Location"], next_url)
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True,
         NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=["backups_lista"],
         SECURE_SSL_REDIRECT=False,
@@ -6458,7 +6458,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(
             response["Location"],
-            "https://app.rhremoto.test/backups?periodo_rapido=todos",
+            "https://demo-rh.taquiondev.test/backups?periodo_rapido=todos",
         )
 
         usuario = User.objects.create_user(
@@ -6474,7 +6474,7 @@ class SmokeViewsTests(TestCase):
         self.assertTrue(response["Location"].startswith(reverse("caixa:login")))
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True,
         NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=["lista_investimentos"],
         SECURE_SSL_REDIRECT=False,
@@ -6489,7 +6489,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(
             response["Location"],
-            "https://app.rhremoto.test/fci?period=all&categoria=software",
+            "https://demo-rh.taquiondev.test/fci?period=all&categoria=software",
         )
 
         response = self.client.post(
@@ -6511,7 +6511,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(response.status_code, 403)
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True,
         NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=["lista_financiamentos"],
         SECURE_SSL_REDIRECT=False,
@@ -6526,7 +6526,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(
             response["Location"],
-            "https://app.rhremoto.test/fcf?period=all&tipo=financiamento",
+            "https://demo-rh.taquiondev.test/fcf?period=all&tipo=financiamento",
         )
 
         response = self.client.post(
@@ -6548,7 +6548,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(response.status_code, 403)
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True,
         NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=["pagamentos_custos_extras"],
         SECURE_SSL_REDIRECT=False,
@@ -6563,7 +6563,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(
             response["Location"],
-            "https://app.rhremoto.test/pagamentos?source=custo_extra&situacao=pendentes",
+            "https://demo-rh.taquiondev.test/pagamentos?source=custo_extra&situacao=pendentes",
         )
 
         response = self.client.post(
@@ -6585,7 +6585,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(response.status_code, 403)
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True,
         NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=["pagamentos_custos_servico"],
         SECURE_SSL_REDIRECT=False,
@@ -6600,7 +6600,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(
             response["Location"],
-            "https://app.rhremoto.test/pagamentos?source=custo_servico&situacao=pendentes",
+            "https://demo-rh.taquiondev.test/pagamentos?source=custo_servico&situacao=pendentes",
         )
 
         response = self.client.post(
@@ -6622,7 +6622,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(response.status_code, 403)
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True,
         NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=["pagamentos_fcf"],
         SECURE_SSL_REDIRECT=False,
@@ -6638,7 +6638,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(
             response["Location"],
             (
-                "https://app.rhremoto.test/pagamentos?"
+                "https://demo-rh.taquiondev.test/pagamentos?"
                 "source=parcela_divida&situacao=pendentes&credor=Banco"
             ),
         )
@@ -6662,7 +6662,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(response.status_code, 403)
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True,
         NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=["pagar_parcela"],
         SECURE_SSL_REDIRECT=False,
@@ -6680,7 +6680,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(
             response["Location"],
             (
-                "https://app.rhremoto.test/pagamentos?"
+                "https://demo-rh.taquiondev.test/pagamentos?"
                 f"source=parcela_divida&sourceId={parcela.id}&periodo_rapido=todos"
             ),
         )
@@ -6704,7 +6704,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(response.status_code, 403)
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True,
         NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=["receitas_lista"],
         SECURE_SSL_REDIRECT=False,
@@ -6719,7 +6719,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(
             response["Location"],
-            "https://app.rhremoto.test/receitas?periodo_rapido=todos&status=aberta",
+            "https://demo-rh.taquiondev.test/receitas?periodo_rapido=todos&status=aberta",
         )
 
         response = self.client.post(
@@ -6741,7 +6741,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(response.status_code, 403)
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True,
         NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=["despesas_lista"],
         SECURE_SSL_REDIRECT=False,
@@ -6761,7 +6761,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(
             response["Location"],
             (
-                "https://app.rhremoto.test/despesas?"
+                "https://demo-rh.taquiondev.test/despesas?"
                 "periodo_rapido=todos&status=pendente&categoria=material"
             ),
         )
@@ -6785,7 +6785,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(response.status_code, 403)
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True,
         NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=["custos_fixos_lista"],
         SECURE_SSL_REDIRECT=False,
@@ -6805,7 +6805,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(
             response["Location"],
             (
-                "https://app.rhremoto.test/custos-fixos?"
+                "https://demo-rh.taquiondev.test/custos-fixos?"
                 "periodo_rapido=todos&status=pendente&categoria=aluguel"
             ),
         )
@@ -6829,7 +6829,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(response.status_code, 403)
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True,
         NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=["custos_por_evento"],
         SECURE_SSL_REDIRECT=False,
@@ -6849,7 +6849,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(
             response["Location"],
             (
-                "https://app.rhremoto.test/custos-por-evento?"
+                "https://demo-rh.taquiondev.test/custos-por-evento?"
                 "periodo_rapido=todos&status=realizado&evento=1"
             ),
         )
@@ -6873,7 +6873,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(response.status_code, 403)
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True,
         NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=["custo_extra_adicionar"],
         SECURE_SSL_REDIRECT=False,
@@ -6891,7 +6891,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(
             response["Location"],
-            "https://app.rhremoto.test/custos-extras?categoria=material&evento=1",
+            "https://demo-rh.taquiondev.test/custos-extras?categoria=material&evento=1",
         )
 
         response = self.client.post(
@@ -6913,7 +6913,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(response.status_code, 403)
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True,
         NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=["pagamentos"],
         SECURE_SSL_REDIRECT=False,
@@ -6931,7 +6931,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(
             response["Location"],
-            "https://app.rhremoto.test/pagamentos?source=custo_fixo&situacao=pendentes",
+            "https://demo-rh.taquiondev.test/pagamentos?source=custo_fixo&situacao=pendentes",
         )
 
         response = self.client.post(
@@ -6953,7 +6953,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(response.status_code, 403)
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True,
         NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=["custo_extra_adicionar"],
         SECURE_SSL_REDIRECT=False,
@@ -6967,7 +6967,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(response.status_code, 405)
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=False,
         NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=[],
     )
@@ -6991,7 +6991,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(payload["surfaces"][0]["djangoUrl"], "/receitas/")
         self.assertEqual(
             payload["surfaces"][0]["nextUrl"],
-            "https://app.rhremoto.test/receitas",
+            "https://demo-rh.taquiondev.test/receitas",
         )
         self.assertTrue(payload["surfaces"][0]["redirectEligible"])
         self.assertTrue(payload["activation"]["readyToActivate"])
@@ -7002,7 +7002,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(
             payload["activation"]["recommendedEnvironment"],
             {
-                "NEXT_FRONTEND_URL": "https://app.rhremoto.test",
+                "NEXT_FRONTEND_URL": "https://demo-rh.taquiondev.test",
                 "NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED": "True",
                 "NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES": "receitas_lista",
             },
@@ -7029,7 +7029,7 @@ class SmokeViewsTests(TestCase):
         )
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         NEXT_FRONTEND_LEGACY_REDIRECTS_ENABLED=True,
         NEXT_FRONTEND_LEGACY_REDIRECT_SURFACES=["receitas_lista"],
     )
@@ -7045,7 +7045,7 @@ class SmokeViewsTests(TestCase):
         self.assertEqual(payload["configuredSurfaces"], ["receitas_lista"])
         self.assertEqual(payload["candidateSurfaces"], ["receitas_lista"])
 
-    @override_settings(NEXT_FRONTEND_URL="https://app.rhremoto.test")
+    @override_settings(NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test")
     def test_comando_validar_redirects_next_legado_aprova_mes_financeiro(self):
         saida = StringIO()
 
@@ -7063,7 +7063,7 @@ class SmokeViewsTests(TestCase):
         self.assertTrue(payload["surfaces"][0]["redirectEligible"])
         self.assertEqual(
             payload["surfaces"][0]["nextUrl"],
-            "https://app.rhremoto.test/obrigacoes-financeiras",
+            "https://demo-rh.taquiondev.test/obrigacoes-financeiras",
         )
         self.assertTrue(payload["activation"]["readyToActivate"])
         self.assertEqual(
@@ -7073,45 +7073,45 @@ class SmokeViewsTests(TestCase):
             "True",
         )
 
-    @override_settings(NEXT_FRONTEND_URL="https://app.rhremoto.test")
+    @override_settings(NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test")
     def test_comando_validar_redirects_next_legado_aprova_superficies_migradas(self):
         rotas = [
-            ("dashboard_financeiro", "/", "https://app.rhremoto.test/"),
-            ("clientes_lista", "/clientes/", "https://app.rhremoto.test/clientes"),
-            ("orcamentos_lista", "/orcamentos/", "https://app.rhremoto.test/orcamentos"),
+            ("dashboard_financeiro", "/", "https://demo-rh.taquiondev.test/"),
+            ("clientes_lista", "/clientes/", "https://demo-rh.taquiondev.test/clientes"),
+            ("orcamentos_lista", "/orcamentos/", "https://demo-rh.taquiondev.test/orcamentos"),
             (
                 "orcamento_adicionar",
                 "/orcamentos/adicionar/",
-                "https://app.rhremoto.test/orcamentos",
+                "https://demo-rh.taquiondev.test/orcamentos",
             ),
-            ("eventos_lista", "/eventos/", "https://app.rhremoto.test/eventos"),
-            ("lista_investimentos", "/fci/", "https://app.rhremoto.test/fci"),
-            ("lista_financiamentos", "/fcf/", "https://app.rhremoto.test/fcf"),
+            ("eventos_lista", "/eventos/", "https://demo-rh.taquiondev.test/eventos"),
+            ("lista_investimentos", "/fci/", "https://demo-rh.taquiondev.test/fci"),
+            ("lista_financiamentos", "/fcf/", "https://demo-rh.taquiondev.test/fcf"),
             (
                 "mes_financeiro",
                 "/mes-financeiro/",
-                "https://app.rhremoto.test/obrigacoes-financeiras",
+                "https://demo-rh.taquiondev.test/obrigacoes-financeiras",
             ),
-            ("backups_lista", "/backups/", "https://app.rhremoto.test/backups"),
+            ("backups_lista", "/backups/", "https://demo-rh.taquiondev.test/backups"),
             (
                 "pagamentos_custos_servico",
                 "/eventos/custos-servico/pagamentos/",
-                "https://app.rhremoto.test/pagamentos?source=custo_servico",
+                "https://demo-rh.taquiondev.test/pagamentos?source=custo_servico",
             ),
             (
                 "pagamentos_custos_extras",
                 "/eventos/custos-extras/pagamentos/",
-                "https://app.rhremoto.test/pagamentos?source=custo_extra",
+                "https://demo-rh.taquiondev.test/pagamentos?source=custo_extra",
             ),
             (
                 "pagamentos_fcf",
                 "/fcf/pagamentos/",
-                "https://app.rhremoto.test/pagamentos?source=parcela_divida",
+                "https://demo-rh.taquiondev.test/pagamentos?source=parcela_divida",
             ),
             (
                 "pagar_parcela",
                 "/fcf/parcelas/1/pagar/",
-                "https://app.rhremoto.test/pagamentos?source=parcela_divida",
+                "https://demo-rh.taquiondev.test/pagamentos?source=parcela_divida",
             ),
         ]
 
@@ -7135,7 +7135,7 @@ class SmokeViewsTests(TestCase):
                 self.assertEqual(payload["surfaces"][0]["nextUrl"], next_url)
                 self.assertTrue(payload["surfaces"][0]["redirectEligible"])
 
-    @override_settings(NEXT_FRONTEND_URL="https://app.rhremoto.test")
+    @override_settings(NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test")
     def test_comando_inventariar_html_django_pm06_classifica_superficies(self):
         saida = StringIO()
 
@@ -7315,7 +7315,7 @@ class SmokeViewsTests(TestCase):
             payload["executionRecord"]["markdown"],
         )
 
-    @override_settings(NEXT_FRONTEND_URL="https://app.rhremoto.test")
+    @override_settings(NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test")
     def test_comando_validar_redirects_next_legado_salva_evidencias(self):
         with TemporaryDirectory() as temp_dir:
             saida = StringIO()
@@ -7345,7 +7345,7 @@ class SmokeViewsTests(TestCase):
             self.assertIn(f"json: {json_path}", registro_salvo)
             self.assertIn(f"registro: {record_path}", registro_salvo)
 
-    @override_settings(NEXT_FRONTEND_URL="https://app.rhremoto.test")
+    @override_settings(NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test")
     def test_comando_validar_redirects_next_legado_exige_arquivos_evidencia(self):
         saida = StringIO()
 
@@ -7520,7 +7520,7 @@ class SegurancaTests(TestCase):
         self.assertIn("Retry-After", segunda_resposta.headers)
         self._assert_json_no_store(segunda_resposta)
 
-    @override_settings(NEXT_FRONTEND_URL="https://app.rhremoto.test")
+    @override_settings(NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test")
     def test_guard_de_pagamentos_exige_alguma_permissao(self):
         usuario = User.objects.create_user("sem-permissao-pagamento", password="senha")
         self.client.force_login(usuario)
@@ -7536,10 +7536,10 @@ class SegurancaTests(TestCase):
         response = self.client.get(reverse("caixa:pagamentos"), secure=True)
 
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response["Location"], "https://app.rhremoto.test/pagamentos")
+        self.assertEqual(response["Location"], "https://demo-rh.taquiondev.test/pagamentos")
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         SECURE_SSL_REDIRECT=False,
         STORAGES={
             "default": {
@@ -7569,7 +7569,7 @@ class SegurancaTests(TestCase):
         response = self.client.get(reverse("caixa:backups_lista"))
 
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response["Location"], "https://app.rhremoto.test/backups")
+        self.assertEqual(response["Location"], "https://demo-rh.taquiondev.test/backups")
 
     @override_settings(SECURE_SSL_REDIRECT=False)
     def test_backup_manual_exige_superusuario(self):
@@ -11235,7 +11235,7 @@ class FiltrosHtmlTests(TestCase):
 
                 self.assertEqual(response.status_code, 405)
 
-    @override_settings(NEXT_FRONTEND_URL="https://app.rhremoto.test", SECURE_SSL_REDIRECT=False)
+    @override_settings(NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test", SECURE_SSL_REDIRECT=False)
     def test_dashboard_redirect_preserva_contrato_codigo_com_urlencode(self):
         response = self.client.get(
             reverse("caixa:dashboard_financeiro"),
@@ -11245,7 +11245,7 @@ class FiltrosHtmlTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(
             response["Location"],
-            "https://app.rhremoto.test/?contrato_codigo=CTR+A%26B",
+            "https://demo-rh.taquiondev.test/?contrato_codigo=CTR+A%26B",
         )
 
     def test_api_custos_fixos_lista_exige_autenticacao_e_permissao(self):
@@ -22987,14 +22987,14 @@ class FiltrosHtmlTests(TestCase):
     @override_settings(
         CANONICAL_FIRST_SETTLEMENT_ENABLED=True,
         CANONICAL_FIRST_SETTLEMENT_SOURCES=["custo_fixo"],
-        ALLOWED_HOSTS=["api.rhremoto.com", ".rhremoto.com"],
+        ALLOWED_HOSTS=["api-demo-rh.taquiondev.com.br", ".taquiondev.com.br"],
         CSRF_TRUSTED_ORIGINS=[
-            "https://api.rhremoto.com",
-            "https://app.rhremoto.com",
+            "https://api-demo-rh.taquiondev.com.br",
+            "https://demo-rh.taquiondev.com.br",
         ],
         CORS_ALLOWED_ORIGINS=[
-            "https://app.rhremoto.com",
-            "https://admin.rhremoto.com",
+            "https://demo-rh.taquiondev.com.br",
+            "https://demo-rh.taquiondev.com.br",
         ],
         CACHES={
             "default": {
@@ -23002,8 +23002,8 @@ class FiltrosHtmlTests(TestCase):
                 "LOCATION": "redis://:senha-cache@127.0.0.1:6379/1",
             }
         },
-        SESSION_COOKIE_DOMAIN=".rhremoto.com",
-        CSRF_COOKIE_DOMAIN=".rhremoto.com",
+        SESSION_COOKIE_DOMAIN=".taquiondev.com.br",
+        CSRF_COOKIE_DOMAIN=".taquiondev.com.br",
     )
     def test_comando_gerar_snapshot_baseline_financeira_publica_ambiente_sem_senha(self):
         saida_json = StringIO()
@@ -23035,8 +23035,8 @@ class FiltrosHtmlTests(TestCase):
             {"anon", "user", "auth_login"},
         )
         self.assertNotIn("senha-cache", saida_json.getvalue())
-        self.assertEqual(payload["cookies"]["sessionCookieDomain"], ".rhremoto.com")
-        self.assertEqual(payload["cookies"]["csrfCookieDomain"], ".rhremoto.com")
+        self.assertEqual(payload["cookies"]["sessionCookieDomain"], ".taquiondev.com.br")
+        self.assertEqual(payload["cookies"]["csrfCookieDomain"], ".taquiondev.com.br")
         self.assertIn(
             "python manage.py validar_preflight_deploy_financeiro --falhar --json",
             payload["pm02Commands"],
@@ -23058,39 +23058,39 @@ class FiltrosHtmlTests(TestCase):
             payload["pm02StrictServerCommandWithDeployUrl"],
         )
         self.assertIn(
-            "--perfil-rhremoto-producao",
-            payload["pm02StrictServerCommandRhremotoProduction"],
+            "--perfil-legado-producao",
+            payload["pm02StrictServerCommandLegacyProduction"],
         )
         self.assertIn(
             "--frontend-ref=<commit-ou-deploy-vercel>",
-            payload["pm02StrictServerCommandRhremotoProduction"],
+            payload["pm02StrictServerCommandLegacyProduction"],
         )
         self.assertIn(
             "--frontend-deploy-url=<url-deploy-vercel>",
-            payload["pm02StrictServerCommandRhremotoProductionWithDeployUrl"],
+            payload["pm02StrictServerCommandLegacyProductionWithDeployUrl"],
         )
         self.assertIn(
             "--exigir-frontend-deploy-url-https",
-            payload["pm02StrictServerCommandRhremotoProductionWithDeployUrl"],
+            payload["pm02StrictServerCommandLegacyProductionWithDeployUrl"],
         )
         self.assertIn(
             "--diretorio-evidencias=<diretorio-evidencias-pm02>",
-            payload["pm02StrictServerCommandRhremotoProductionWithEvidence"],
+            payload["pm02StrictServerCommandLegacyProductionWithEvidence"],
         )
         self.assertIn(
             "--exigir-arquivos-evidencia",
-            payload["pm02StrictServerCommandRhremotoProductionWithEvidence"],
+            payload["pm02StrictServerCommandLegacyProductionWithEvidence"],
         )
         self.assertIn(
             "--frontend-deploy-url=<url-deploy-vercel>",
             payload[
-                "pm02StrictServerCommandRhremotoProductionWithDeployUrlAndEvidence"
+                "pm02StrictServerCommandLegacyProductionWithDeployUrlAndEvidence"
             ],
         )
         self.assertIn(
             "--exigir-arquivos-evidencia",
             payload[
-                "pm02StrictServerCommandRhremotoProductionWithDeployUrlAndEvidence"
+                "pm02StrictServerCommandLegacyProductionWithDeployUrlAndEvidence"
             ],
         )
 
@@ -23185,7 +23185,7 @@ class FiltrosHtmlTests(TestCase):
             self.assertEqual(payload_salvo["evidenceFiles"]["json"], str(snapshot_path))
             self.assertEqual(
                 payload_salvo["cookies"]["sessionCookieDomain"],
-                ".rhremoto.com",
+                ".taquiondev.com.br",
             )
             self.assertIn(
                 "pm02StrictServerCommand",
@@ -23215,11 +23215,11 @@ class FiltrosHtmlTests(TestCase):
         )
         self.assertIn(
             "--diretorio-evidencias=<diretorio-evidencias-pm02>",
-            payload["pm02NextAction"]["suggestedRhremotoCommand"],
+            payload["pm02NextAction"]["suggestedLegacyCommand"],
         )
         self.assertIn(
             "--exigir-arquivos-evidencia",
-            payload["pm02NextAction"]["suggestedRhremotoCommand"],
+            payload["pm02NextAction"]["suggestedLegacyCommand"],
         )
         self.assertIn(
             "evidencia pendente: Release/tag/commit do backend",
@@ -23282,7 +23282,7 @@ class FiltrosHtmlTests(TestCase):
             payload["executionRecord"]["markdown"],
         )
         self.assertIn(
-            "pm02NextActionSuggestedRhremotoCommand: python manage.py validar_baseline_pm02 --modo-servidor-estrito --perfil-rhremoto-producao",
+            "pm02NextActionSuggestedLegacyCommand: python manage.py validar_baseline_pm02 --modo-servidor-estrito --perfil-legado-producao",
             payload["executionRecord"]["markdown"],
         )
         self.assertIn(
@@ -23294,31 +23294,31 @@ class FiltrosHtmlTests(TestCase):
             payload["strictServerCommandWithDeployUrl"],
         )
         self.assertIn(
-            "--perfil-rhremoto-producao",
-            payload["strictServerCommandRhremotoProduction"],
+            "--perfil-legado-producao",
+            payload["strictServerCommandLegacyProduction"],
         )
         self.assertIn(
             "--exigir-frontend-deploy-url-https",
-            payload["strictServerCommandRhremotoProductionWithDeployUrl"],
+            payload["strictServerCommandLegacyProductionWithDeployUrl"],
         )
         self.assertIn(
             "--diretorio-evidencias=<diretorio-evidencias-pm02>",
-            payload["strictServerCommandRhremotoProductionWithEvidence"],
+            payload["strictServerCommandLegacyProductionWithEvidence"],
         )
         self.assertIn(
             "--exigir-arquivos-evidencia",
-            payload["strictServerCommandRhremotoProductionWithEvidence"],
+            payload["strictServerCommandLegacyProductionWithEvidence"],
         )
         self.assertIn(
             "--frontend-deploy-url=<url-deploy-vercel>",
             payload[
-                "strictServerCommandRhremotoProductionWithDeployUrlAndEvidence"
+                "strictServerCommandLegacyProductionWithDeployUrlAndEvidence"
             ],
         )
         self.assertIn(
             "--exigir-arquivos-evidencia",
             payload[
-                "strictServerCommandRhremotoProductionWithDeployUrlAndEvidence"
+                "strictServerCommandLegacyProductionWithDeployUrlAndEvidence"
             ],
         )
         self.assertIn(
@@ -23352,37 +23352,37 @@ class FiltrosHtmlTests(TestCase):
             "--ambiente=producao",
         )
         self.assertEqual(
-            manual_requirements["environmentLabel"]["suggestedRhremotoCommand"],
-            "--perfil-rhremoto-producao",
+            manual_requirements["environmentLabel"]["suggestedLegacyCommand"],
+            "--perfil-legado-producao",
         )
         self.assertIn(
-            "--perfil-rhremoto-producao",
+            "--perfil-legado-producao",
             manual_requirements["serverValidationRecord"][
-                "suggestedRhremotoCommand"
+                "suggestedLegacyCommand"
             ],
         )
         self.assertIn(
             "--frontend-deploy-url=<url-deploy-vercel>",
             manual_requirements["serverValidationRecord"][
-                "suggestedRhremotoCommandWithDeployUrl"
+                "suggestedLegacyCommandWithDeployUrl"
             ],
         )
         self.assertIn(
             "--exigir-frontend-deploy-url-https",
             manual_requirements["serverValidationRecord"][
-                "suggestedRhremotoCommandWithDeployUrl"
+                "suggestedLegacyCommandWithDeployUrl"
             ],
         )
         self.assertIn(
             "--diretorio-evidencias=<diretorio-evidencias-pm02>",
             manual_requirements["serverValidationRecord"][
-                "suggestedRhremotoCommandWithEvidence"
+                "suggestedLegacyCommandWithEvidence"
             ],
         )
         self.assertIn(
             "--exigir-arquivos-evidencia",
             manual_requirements["serverValidationRecord"][
-                "suggestedRhremotoCommandWithDeployUrlAndEvidence"
+                "suggestedLegacyCommandWithDeployUrlAndEvidence"
             ],
         )
         checks = {check["key"]: check for check in payload["checks"]}
@@ -23405,14 +23405,14 @@ class FiltrosHtmlTests(TestCase):
             "Confirmacoes manuais que ainda fecham a PM-02:",
             saida_humana.getvalue(),
         )
-        self.assertIn("comando RHRemoto sugerido", saida_humana.getvalue())
-        self.assertIn("comando RHRemoto com URL sugerido", saida_humana.getvalue())
+        self.assertIn("comando legado sugerido", saida_humana.getvalue())
+        self.assertIn("comando legado com URL sugerido", saida_humana.getvalue())
         self.assertIn(
-            "comando RHRemoto com evidencias sugerido",
+            "comando legado com evidencias sugerido",
             saida_humana.getvalue(),
         )
         self.assertIn(
-            "comando RHRemoto com URL e evidencias sugerido",
+            "comando legado com URL e evidencias sugerido",
             saida_humana.getvalue(),
         )
         self.assertIn("backup_banco_mensal --force --manter 12", saida_humana.getvalue())
@@ -23438,7 +23438,7 @@ class FiltrosHtmlTests(TestCase):
             saida_humana.getvalue(),
         )
         self.assertIn(
-            "Comando RHRemoto sugerido para proxima acao:",
+            "Comando legado sugerido para proxima acao:",
             saida_humana.getvalue(),
         )
         self.assertIn("Bloqueios para fechamento PM-02:", saida_humana.getvalue())
@@ -23618,14 +23618,14 @@ class FiltrosHtmlTests(TestCase):
     @override_settings(
         CANONICAL_FIRST_SETTLEMENT_ENABLED=True,
         CANONICAL_FIRST_SETTLEMENT_SOURCES=["custo_fixo"],
-        ALLOWED_HOSTS=["api.rhremoto.com", ".rhremoto.com"],
+        ALLOWED_HOSTS=["api-demo-rh.taquiondev.com.br", ".taquiondev.com.br"],
         CSRF_TRUSTED_ORIGINS=[
-            "https://api.rhremoto.com",
-            "https://app.rhremoto.com",
+            "https://api-demo-rh.taquiondev.com.br",
+            "https://demo-rh.taquiondev.com.br",
         ],
         CORS_ALLOWED_ORIGINS=[
-            "https://app.rhremoto.com",
-            "https://admin.rhremoto.com",
+            "https://demo-rh.taquiondev.com.br",
+            "https://demo-rh.taquiondev.com.br",
         ],
         CACHES={
             "default": {
@@ -23633,8 +23633,8 @@ class FiltrosHtmlTests(TestCase):
                 "LOCATION": "redis://127.0.0.1:6379/1",
             }
         },
-        SESSION_COOKIE_DOMAIN=".rhremoto.com",
-        CSRF_COOKIE_DOMAIN=".rhremoto.com",
+        SESSION_COOKIE_DOMAIN=".taquiondev.com.br",
+        CSRF_COOKIE_DOMAIN=".taquiondev.com.br",
         SESSION_COOKIE_SECURE=True,
         CSRF_COOKIE_SECURE=True,
         SESSION_COOKIE_SAMESITE="Lax",
@@ -23646,8 +23646,8 @@ class FiltrosHtmlTests(TestCase):
         call_command(
             "validar_baseline_pm02",
             "--json",
-            "--esperar-session-cookie-domain=.rhremoto.com",
-            "--esperar-csrf-cookie-domain=.rhremoto.com",
+            "--esperar-session-cookie-domain=.taquiondev.com.br",
+            "--esperar-csrf-cookie-domain=.taquiondev.com.br",
             "--esperar-session-cookie-secure=true",
             "--esperar-csrf-cookie-secure=true",
             "--esperar-session-cookie-samesite=Lax",
@@ -23657,9 +23657,9 @@ class FiltrosHtmlTests(TestCase):
             "--esperar-canonical-first-enabled=true",
             "--esperar-canonical-first-sources=custo_fixo",
             f"--esperar-database-engine={connection.settings_dict['ENGINE']}",
-            "--esperar-allowed-hosts=.rhremoto.com,api.rhremoto.com",
-            "--esperar-csrf-trusted-origins=https://app.rhremoto.com,https://api.rhremoto.com",
-            "--esperar-cors-allowed-origins=https://admin.rhremoto.com,https://app.rhremoto.com",
+            "--esperar-allowed-hosts=.taquiondev.com.br,api-demo-rh.taquiondev.com.br",
+            "--esperar-csrf-trusted-origins=https://demo-rh.taquiondev.com.br,https://api-demo-rh.taquiondev.com.br",
+            "--esperar-cors-allowed-origins=https://demo-rh.taquiondev.com.br,https://demo-rh.taquiondev.com.br",
             stdout=saida_json,
         )
         payload = json.loads(saida_json.getvalue())
@@ -23699,26 +23699,26 @@ class FiltrosHtmlTests(TestCase):
         self.assertEqual(expectations["csrfCookieSameSite"]["actual"], "lax")
         self.assertEqual(
             expectations["allowedHosts"]["actual"],
-            ".rhremoto.com,api.rhremoto.com",
+            ".taquiondev.com.br,api-demo-rh.taquiondev.com.br",
         )
         self.assertEqual(
             expectations["csrfTrustedOrigins"]["actual"],
-            "https://api.rhremoto.com,https://app.rhremoto.com",
+            "https://api-demo-rh.taquiondev.com.br,https://demo-rh.taquiondev.com.br",
         )
         self.assertEqual(
             expectations["corsAllowedOrigins"]["actual"],
-            "https://admin.rhremoto.com,https://app.rhremoto.com",
+            "https://demo-rh.taquiondev.com.br,https://demo-rh.taquiondev.com.br",
         )
         self.assertEqual(
             expectations["databaseEngine"]["actual"],
             connection.settings_dict["ENGINE"],
         )
         self.assertIn(
-            "--esperar-session-cookie-domain=.rhremoto.com",
+            "--esperar-session-cookie-domain=.taquiondev.com.br",
             payload["strictServerCommandResolved"],
         )
         self.assertIn(
-            "--esperar-csrf-cookie-domain=.rhremoto.com",
+            "--esperar-csrf-cookie-domain=.taquiondev.com.br",
             payload["strictServerCommandResolved"],
         )
         self.assertIn(
@@ -23758,19 +23758,19 @@ class FiltrosHtmlTests(TestCase):
             payload["strictServerCommandResolved"],
         )
         self.assertIn(
-            "--esperar-allowed-hosts=.rhremoto.com,api.rhremoto.com",
+            "--esperar-allowed-hosts=.taquiondev.com.br,api-demo-rh.taquiondev.com.br",
             payload["strictServerCommandResolved"],
         )
         self.assertIn(
-            "--esperar-csrf-trusted-origins=https://api.rhremoto.com,https://app.rhremoto.com",
+            "--esperar-csrf-trusted-origins=https://api-demo-rh.taquiondev.com.br,https://demo-rh.taquiondev.com.br",
             payload["strictServerCommandResolved"],
         )
         self.assertIn(
-            "--esperar-cors-allowed-origins=https://admin.rhremoto.com,https://app.rhremoto.com",
+            "--esperar-cors-allowed-origins=https://demo-rh.taquiondev.com.br,https://demo-rh.taquiondev.com.br",
             payload["strictServerCommandResolved"],
         )
         self.assertIn(
-            "SESSION_COOKIE_DOMAIN esperado=.rhremoto.com",
+            "SESSION_COOKIE_DOMAIN esperado=.taquiondev.com.br",
             payload["executionRecord"]["markdown"],
         )
         self.assertIn(
@@ -23794,15 +23794,15 @@ class FiltrosHtmlTests(TestCase):
             payload["executionRecord"]["markdown"],
         )
         self.assertIn(
-            "ALLOWED_HOSTS esperado=.rhremoto.com,api.rhremoto.com",
+            "ALLOWED_HOSTS esperado=.taquiondev.com.br,api-demo-rh.taquiondev.com.br",
             payload["executionRecord"]["markdown"],
         )
         self.assertIn(
-            "CSRF_TRUSTED_ORIGINS esperado=https://api.rhremoto.com,https://app.rhremoto.com",
+            "CSRF_TRUSTED_ORIGINS esperado=https://api-demo-rh.taquiondev.com.br,https://demo-rh.taquiondev.com.br",
             payload["executionRecord"]["markdown"],
         )
         self.assertIn(
-            "CORS_ALLOWED_ORIGINS esperado=https://admin.rhremoto.com,https://app.rhremoto.com",
+            "CORS_ALLOWED_ORIGINS esperado=https://demo-rh.taquiondev.com.br,https://demo-rh.taquiondev.com.br",
             payload["executionRecord"]["markdown"],
         )
         self.assertIn(
@@ -23832,7 +23832,7 @@ class FiltrosHtmlTests(TestCase):
         call_command(
             "validar_baseline_pm02",
             "--json",
-            "--perfil-rhremoto-producao",
+            "--perfil-legado-producao",
             stdout=saida_perfil,
         )
         payload_perfil = json.loads(saida_perfil.getvalue())
@@ -23846,10 +23846,10 @@ class FiltrosHtmlTests(TestCase):
             payload_perfil["serverEvidence"]["environmentLabel"],
             "producao",
         )
-        self.assertEqual(payload_perfil["environmentProfile"], "rhremoto-producao")
+        self.assertEqual(payload_perfil["environmentProfile"], "legado-producao")
         self.assertEqual(
             payload_perfil["serverEvidence"]["environmentProfile"],
-            "rhremoto-producao",
+            "legado-producao",
         )
         self.assertEqual(
             payload_perfil["environmentProfileDefaults"]["ambiente"],
@@ -23875,7 +23875,7 @@ class FiltrosHtmlTests(TestCase):
         self.assertTrue(expectations_perfil["cacheBackend"]["ok"])
         self.assertTrue(expectations_perfil["cacheLocation"]["ok"])
         self.assertIn(
-            "--perfil-rhremoto-producao",
+            "--perfil-legado-producao",
             payload_perfil["strictServerCommandResolved"],
         )
         self.assertIn(
@@ -23883,11 +23883,11 @@ class FiltrosHtmlTests(TestCase):
             payload_perfil["strictServerCommandResolved"],
         )
         self.assertIn(
-            "--esperar-session-cookie-domain=.rhremoto.com",
+            "--esperar-session-cookie-domain=.taquiondev.com.br",
             payload_perfil["strictServerCommandResolved"],
         )
         self.assertIn(
-            "--esperar-csrf-cookie-domain=.rhremoto.com",
+            "--esperar-csrf-cookie-domain=.taquiondev.com.br",
             payload_perfil["strictServerCommandResolved"],
         )
         self.assertIn(
@@ -23903,7 +23903,7 @@ class FiltrosHtmlTests(TestCase):
             payload_perfil["executionRecord"]["markdown"],
         )
         self.assertIn(
-            "Perfil de ambiente: rhremoto-producao",
+            "Perfil de ambiente: legado-producao",
             payload_perfil["executionRecord"]["markdown"],
         )
         self.assertIn(
@@ -23927,7 +23927,7 @@ class FiltrosHtmlTests(TestCase):
         call_command(
             "validar_baseline_pm02",
             "--json",
-            "--perfil-rhremoto-producao",
+            "--perfil-legado-producao",
             "--ambiente=homologacao",
             f"--esperar-database-engine={connection.settings_dict['ENGINE']}",
             stdout=saida_perfil_com_override,
@@ -24076,7 +24076,7 @@ class FiltrosHtmlTests(TestCase):
             call_command(
                 "validar_baseline_pm02",
                 "--falhar",
-                "--esperar-allowed-hosts=api.rhremoto.com",
+                "--esperar-allowed-hosts=api-demo-rh.taquiondev.com.br",
                 stdout=StringIO(),
             )
 
@@ -34426,7 +34426,7 @@ class FiltrosHtmlTests(TestCase):
         )
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         SECURE_SSL_REDIRECT=False,
     )
     def test_eventos_e_orcamentos_html_redirecionam_preservando_query(self):
@@ -34454,15 +34454,15 @@ class FiltrosHtmlTests(TestCase):
         self.assertEqual(orcamento_adicionar.status_code, 302)
         self.assertEqual(
             eventos["Location"],
-            "https://app.rhremoto.test/eventos?periodo_rapido=todos&status=concluido",
+            "https://demo-rh.taquiondev.test/eventos?periodo_rapido=todos&status=concluido",
         )
         self.assertEqual(
             orcamentos["Location"],
-            "https://app.rhremoto.test/orcamentos?status=aprovado",
+            "https://demo-rh.taquiondev.test/orcamentos?status=aprovado",
         )
         self.assertEqual(
             orcamento_adicionar["Location"],
-            "https://app.rhremoto.test/orcamentos?status=enviado",
+            "https://demo-rh.taquiondev.test/orcamentos?status=enviado",
         )
 
     def test_dashboard_e_custos_por_evento_usam_opcoes_compartilhadas_de_status(self):
@@ -34571,12 +34571,12 @@ class FiltrosHtmlTests(TestCase):
         self.assertEqual(contexto["total_vencido"], Decimal("100.00"))
         self.assertEqual(contexto["parcelas"][0].numero_parcela, 1)
 
-    @override_settings(NEXT_FRONTEND_URL="https://app.rhremoto.test", SECURE_SSL_REDIRECT=False)
+    @override_settings(NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test", SECURE_SSL_REDIRECT=False)
     def test_fcf_link_vencidos_nao_exige_periodo_selecionado(self):
         response = self.client.get(reverse("caixa:lista_financiamentos"))
 
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response["Location"], "https://app.rhremoto.test/fcf")
+        self.assertEqual(response["Location"], "https://demo-rh.taquiondev.test/fcf")
 
     def test_fcf_periodo_vencidos_respeita_intervalo_informado(self):
         hoje = timezone.localdate()
@@ -34882,7 +34882,7 @@ class FiltrosHtmlTests(TestCase):
         )
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         SECURE_SSL_REDIRECT=False,
     )
     def test_eventos_lista_html_redireciona_para_next_preservando_evento(self):
@@ -34908,7 +34908,7 @@ class FiltrosHtmlTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(
             response["Location"],
-            f"https://app.rhremoto.test/eventos?evento={evento.id}",
+            f"https://demo-rh.taquiondev.test/eventos?evento={evento.id}",
         )
 
     def test_receitas_e_despesas_filtram_status_e_totais(self):
@@ -35876,15 +35876,15 @@ class FiltrosHtmlTests(TestCase):
         self.assertIn(reverse("caixa:custos_fixos_lista") + f"?{vencidos_query}", urls_alertas)
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         SECURE_SSL_REDIRECT=False,
     )
     def test_paginas_financeiras_html_removidas_redirecionam_para_next(self):
         rotas = [
-            (reverse("caixa:receitas_lista"), "https://app.rhremoto.test/receitas"),
-            (reverse("caixa:despesas_lista"), "https://app.rhremoto.test/despesas"),
-            (reverse("caixa:lista_investimentos"), "https://app.rhremoto.test/fci"),
-            (reverse("caixa:lista_financiamentos"), "https://app.rhremoto.test/fcf"),
+            (reverse("caixa:receitas_lista"), "https://demo-rh.taquiondev.test/receitas"),
+            (reverse("caixa:despesas_lista"), "https://demo-rh.taquiondev.test/despesas"),
+            (reverse("caixa:lista_investimentos"), "https://demo-rh.taquiondev.test/fci"),
+            (reverse("caixa:lista_financiamentos"), "https://demo-rh.taquiondev.test/fcf"),
         ]
 
         for url, next_url in rotas:
@@ -35894,7 +35894,7 @@ class FiltrosHtmlTests(TestCase):
                 self.assertEqual(response["Location"], next_url)
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         SECURE_SSL_REDIRECT=False,
     )
     def test_paginas_com_botoes_de_adicionar_removidas_redirecionam_para_next(self):
@@ -35906,9 +35906,9 @@ class FiltrosHtmlTests(TestCase):
         self.client.force_login(superuser)
 
         rotas = [
-            (reverse("caixa:custos_fixos_lista"), "https://app.rhremoto.test/custos-fixos"),
-            (reverse("caixa:lista_investimentos"), "https://app.rhremoto.test/fci"),
-            (reverse("caixa:lista_financiamentos"), "https://app.rhremoto.test/fcf"),
+            (reverse("caixa:custos_fixos_lista"), "https://demo-rh.taquiondev.test/custos-fixos"),
+            (reverse("caixa:lista_investimentos"), "https://demo-rh.taquiondev.test/fci"),
+            (reverse("caixa:lista_financiamentos"), "https://demo-rh.taquiondev.test/fcf"),
         ]
 
         for url, next_url in rotas:
@@ -35918,7 +35918,7 @@ class FiltrosHtmlTests(TestCase):
                 self.assertEqual(response["Location"], next_url)
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         SECURE_SSL_REDIRECT=False,
     )
     def test_usuario_com_add_orcamento_acessa_legado_redirecionado_para_next(self):
@@ -35941,7 +35941,7 @@ class FiltrosHtmlTests(TestCase):
         response = self.client.get(reverse("caixa:orcamento_adicionar"), secure=True)
 
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response["Location"], "https://app.rhremoto.test/orcamentos")
+        self.assertEqual(response["Location"], "https://demo-rh.taquiondev.test/orcamentos")
 
     @override_settings(SECURE_SSL_REDIRECT=False)
     def test_usuario_com_add_orcamento_login_preserva_rota_legada_redirect_only(self):
@@ -36051,7 +36051,7 @@ class FiltrosHtmlTests(TestCase):
         self.assertFalse(Orcamento.objects.filter(numero="ORC-MARY-001").exists())
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         SECURE_SSL_REDIRECT=False,
     )
     def test_orcamento_adicionar_html_redireciona_preservando_query(self):
@@ -36103,11 +36103,11 @@ class FiltrosHtmlTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(
             response["Location"],
-            "https://app.rhremoto.test/orcamentos?busca=Encontrado&status=rascunho",
+            "https://demo-rh.taquiondev.test/orcamentos?busca=Encontrado&status=rascunho",
         )
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         SECURE_SSL_REDIRECT=False,
         STORAGES=TEST_STATICFILES_STORAGES,
     )
@@ -36137,7 +36137,7 @@ class FiltrosHtmlTests(TestCase):
 
         get_response = self.client.get(reverse("caixa:custo_extra_adicionar"), secure=True)
         self.assertEqual(get_response.status_code, 302)
-        self.assertEqual(get_response["Location"], "https://app.rhremoto.test/custos-extras")
+        self.assertEqual(get_response["Location"], "https://demo-rh.taquiondev.test/custos-extras")
 
         response = self.client.post(
             reverse("caixa:custo_extra_adicionar"),
@@ -36157,7 +36157,7 @@ class FiltrosHtmlTests(TestCase):
         self.assertFalse(EventoCustoExtra.objects.filter(descricao="Material extra").exists())
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         SECURE_SSL_REDIRECT=False,
         STORAGES=TEST_STATICFILES_STORAGES,
     )
@@ -36191,7 +36191,7 @@ class FiltrosHtmlTests(TestCase):
         response = self.client.get(reverse("caixa:custo_extra_adicionar"), secure=True)
 
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response["Location"], "https://app.rhremoto.test/custos-extras")
+        self.assertEqual(response["Location"], "https://demo-rh.taquiondev.test/custos-extras")
         listagem = listar_custos_extras_recentes(evento_id=str(evento.id))
         self.assertEqual(
             [custo.descricao for custo in listagem["custos_extras"]],
@@ -39880,7 +39880,7 @@ class FiltrosHtmlTests(TestCase):
         )
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         SECURE_SSL_REDIRECT=False,
         STORAGES=TEST_STATICFILES_STORAGES,
     )
@@ -39923,7 +39923,7 @@ class FiltrosHtmlTests(TestCase):
         self.assertEqual(
             response["Location"],
             (
-                "https://app.rhremoto.test/pagamentos?"
+                "https://demo-rh.taquiondev.test/pagamentos?"
                 f"source=parcela_divida&sourceId={parcela.id}"
             ),
         )
@@ -42995,7 +42995,7 @@ class PagamentosEventoTests(TestCase):
                 self.assertTrue(saldos)
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         SECURE_SSL_REDIRECT=False,
         STORAGES=TEST_STATICFILES_STORAGES,
     )
@@ -43022,13 +43022,13 @@ class PagamentosEventoTests(TestCase):
         self.assertEqual(
             resposta["Location"],
             (
-                "https://app.rhremoto.test/pagamentos?"
+                "https://demo-rh.taquiondev.test/pagamentos?"
                 f"source=custo_servico&custo_servico={custo_servico.id}&tipo=diarias"
             ),
         )
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         SECURE_SSL_REDIRECT=False,
     )
     def test_pagina_pagamentos_central_mostra_destinos_permitidos(self):
@@ -43043,7 +43043,7 @@ class PagamentosEventoTests(TestCase):
         self.assertEqual(resposta.status_code, 302)
         self.assertEqual(
             resposta["Location"],
-            "https://app.rhremoto.test/pagamentos",
+            "https://demo-rh.taquiondev.test/pagamentos",
         )
 
     def test_pagina_pagamentos_custos_servico_registra_e_sincroniza_despesa(self):
@@ -43308,7 +43308,7 @@ class PagamentosEventoTests(TestCase):
         self.assertEqual(custo_extra.saldo_a_pagar, Decimal("30.00"))
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         SECURE_SSL_REDIRECT=False,
     )
     def test_pagina_pagamentos_fcf_lista_parcelas_com_saldo(self):
@@ -43342,13 +43342,13 @@ class PagamentosEventoTests(TestCase):
         self.assertEqual(
             resposta["Location"],
             (
-                "https://app.rhremoto.test/pagamentos?"
+                "https://demo-rh.taquiondev.test/pagamentos?"
                 f"source=parcela_divida&creditorId={divida.credor_cadastro_id}"
             ),
         )
 
     @override_settings(
-        NEXT_FRONTEND_URL="https://app.rhremoto.test",
+        NEXT_FRONTEND_URL="https://demo-rh.taquiondev.test",
         SECURE_SSL_REDIRECT=False,
     )
     def test_pagina_pagamentos_fcf_preserva_filtro_credor_textual_legado(self):
@@ -43385,7 +43385,7 @@ class PagamentosEventoTests(TestCase):
         self.assertEqual(
             resposta["Location"],
             (
-                "https://app.rhremoto.test/pagamentos?"
+                "https://demo-rh.taquiondev.test/pagamentos?"
                 "source=parcela_divida&credor=Banco+Legado+FCF"
             ),
         )

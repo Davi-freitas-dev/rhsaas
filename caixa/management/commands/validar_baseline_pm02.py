@@ -11,10 +11,10 @@ from django.utils import timezone
 from caixa.management.commands.auditar_totais_negocio import auditar_totais_negocio
 from caixa.management.commands.gerar_snapshot_baseline_financeira import (
     PM02_AGGREGATE_COMMAND,
-    PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION,
-    PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION_WITH_DEPLOY_URL,
-    PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION_WITH_DEPLOY_URL_AND_EVIDENCE,
-    PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION_WITH_EVIDENCE,
+    PM02_STRICT_SERVER_COMMAND_LEGACY_PRODUCTION,
+    PM02_STRICT_SERVER_COMMAND_LEGACY_PRODUCTION_WITH_DEPLOY_URL,
+    PM02_STRICT_SERVER_COMMAND_LEGACY_PRODUCTION_WITH_DEPLOY_URL_AND_EVIDENCE,
+    PM02_STRICT_SERVER_COMMAND_LEGACY_PRODUCTION_WITH_EVIDENCE,
     PM02_STRICT_SERVER_COMMAND,
     PM02_STRICT_SERVER_COMMAND_WITH_DEPLOY_URL,
     _sanitize_url_or_value,
@@ -44,7 +44,7 @@ PM02_MANUAL_REQUIREMENTS = [
         "key": "environmentLabel",
         "label": "Identificar ambiente operacional da janela",
         "suggestedCommand": "--ambiente=producao",
-        "suggestedRhremotoCommand": "DESATIVADO no RH SaaS: perfil legado do projeto antigo.",
+        "suggestedLegacyCommand": "DESATIVADO no RH SaaS: perfil legado do projeto antigo.",
     },
     {
         "key": "environmentSnapshot",
@@ -55,15 +55,15 @@ PM02_MANUAL_REQUIREMENTS = [
         "key": "serverValidationRecord",
         "label": "Registrar data, ambiente, commit/tag, backup, comandos e resultados no plano mestre",
         "suggestedCommand": PM02_STRICT_SERVER_COMMAND,
-        "suggestedRhremotoCommand": PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION,
-        "suggestedRhremotoCommandWithDeployUrl": (
-            PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION_WITH_DEPLOY_URL
+        "suggestedLegacyCommand": PM02_STRICT_SERVER_COMMAND_LEGACY_PRODUCTION,
+        "suggestedLegacyCommandWithDeployUrl": (
+            PM02_STRICT_SERVER_COMMAND_LEGACY_PRODUCTION_WITH_DEPLOY_URL
         ),
-        "suggestedRhremotoCommandWithEvidence": (
-            PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION_WITH_EVIDENCE
+        "suggestedLegacyCommandWithEvidence": (
+            PM02_STRICT_SERVER_COMMAND_LEGACY_PRODUCTION_WITH_EVIDENCE
         ),
-        "suggestedRhremotoCommandWithDeployUrlAndEvidence": (
-            PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION_WITH_DEPLOY_URL_AND_EVIDENCE
+        "suggestedLegacyCommandWithDeployUrlAndEvidence": (
+            PM02_STRICT_SERVER_COMMAND_LEGACY_PRODUCTION_WITH_DEPLOY_URL_AND_EVIDENCE
         ),
     },
 ]
@@ -117,9 +117,9 @@ PM02_STRICT_FLAG_REQUIREMENTS = [
         "flag": "--exigir-fechamento-pm02",
     },
 ]
-RHREMOTO_PRODUCTION_PROFILE_DEFAULTS = {
+LEGACY_PRODUCTION_PROFILE_DEFAULTS = {
 }
-RHREMOTO_PRODUCTION_PROFILE_LABEL = "perfil-legado-desativado"
+LEGACY_PRODUCTION_PROFILE_LABEL = "perfil-legado-desativado"
 
 
 class Command(BaseCommand):
@@ -218,8 +218,8 @@ class Command(BaseCommand):
             help="Nome operacional do ambiente da janela, por exemplo producao.",
         )
         parser.add_argument(
-            "--perfil-rhremoto-producao",
-            "--rhremoto-production-profile",
+            "--perfil-legado-producao",
+            "--legacy-production-profile",
             action="store_true",
             help=(
                 "Perfil legado do projeto antigo. Esta opcao fica desativada "
@@ -503,10 +503,10 @@ class Command(BaseCommand):
                 "Comando sugerido para proxima acao: "
                 f"{resultado['pm02NextAction']['suggestedCommand']}"
             )
-        if resultado["pm02NextAction"].get("suggestedRhremotoCommand"):
+        if resultado["pm02NextAction"].get("suggestedLegacyCommand"):
             self.stdout.write(
-                "Comando RHRemoto sugerido para proxima acao: "
-                f"{resultado['pm02NextAction']['suggestedRhremotoCommand']}"
+                "Comando legado sugerido para proxima acao: "
+                f"{resultado['pm02NextAction']['suggestedLegacyCommand']}"
             )
         self.stdout.write(
             "Flags estritas de servidor: "
@@ -530,22 +530,22 @@ class Command(BaseCommand):
         self.stdout.write(resultado["strictServerCommand"])
         self.stdout.write("Comando estrito PM-02 usando URL do deploy:")
         self.stdout.write(resultado["strictServerCommandWithDeployUrl"])
-        self.stdout.write("Comando estrito PM-02 para producao RHRemoto:")
-        self.stdout.write(resultado["strictServerCommandRhremotoProduction"])
-        self.stdout.write("Comando estrito PM-02 RHRemoto usando URL do deploy:")
+        self.stdout.write("Comando estrito PM-02 para producao legado:")
+        self.stdout.write(resultado["strictServerCommandLegacyProduction"])
+        self.stdout.write("Comando estrito PM-02 legado usando URL do deploy:")
         self.stdout.write(
-            resultado["strictServerCommandRhremotoProductionWithDeployUrl"]
+            resultado["strictServerCommandLegacyProductionWithDeployUrl"]
         )
-        self.stdout.write("Comando estrito PM-02 RHRemoto com evidencias:")
+        self.stdout.write("Comando estrito PM-02 legado com evidencias:")
         self.stdout.write(
-            resultado["strictServerCommandRhremotoProductionWithEvidence"]
+            resultado["strictServerCommandLegacyProductionWithEvidence"]
         )
         self.stdout.write(
-            "Comando estrito PM-02 RHRemoto usando URL e evidencias:"
+            "Comando estrito PM-02 legado usando URL e evidencias:"
         )
         self.stdout.write(
             resultado[
-                "strictServerCommandRhremotoProductionWithDeployUrlAndEvidence"
+                "strictServerCommandLegacyProductionWithDeployUrlAndEvidence"
             ]
         )
         self.stdout.write("Comando estrito PM-02 preenchido:")
@@ -559,27 +559,27 @@ class Command(BaseCommand):
                 self.stdout.write(
                     f"  comando sugerido: {requirement['suggestedCommand']}"
                 )
-            if requirement.get("suggestedRhremotoCommand"):
+            if requirement.get("suggestedLegacyCommand"):
                 self.stdout.write(
-                    "  comando RHRemoto sugerido: "
-                    f"{requirement['suggestedRhremotoCommand']}"
+                    "  comando legado sugerido: "
+                    f"{requirement['suggestedLegacyCommand']}"
                 )
-            if requirement.get("suggestedRhremotoCommandWithDeployUrl"):
+            if requirement.get("suggestedLegacyCommandWithDeployUrl"):
                 self.stdout.write(
-                    "  comando RHRemoto com URL sugerido: "
-                    f"{requirement['suggestedRhremotoCommandWithDeployUrl']}"
+                    "  comando legado com URL sugerido: "
+                    f"{requirement['suggestedLegacyCommandWithDeployUrl']}"
                 )
-            if requirement.get("suggestedRhremotoCommandWithEvidence"):
+            if requirement.get("suggestedLegacyCommandWithEvidence"):
                 self.stdout.write(
-                    "  comando RHRemoto com evidencias sugerido: "
-                    f"{requirement['suggestedRhremotoCommandWithEvidence']}"
+                    "  comando legado com evidencias sugerido: "
+                    f"{requirement['suggestedLegacyCommandWithEvidence']}"
                 )
-            if requirement.get("suggestedRhremotoCommandWithDeployUrlAndEvidence"):
+            if requirement.get("suggestedLegacyCommandWithDeployUrlAndEvidence"):
                 suggested_command = requirement[
-                    "suggestedRhremotoCommandWithDeployUrlAndEvidence"
+                    "suggestedLegacyCommandWithDeployUrlAndEvidence"
                 ]
                 self.stdout.write(
-                    "  comando RHRemoto com URL e evidencias sugerido: "
+                    "  comando legado com URL e evidencias sugerido: "
                     f"{suggested_command}"
                 )
 
@@ -783,17 +783,17 @@ def validar_baseline_pm02(options=None):
         "environmentExpectations": environment_expectations,
         "strictServerCommand": PM02_STRICT_SERVER_COMMAND,
         "strictServerCommandWithDeployUrl": PM02_STRICT_SERVER_COMMAND_WITH_DEPLOY_URL,
-        "strictServerCommandRhremotoProduction": (
-            PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION
+        "strictServerCommandLegacyProduction": (
+            PM02_STRICT_SERVER_COMMAND_LEGACY_PRODUCTION
         ),
-        "strictServerCommandRhremotoProductionWithDeployUrl": (
-            PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION_WITH_DEPLOY_URL
+        "strictServerCommandLegacyProductionWithDeployUrl": (
+            PM02_STRICT_SERVER_COMMAND_LEGACY_PRODUCTION_WITH_DEPLOY_URL
         ),
-        "strictServerCommandRhremotoProductionWithEvidence": (
-            PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION_WITH_EVIDENCE
+        "strictServerCommandLegacyProductionWithEvidence": (
+            PM02_STRICT_SERVER_COMMAND_LEGACY_PRODUCTION_WITH_EVIDENCE
         ),
-        "strictServerCommandRhremotoProductionWithDeployUrlAndEvidence": (
-            PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION_WITH_DEPLOY_URL_AND_EVIDENCE
+        "strictServerCommandLegacyProductionWithDeployUrlAndEvidence": (
+            PM02_STRICT_SERVER_COMMAND_LEGACY_PRODUCTION_WITH_DEPLOY_URL_AND_EVIDENCE
         ),
         "strictServerCommandResolved": strict_server_command_resolved,
         "strictServerMode": bool(options.get("modo_servidor_estrito", False)),
@@ -843,9 +843,9 @@ def _normalizar_opcoes_pm02(options=None):
     if options.get("modo_servidor_estrito", False):
         for requirement in PM02_STRICT_FLAG_REQUIREMENTS:
             options[requirement["option"]] = True
-    if options.get("perfil_rhremoto_producao", False):
+    if options.get("perfil_legado_producao", False):
         raise CommandError(
-            "O perfil legado --perfil-rhremoto-producao esta desativado no RH SaaS. "
+            "O perfil legado --perfil-legado-producao esta desativado no RH SaaS. "
             "Informe os parametros esperados explicitamente para o ambiente atual."
         )
     evidence_dir = options.get("diretorio_evidencias", "")
@@ -865,14 +865,14 @@ def _normalizar_opcoes_pm02(options=None):
 
 
 def _environment_profile_label(options):
-    if options.get("perfil_rhremoto_producao", False):
-        return RHREMOTO_PRODUCTION_PROFILE_LABEL
+    if options.get("perfil_legado_producao", False):
+        return LEGACY_PRODUCTION_PROFILE_LABEL
     return ""
 
 
 def _environment_profile_defaults(options):
-    if options.get("perfil_rhremoto_producao", False):
-        return dict(RHREMOTO_PRODUCTION_PROFILE_DEFAULTS)
+    if options.get("perfil_legado_producao", False):
+        return dict(LEGACY_PRODUCTION_PROFILE_DEFAULTS)
     return {}
 
 
@@ -1387,18 +1387,18 @@ def _pm02_next_action(
             "label": "Executar PM-02 no servidor com release, backup, ambiente e frontend publicados",
             "detail": "usar o comando estrito apropriado e informar evidencias reais",
             "suggestedCommand": PM02_STRICT_SERVER_COMMAND,
-            "suggestedRhremotoCommand": (
-                PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION_WITH_DEPLOY_URL_AND_EVIDENCE
+            "suggestedLegacyCommand": (
+                PM02_STRICT_SERVER_COMMAND_LEGACY_PRODUCTION_WITH_DEPLOY_URL_AND_EVIDENCE
             ),
         }
     if not strict_server_flags_complete:
         return {
             "key": "rerunStrictServerMode",
             "label": "Reexecutar validacao com o comando estrito completo",
-            "detail": "usar --modo-servidor-estrito ou a sugestao RHRemoto equivalente",
+            "detail": "usar --modo-servidor-estrito ou a sugestao legada equivalente",
             "suggestedCommand": PM02_STRICT_SERVER_COMMAND,
-            "suggestedRhremotoCommand": (
-                PM02_STRICT_SERVER_COMMAND_RHREMOTO_PRODUCTION_WITH_DEPLOY_URL_AND_EVIDENCE
+            "suggestedLegacyCommand": (
+                PM02_STRICT_SERVER_COMMAND_LEGACY_PRODUCTION_WITH_DEPLOY_URL_AND_EVIDENCE
             ),
         }
     if pm02_closure_ready:
@@ -1486,8 +1486,8 @@ def _pm02_execution_record(
         f"snapshot={evidence_files.get('snapshotJson') or '-'}"
     )
     next_action_suggested_command = pm02_next_action.get("suggestedCommand") or "-"
-    next_action_rhremoto_command = (
-        pm02_next_action.get("suggestedRhremotoCommand") or "-"
+    next_action_legacy_command = (
+        pm02_next_action.get("suggestedLegacyCommand") or "-"
     )
     profile_defaults_summary = _profile_mapping_summary(environment_profile_defaults)
     profile_defaults_applied_summary = _profile_mapping_summary(
@@ -1541,7 +1541,7 @@ def _pm02_execution_record(
             f"pm02ClosureBlockers: {blocker_summary}",
             f"pm02NextAction: {pm02_next_action['key']} - {pm02_next_action['label']}",
             f"pm02NextActionSuggestedCommand: {next_action_suggested_command}",
-            f"pm02NextActionSuggestedRhremotoCommand: {next_action_rhremoto_command}",
+            f"pm02NextActionSuggestedLegacyCommand: {next_action_legacy_command}",
             f"manualEvidenceStatus: {evidence_summary}",
             f"strictServerFlagsStatus: {strict_flags_summary}",
             f"Arquivos salvos: {evidence_files_summary}",
@@ -1595,7 +1595,7 @@ def _pm02_strict_server_command_resolved(
         "python manage.py validar_baseline_pm02",
         "--modo-servidor-estrito",
     ]
-    if server_evidence.get("environmentProfile") == RHREMOTO_PRODUCTION_PROFILE_LABEL:
+    if server_evidence.get("environmentProfile") == LEGACY_PRODUCTION_PROFILE_LABEL:
         parts.append("perfil-legado-desativado")
     if server_evidence["frontendRef"]:
         parts.append(f"--frontend-ref={server_evidence['frontendRef']}")

@@ -1503,11 +1503,11 @@ class TenantCommandGuardTests(MultiTenantTestCase):
                     stdout=StringIO(),
                 )
 
-    def test_perfil_legado_rhremoto_esta_desativado(self):
+    def test_perfil_legado_esta_desativado(self):
         with self.assertRaisesMessage(CommandError, "perfil legado"):
             call_command(
                 "validar_baseline_pm02",
-                "--perfil-rhremoto-producao",
+                "--perfil-legado-producao",
                 stdout=StringIO(),
             )
 
