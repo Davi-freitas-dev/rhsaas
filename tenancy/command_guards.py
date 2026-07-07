@@ -167,3 +167,28 @@ def ensure_demo_pool_confirmation(
         )
 
     return schema_name
+
+
+def ensure_demo_pool_reset_confirmation(
+    schema_name,
+    confirmation,
+    *,
+    command_name="resetar_tenant_demo",
+    option_name="--confirm",
+):
+    schema_name = ensure_demo_pool_schema(
+        schema_name,
+        command_name=command_name,
+        action="resetar tenant demo",
+    )
+    confirmation = "" if confirmation is None else str(confirmation)
+    expected_confirmation = f"RESETAR {schema_name}"
+
+    if confirmation != expected_confirmation:
+        raise CommandError(
+            f"Confirmacao textual invalida para '{command_name}'. "
+            f"Para resetar o tenant demo, informe "
+            f'{option_name} "{expected_confirmation}".'
+        )
+
+    return schema_name
