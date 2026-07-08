@@ -358,6 +358,15 @@ Esperado:
 - Logs e monitoramento do fluxo operacional ainda devem ser revisados em
   ambiente de servidor.
 
+## Incidentes operacionais conhecidos
+
+- Lock de login por IP interno no `demo1`: o Axes registrou tentativas como
+  `127.0.0.1` atras do Nginx/Gunicorn e bloqueou o login com HTTP 429. O
+  incidente, a causa raiz e o plano de correcao estao documentados em
+  `docs/INCIDENTE_AXES_IP_NGINX_DEMO_PUBLICA.md`.
+- Nao desabilite o Axes para destravar a demo. Primeiro inspecione o schema
+  correto e, se necessario, aplique reset schema-scoped do IP afetado.
+
 ## Rollback operacional
 
 Se qualquer etapa falhar, nao improvise liberando vaga manualmente. Primeiro

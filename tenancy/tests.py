@@ -1,5 +1,6 @@
 import json
 import hashlib
+from types import SimpleNamespace
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -17,11 +18,12 @@ from django.contrib.auth.models import Group
 from django.contrib.auth import get_user_model
 from django.contrib.sessions.models import Session
 from django.db import IntegrityError, connection, transaction
-from django.test import Client, TransactionTestCase, override_settings
+from django.test import Client, SimpleTestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 from django_tenants.utils import get_public_schema_name, schema_context, schema_exists
 from rest_framework.throttling import SimpleRateThrottle
 
+from config.client_ip import get_axes_client_ip
 from caixa.models import Cliente, ReceitaOperacional
 from caixa.permissions import is_platform_operator, is_tenant_administrator
 from caixa.tenant_files import backup_dir_for_schema
@@ -42,6 +44,56 @@ from tenancy.command_guards import (
 )
 from tenancy.models import DemoTenantSlot, Domain, Tenant
 from tenancy.test_helpers import MultiTenantTestCase, OPERATIONAL_GROUPS
+
+
+class AxesClientIpCallableTests(SimpleTestCase):
+    def request(self, **meta):
+        return SimpleNamespace(META=meta)
+
+    @override_settings(AXES_TRUSTED_PROXY_REMOTE_ADDRS=["127.0.0.1"])
+    def test_usa_x_real_ip_quando_remote_addr_e_proxy_confiavel(self):
+        request = self.request(
+            REMOTE_ADDR="127.0.0.1",
+            HTTP_X_REAL_IP="203.0.113.20",
+        )
+
+        self.assertEqual(get_axes_client_ip(request), "203.0.113.20")
+
+    @override_settings(AXES_TRUSTED_PROXY_REMOTE_ADDRS=["127.0.0.1"])
+    def test_ignora_headers_forjados_quando_remote_addr_nao_e_proxy_confiavel(self):
+        request = self.request(
+            REMOTE_ADDR="198.51.100.10",
+            HTTP_X_REAL_IP="203.0.113.20",
+            HTTP_X_FORWARDED_FOR="203.0.113.21",
+        )
+
+        self.assertEqual(get_axes_client_ip(request), "198.51.100.10")
+
+    @override_settings(AXES_TRUSTED_PROXY_REMOTE_ADDRS=["127.0.0.1"])
+    def test_usa_ultimo_ip_do_x_forwarded_for_quando_x_real_ip_ausente(self):
+        request = self.request(
+            REMOTE_ADDR="127.0.0.1",
+            HTTP_X_FORWARDED_FOR="198.51.100.1, 203.0.113.20",
+        )
+
+        self.assertEqual(get_axes_client_ip(request), "203.0.113.20")
+
+    @override_settings(AXES_TRUSTED_PROXY_REMOTE_ADDRS=["127.0.0.1"])
+    def test_faz_fallback_para_remote_addr_quando_header_do_proxy_e_invalido(self):
+        request = self.request(
+            REMOTE_ADDR="127.0.0.1",
+            HTTP_X_REAL_IP="not-an-ip",
+            HTTP_X_FORWARDED_FOR="also-not-an-ip",
+        )
+
+        self.assertEqual(get_axes_client_ip(request), "127.0.0.1")
+
+    def test_settings_apontam_axes_para_callable_e_lockout_combinado(self):
+        self.assertEqual(
+            settings.AXES_CLIENT_IP_CALLABLE,
+            "config.client_ip.get_axes_client_ip",
+        )
+        self.assertEqual(settings.AXES_LOCKOUT_PARAMETERS, [["username", "ip_address"]])
 
 
 class TenantIsolationInfrastructureTests(MultiTenantTestCase):
@@ -1161,11 +1213,12 @@ class TenantAuthSessionIsolationTests(MultiTenantTestCase):
         )
         return Client(enforce_csrf_checks=True, HTTP_HOST=domain)
 
-    def _login_json(self, client, username, password):
+    def _login_json(self, client, username, password, **extra):
         return client.post(
             "/api/auth/login/",
             data=json.dumps({"username": username, "password": password}),
             content_type="application/json",
+            **extra,
         )
 
     def _logout_json(self, client):
@@ -1414,6 +1467,87 @@ class TenantAuthSessionIsolationTests(MultiTenantTestCase):
 
         self.assertEqual(response_b.status_code, 200)
         self.assertEqual(response_b.wsgi_request.tenant.schema_name, "tenant_b")
+
+    @override_settings(AXES_TRUSTED_PROXY_REMOTE_ADDRS=["127.0.0.1"])
+    def test_axes_registra_ip_real_quando_request_vem_do_proxy_confiavel(self):
+        from axes.models import AccessAttempt
+
+        username = "usuario-axes-ip-real"
+        self.create_user("tenant_a", username, "senha-correta")
+
+        response = self._login_json(
+            self._client_for_schema("tenant_a"),
+            username,
+            "senha-incorreta",
+            REMOTE_ADDR="127.0.0.1",
+            HTTP_X_REAL_IP="203.0.113.20",
+        )
+
+        self.assertEqual(response.status_code, 401)
+        with self.in_schema("tenant_a"):
+            attempt = AccessAttempt.objects.get(username=username)
+            self.assertEqual(attempt.ip_address, "203.0.113.20")
+
+    @override_settings(AXES_TRUSTED_PROXY_REMOTE_ADDRS=["127.0.0.1"])
+    def test_axes_ignora_ip_forjado_quando_request_nao_vem_do_proxy_confiavel(self):
+        from axes.models import AccessAttempt
+
+        username = "usuario-axes-ip-forjado"
+        self.create_user("tenant_a", username, "senha-correta")
+
+        response = self._login_json(
+            self._client_for_schema("tenant_a"),
+            username,
+            "senha-incorreta",
+            REMOTE_ADDR="198.51.100.10",
+            HTTP_X_REAL_IP="203.0.113.20",
+        )
+
+        self.assertEqual(response.status_code, 401)
+        with self.in_schema("tenant_a"):
+            attempt = AccessAttempt.objects.get(username=username)
+            self.assertEqual(attempt.ip_address, "198.51.100.10")
+
+    @override_settings(
+        AXES_LOCKOUT_PARAMETERS=[["username", "ip_address"]],
+        AXES_TRUSTED_PROXY_REMOTE_ADDRS=["127.0.0.1"],
+    )
+    def test_axes_lockout_combina_usuario_e_ip_sem_bloquear_outro_usuario(self):
+        username_a = "usuario-axes-combinado-a"
+        username_b = "usuario-axes-combinado-b"
+        password = "senha-axes-combinado"
+        self.create_user("tenant_a", username_a, password)
+        self.create_user("tenant_a", username_b, password)
+        client = self._client_for_schema("tenant_a")
+        proxy_headers = {
+            "REMOTE_ADDR": "127.0.0.1",
+            "HTTP_X_REAL_IP": "203.0.113.30",
+        }
+
+        for _ in range(settings.AXES_FAILURE_LIMIT):
+            response = self._login_json(
+                client,
+                username_a,
+                "senha-incorreta",
+                **proxy_headers,
+            )
+            self.assertNotEqual(response.status_code, 200)
+
+        locked_response = self._login_json(
+            client,
+            username_a,
+            password,
+            **proxy_headers,
+        )
+        other_user_response = self._login_json(
+            client,
+            username_b,
+            password,
+            **proxy_headers,
+        )
+
+        self.assertEqual(locked_response.status_code, 429)
+        self.assertEqual(other_user_response.status_code, 200)
 
 
 class TenantPlatformRoleSeparationTests(MultiTenantTestCase):

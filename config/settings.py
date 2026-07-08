@@ -350,7 +350,12 @@ AUTHENTICATION_BACKENDS = [
 AXES_ENABLED = True
 AXES_FAILURE_LIMIT = 5
 AXES_COOLOFF_TIME = 1
-AXES_LOCKOUT_PARAMETERS = ["username", "ip_address"]
+AXES_CLIENT_IP_CALLABLE = "config.client_ip.get_axes_client_ip"
+AXES_TRUSTED_PROXY_REMOTE_ADDRS = env.list(
+    "AXES_TRUSTED_PROXY_REMOTE_ADDRS",
+    default=["127.0.0.1", "::1"],
+)
+AXES_LOCKOUT_PARAMETERS = [["username", "ip_address"]]
 AXES_RESET_ON_SUCCESS = True
 
 # Seguranca
