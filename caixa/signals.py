@@ -1,4 +1,4 @@
-from django.db import connections, transaction
+from django.db import connection, connections, transaction
 from django.db.models.signals import post_migrate, post_save, post_delete
 from django.dispatch import receiver
 from django.utils import timezone
@@ -162,6 +162,10 @@ def recalcular_evento_realizado_apos_commit(evento_id):
 
         evento.recalcular_realizado()
 
+    if connection.in_atomic_block:
+        recalcular()
+        return
+
     transaction.on_commit(recalcular)
 
 
@@ -174,6 +178,12 @@ def recalcular_evento_receita_prevista_apos_commit(evento_id):
 
         evento.recalcular_receita_prevista()
 
+    # Na aprovação do orçamento, a receita é criada dentro de uma transação
+    # abrangente. O recálculo precisa falhar dentro dela para permitir rollback.
+    if connection.in_atomic_block:
+        recalcular()
+        return
+
     transaction.on_commit(recalcular)
 
 
@@ -185,6 +195,10 @@ def recalcular_evento_custo_previsto_apos_commit(evento_id):
             return
 
         evento.recalcular_custo_previsto()
+
+    if connection.in_atomic_block:
+        recalcular()
+        return
 
     transaction.on_commit(recalcular)
 

@@ -1,6 +1,11 @@
+import logging
+
 from django.db import transaction
 
-from .permissions import is_tenant_administrator
+from .permissions import can_approve_budget, current_schema_name
+
+
+logger = logging.getLogger(__name__)
 
 
 def criar_orcamento_com_itens(form, formset, custos_extras_formset=None):
@@ -15,24 +20,28 @@ def criar_orcamento_com_itens(form, formset, custos_extras_formset=None):
     return orcamento
 
 
-def aprovar_orcamento_como_superuser(orcamento, user):
-    if not is_tenant_administrator(user):
+def aprovar_orcamento(orcamento, user):
+    if not can_approve_budget(user):
         return {
             "ok": False,
-            "mensagem": "Apenas administradores do tenant podem aprovar orçamentos por esta tela.",
+            "codigo": "permission_denied",
+            "mensagem": "Você não possui permissão para aprovar orçamentos.",
             "evento": None,
         }
 
-    return aprovar_orcamento(orcamento)
-
-
-def aprovar_orcamento(orcamento):
     try:
         evento = orcamento.aprovar_e_gerar_evento()
-    except Exception as erro:
+    except Exception:
+        logger.exception(
+            "budget_approval_failed budget_id=%s schema=%s user_id=%s stage=approval_flow",
+            orcamento.pk,
+            current_schema_name(),
+            getattr(user, "pk", None),
+        )
         return {
             "ok": False,
-            "mensagem": f"Não foi possível aprovar o contrato {orcamento.contrato}: {erro}",
+            "codigo": "approval_failed",
+            "mensagem": "Não foi possível aprovar o orçamento. Tente novamente ou contate o suporte.",
             "evento": None,
         }
 

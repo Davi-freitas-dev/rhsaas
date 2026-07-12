@@ -23,6 +23,7 @@ from .models_pagamentos import (
     PagamentoEventoCustoServico,
     PagamentoEventoCustoExtra,
 )
+from .permissions import can_approve_budget
 
 
 class BloquearInclusaoSemSaldoInlineMixin:
@@ -335,6 +336,12 @@ class OrcamentoAdmin(admin.ModelAdmin):
         "atualizado_em",
     )
 
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        if not can_approve_budget(request.user):
+            actions.pop("aprovar_orcamentos_e_gerar_eventos", None)
+        return actions
+
     @admin.display(description="Contrato", ordering="numero")
     def contrato_admin(self, obj):
         return obj.contrato
@@ -371,7 +378,7 @@ class OrcamentoAdmin(admin.ModelAdmin):
         total_erro = 0
 
         for orcamento in queryset:
-            resultado = aprovar_orcamento(orcamento)
+            resultado = aprovar_orcamento(orcamento, request.user)
             if resultado["ok"]:
                 total_sucesso += 1
             else:

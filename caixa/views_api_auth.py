@@ -62,6 +62,7 @@ from .permissions import (
     VIEW_FIXED_COST_PERMISSION,
     VIEW_REVENUE_PERMISSION,
     VIEW_SERVICE_PERMISSION,
+    can_approve_budget,
     is_platform_operator,
     is_tenant_administrator,
     current_schema_name,
@@ -143,8 +144,7 @@ def _user_payload(user):
             for permission in [ADD_BUDGET_PERMISSION, ADD_BUDGET_ITEM_PERMISSION]
         ),
         "canChangeBudget": user.has_perm(CHANGE_BUDGET_PERMISSION),
-        "canApproveBudget": is_tenant_administrator(user)
-        and user.has_perm(CHANGE_BUDGET_PERMISSION),
+        "canApproveBudget": can_approve_budget(user),
         "canViewFixedCosts": user.has_perm(VIEW_FIXED_COST_PERMISSION),
         "canAddFixedCost": user.has_perm(ADD_FIXED_COST_PERMISSION),
         "canChangeFixedCost": user.has_perm(CHANGE_FIXED_COST_PERMISSION),

@@ -46,6 +46,7 @@ VIEW_BUDGET_PERMISSION = "caixa.view_orcamento"
 ADD_BUDGET_PERMISSION = "caixa.add_orcamento"
 ADD_BUDGET_ITEM_PERMISSION = "caixa.add_orcamentoitem"
 CHANGE_BUDGET_PERMISSION = "caixa.change_orcamento"
+APPROVE_BUDGET_PERMISSION = "caixa.approve_orcamento"
 FINANCIAL_MONTH_PERMISSIONS = (
     "caixa.view_parceladivida",
     "caixa.view_receitaoperacional",
@@ -193,6 +194,16 @@ def is_public_schema():
 
 def is_tenant_schema():
     return not is_public_schema()
+
+
+def can_approve_budget(user):
+    return bool(
+        user
+        and user.is_authenticated
+        and user.is_active
+        and is_tenant_schema()
+        and user.has_perm(APPROVE_BUDGET_PERMISSION)
+    )
 
 
 def is_tenant_administrator(user):

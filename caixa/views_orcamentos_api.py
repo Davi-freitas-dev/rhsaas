@@ -30,7 +30,7 @@ from .permissions import (
     api_authentication_required_response,
     api_no_store_json_response,
     api_permission_denied_response,
-    is_tenant_administrator,
+    can_approve_budget,
     require_api_permission,
 )
 from .selectors_cadastros import (
@@ -43,7 +43,7 @@ from .services_dimensoes_operacionais import (
     relacao_carregada,
     relacoes_multiplas_carregadas,
 )
-from .services_cadastros import aprovar_orcamento_como_superuser
+from .services_cadastros import aprovar_orcamento
 from .utils_financeiros import decimal_zero
 from .views_clientes_api import JsonBodySafeSessionAuthentication
 
@@ -480,8 +480,7 @@ def _permissions_payload(user):
             for permission in [ADD_BUDGET_PERMISSION, ADD_BUDGET_ITEM_PERMISSION]
         ),
         "canUpdate": user.has_perm(CHANGE_BUDGET_PERMISSION),
-        "canApprove": is_tenant_administrator(user)
-        and user.has_perm(CHANGE_BUDGET_PERMISSION),
+        "canApprove": can_approve_budget(user),
     }
 
 
@@ -1230,7 +1229,7 @@ def api_aprovar_orcamento(request, pk):
     if not request.user.is_authenticated:
         return drf_response_from_json_response(api_authentication_required_response())
 
-    if not request.user.has_perm(CHANGE_BUDGET_PERMISSION):
+    if not can_approve_budget(request.user):
         return drf_response_from_json_response(api_permission_denied_response())
 
     try:
@@ -1238,13 +1237,14 @@ def api_aprovar_orcamento(request, pk):
     except Http404:
         return django_not_found_response()
 
-    resultado = aprovar_orcamento_como_superuser(orcamento, request.user)
+    resultado = aprovar_orcamento(orcamento, request.user)
 
     if not resultado["ok"]:
+        status = 403 if resultado.get("codigo") == "permission_denied" else 400
         return drf_response_from_json_response(
             api_no_store_json_response(
                 {"detail": resultado["mensagem"]},
-                status=400,
+                status=status,
                 json_dumps_params={"ensure_ascii": False},
             )
         )
