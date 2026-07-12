@@ -338,6 +338,8 @@ def serializar_item_orcamento(item):
         "daysCount": item.quantidade_dias,
         "peopleCount": item.quantidade_pessoas,
         "usedDailyAmount": money(item.valor_diaria_usada),
+        "usedBaseHours": item.horas_base_diaria_usada,
+        "usedOvertimePercent": money(item.percentual_hora_extra_usado),
         "usedMealAmount": money(item.valor_alimentacao_usado),
         "usedTransportAmount": money(item.valor_transporte_usado),
         "usedProfitMargin": money(item.margem_lucro_usada),

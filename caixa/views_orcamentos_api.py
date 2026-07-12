@@ -1,4 +1,5 @@
 import json
+from collections import Counter
 from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import ValidationError
@@ -49,13 +50,27 @@ from .views_clientes_api import JsonBodySafeSessionAuthentication
 
 EDITABLE_BUDGET_STATUSES = {"rascunho", "enviado"}
 ITEM_EDITABLE_VALUE_FIELDS = {
-    "unidade_cobranca_usada",
-    "valor_unitario_usado",
-    "valor_diaria_usada",
     "valor_alimentacao_usado",
     "valor_transporte_usado",
     "margem_lucro_usada",
     "aliquota_imposto_usada",
+}
+ITEM_HISTORICAL_SNAPSHOT_FIELDS = {
+    "horas_base_diaria_usada",
+    "percentual_hora_extra_usado",
+}
+ITEM_EXISTING_BACKEND_AUTHORITY_FIELDS = {
+    "unidade_cobranca_usada",
+    "valor_unitario_usado",
+    "valor_diaria_usada",
+    "usa_regra_especial",
+    *ITEM_HISTORICAL_SNAPSHOT_FIELDS,
+}
+ITEM_NEW_ITEM_OVERRIDE_FIELDS = {
+    *ITEM_EDITABLE_VALUE_FIELDS,
+    "unidade_cobranca_usada",
+    "valor_unitario_usado",
+    "valor_diaria_usada",
     "usa_regra_especial",
 }
 
@@ -186,6 +201,23 @@ def _optional_rate_decimal_payload_value(payload, field_name, *keys):
         return None
 
     return _rate_decimal_payload_value(payload, field_name, *keys, required=True)
+
+
+def _optional_positive_integer_payload_value(payload, field_name, *keys):
+    if not _payload_has_any(payload, *keys):
+        return None
+
+    value = _first_payload_value(payload, *keys, default="")
+    if str(value).strip() == "":
+        return None
+
+    return _integer_payload_value(
+        payload,
+        field_name,
+        *keys,
+        required=True,
+        positive=True,
+    )
 
 
 def _billing_unit_payload_value(payload, field_name, *keys):
@@ -329,6 +361,8 @@ def _serialize_orcamento_item(item):
         "unitRateUsed": _money(item.valor_unitario_usado),
         "billedHoursQuantity": _money(item.quantidade_horas_cobradas),
         "dailyRateUsed": _money(item.valor_diaria_usada),
+        "baseHoursUsed": item.horas_base_diaria_usada,
+        "overtimePercentUsed": _money(item.percentual_hora_extra_usado),
         "mealAmountUsed": _money(item.valor_alimentacao_usado),
         "transportAmountUsed": _money(item.valor_transporte_usado),
         "profitMarginUsed": _money(item.margem_lucro_usada),
@@ -519,6 +553,10 @@ def _blank_item_payload(item):
             "aliquota_imposto_usada",
             "usesSpecialRule",
             "usa_regra_especial",
+            "baseHoursUsed",
+            "horas_base_diaria_usada",
+            "overtimePercentUsed",
+            "percentual_hora_extra_usado",
         )
     )
 
@@ -545,6 +583,12 @@ def _itens_from_payload(payload):
             positive=True,
         )
         item_data = {
+            "_payload_index": index,
+            "_existing_item_id": _optional_positive_integer_payload_value(
+                raw_item,
+                f"items[{index}].id",
+                "id",
+            ),
             "servico_id": service_id,
             "horas_por_dia": _integer_payload_value(
                 raw_item,
@@ -650,6 +694,24 @@ def _itens_from_payload(payload):
                 "usesSpecialRule",
                 "usa_regra_especial",
             )
+
+        horas_base_diaria_usada = _optional_positive_integer_payload_value(
+            raw_item,
+            f"items[{index}].baseHoursUsed",
+            "baseHoursUsed",
+            "horas_base_diaria_usada",
+        )
+        if horas_base_diaria_usada is not None:
+            item_data["horas_base_diaria_usada"] = horas_base_diaria_usada
+
+        percentual_hora_extra_usado = _optional_rate_decimal_payload_value(
+            raw_item,
+            f"items[{index}].overtimePercentUsed",
+            "overtimePercentUsed",
+            "percentual_hora_extra_usado",
+        )
+        if percentual_hora_extra_usado is not None:
+            item_data["percentual_hora_extra_usado"] = percentual_hora_extra_usado
 
         itens.append(
             item_data
@@ -767,10 +829,162 @@ def _orcamento_data_from_payload(payload):
     }
 
 
+def _backend_authority_values_from_item(item):
+    return {
+        "unidade_cobranca_usada": item.unidade_cobranca_usada,
+        "valor_unitario_usado": item.valor_unitario_usado,
+        "valor_diaria_usada": item.valor_diaria_usada,
+        "usa_regra_especial": item.usa_regra_especial,
+        "horas_base_diaria_usada": item.horas_base_diaria_usada,
+        "percentual_hora_extra_usado": item.percentual_hora_extra_usado,
+    }
+
+
+def _existing_item_resolution_context(orcamento):
+    if orcamento is None or not orcamento.pk:
+        return {}, {}, set()
+
+    itens = list(orcamento.itens.all().order_by("id"))
+    service_counts = Counter(item.servico_id for item in itens)
+    itens_by_id = {item.id: item for item in itens}
+    itens_by_position_service = {
+        (index, item.servico_id): item
+        for index, item in enumerate(itens)
+    }
+    ambiguous_service_ids = {
+        service_id
+        for service_id, count in service_counts.items()
+        if count > 1
+    }
+    return itens_by_id, itens_by_position_service, ambiguous_service_ids
+
+
+def _resolve_existing_item_for_payload(
+    item_data,
+    itens_by_id,
+    itens_by_position_service,
+    ambiguous_service_ids,
+):
+    item_id = item_data.get("_existing_item_id")
+    payload_index = item_data.get("_payload_index")
+    service_id = item_data.get("servico_id")
+
+    if item_id:
+        existing_item = itens_by_id.get(item_id)
+        if existing_item is None:
+            raise ValidationError(
+                {
+                    f"items[{payload_index}].id": (
+                        "Item nao encontrado neste orcamento."
+                    )
+                }
+            )
+
+        if existing_item.servico_id != service_id:
+            raise ValidationError(
+                {
+                    f"items[{payload_index}].serviceId": (
+                        "Para trocar o servico de um item existente, envie "
+                        "o item como novo, sem id."
+                    )
+                }
+            )
+
+        return existing_item
+
+    if payload_index is None:
+        return None
+
+    if service_id in ambiguous_service_ids:
+        raise ValidationError(
+            {
+                f"items[{payload_index}].id": (
+                    "Informe o id do item para atualizar orcamentos com "
+                    "itens duplicados do mesmo servico."
+                )
+            }
+        )
+
+    return itens_by_position_service.get((payload_index, service_id))
+
+
+def _prepare_items_for_recreation(orcamento, itens_data):
+    itens_by_id, itens_by_position_service, ambiguous_service_ids = (
+        _existing_item_resolution_context(orcamento)
+    )
+    seen_item_ids = set()
+    prepared_items = []
+
+    for item_data in itens_data:
+        item_data = item_data.copy()
+        item_id = item_data.get("_existing_item_id")
+        payload_index = item_data.get("_payload_index")
+
+        if item_id:
+            if item_id in seen_item_ids:
+                raise ValidationError(
+                    {f"items[{payload_index}].id": "Item duplicado no payload."}
+                )
+            seen_item_ids.add(item_id)
+
+        existing_item = _resolve_existing_item_for_payload(
+            item_data,
+            itens_by_id,
+            itens_by_position_service,
+            ambiguous_service_ids,
+        )
+        item_data.pop("_existing_item_id", None)
+        item_data.pop("_payload_index", None)
+
+        if existing_item is not None:
+            backend_values = _backend_authority_values_from_item(existing_item)
+            for field in ITEM_EXISTING_BACKEND_AUTHORITY_FIELDS:
+                item_data.pop(field, None)
+            post_save_values = {
+                field: item_data.pop(field)
+                for field in ITEM_EDITABLE_VALUE_FIELDS
+                if field in item_data
+            }
+            post_save_values.update(backend_values)
+        else:
+            for field in ITEM_HISTORICAL_SNAPSHOT_FIELDS:
+                item_data.pop(field, None)
+            post_save_values = {
+                field: item_data.pop(field)
+                for field in ITEM_NEW_ITEM_OVERRIDE_FIELDS
+                if field in item_data
+            }
+
+        prepared_items.append(
+            {
+                "item_data": item_data,
+                "post_save_values": post_save_values,
+            }
+        )
+
+    return prepared_items
+
+
+def _save_prepared_budget_item(orcamento, prepared_item):
+    item = OrcamentoItem.objects.create(
+        orcamento=orcamento,
+        **prepared_item["item_data"],
+    )
+
+    post_save_values = prepared_item["post_save_values"]
+    if post_save_values:
+        for field, value in post_save_values.items():
+            setattr(item, field, value)
+        item.save()
+
+    return item
+
+
 def _salvar_orcamento_from_payload(payload, *, orcamento=None):
     orcamento_data = _orcamento_data_from_payload(payload)
     itens_data = _itens_from_payload(payload)
     custos_extras_data = _custos_extras_from_payload(payload)
+    prepared_items = _prepare_items_for_recreation(orcamento, itens_data)
 
     if orcamento is not None and orcamento.status not in EDITABLE_BUDGET_STATUSES:
         raise ValidationError(
@@ -794,19 +1008,8 @@ def _salvar_orcamento_from_payload(payload, *, orcamento=None):
         orcamento.itens.all().delete()
         orcamento.custos_extras.all().delete()
 
-        for item_data in itens_data:
-            item_data = item_data.copy()
-            valores_editaveis = {
-                field: item_data.pop(field)
-                for field in ITEM_EDITABLE_VALUE_FIELDS
-                if field in item_data
-            }
-            item = OrcamentoItem.objects.create(orcamento=orcamento, **item_data)
-
-            if valores_editaveis:
-                for field, value in valores_editaveis.items():
-                    setattr(item, field, value)
-                item.save()
+        for prepared_item in prepared_items:
+            _save_prepared_budget_item(orcamento, prepared_item)
 
         for custo_extra_data in custos_extras_data:
             OrcamentoCustoExtra.objects.create(orcamento=orcamento, **custo_extra_data)

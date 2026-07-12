@@ -448,6 +448,12 @@ class OrcamentoItem(models.Model):
         decimal_places=2,
         default=Decimal("0.00")
     )
+    horas_base_diaria_usada = models.PositiveIntegerField(default=8)
+    percentual_hora_extra_usado = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal("1.50")
+    )
     valor_alimentacao_usado = models.DecimalField(
         max_digits=10,
         decimal_places=2,
@@ -537,6 +543,14 @@ class OrcamentoItem(models.Model):
                 ),
                 name="ck_orc_item_hora_qtd_pos",
             ),
+            models.CheckConstraint(
+                condition=models.Q(horas_base_diaria_usada__gt=0),
+                name="ck_orc_item_horas_base_usada_pos",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(percentual_hora_extra_usado__gte=0),
+                name="ck_orc_item_extra_usado_nn",
+            ),
         ]
 
     def __str__(self):
@@ -560,6 +574,16 @@ class OrcamentoItem(models.Model):
                     "Quantidade de horas cobradas deve ser maior que zero."
                 )
 
+        if self.horas_base_diaria_usada <= 0:
+            erros["horas_base_diaria_usada"] = (
+                "Horas base usadas deve ser maior que zero."
+            )
+
+        if self.percentual_hora_extra_usado < 0:
+            erros["percentual_hora_extra_usado"] = (
+                "Percentual de hora extra usado deve ser maior ou igual a zero."
+            )
+
         if erros:
             raise ValidationError(erros)
 
@@ -570,12 +594,12 @@ class OrcamentoItem(models.Model):
         return self.arredondar2(self.valor_diaria_usada / Decimal("2"))
 
     def calcular_hora_normal(self):
-        horas_base = self.servico.horas_base_diaria or 8
+        horas_base = self.horas_base_diaria_usada or 8
         return self.arredondar2(self.valor_diaria_usada / Decimal(horas_base))
 
     def calcular_hora_extra(self):
         hora_normal = self.calcular_hora_normal()
-        percentual = self.servico.percentual_hora_extra or Decimal("1.50")
+        percentual = self.percentual_hora_extra_usado or Decimal("1.50")
         return self.arredondar2(hora_normal * percentual)
 
     def calcular_valor_turno_regra_especial(self, horas):
@@ -783,6 +807,8 @@ class OrcamentoItem(models.Model):
             self.unidade_cobranca_usada = self.servico.unidade_cobranca
             self.valor_unitario_usado = self.servico.valor_unitario
             self.valor_diaria_usada = self.servico.diaria_padrao
+            self.horas_base_diaria_usada = self.servico.horas_base_diaria
+            self.percentual_hora_extra_usado = self.servico.percentual_hora_extra
             self.usa_regra_especial = self.servico.usa_regra_especial
 
             config = self.orcamento.configuracao_financeira

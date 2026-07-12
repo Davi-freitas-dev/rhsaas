@@ -3899,6 +3899,120 @@ class OrcamentoItemTests(TenantScopedTestCase):
         self.assertEqual(item.custo_servico_total, Decimal("137.50"))
         self.assertEqual(item.valor_horas_extras_total, Decimal("37.50"))
 
+    def test_item_diario_copia_snapshots_do_servico(self):
+        item = OrcamentoItem.objects.create(
+            orcamento=self.orcamento,
+            servico=self.servico,
+            horas_por_dia=8,
+            quantidade_dias=1,
+            quantidade_pessoas=1,
+        )
+
+        self.assertEqual(item.horas_base_diaria_usada, 8)
+        self.assertEqual(item.percentual_hora_extra_usado, Decimal("1.50"))
+
+    def test_item_diario_mantem_custo_apos_alterar_horas_base_do_servico(self):
+        item = OrcamentoItem.objects.create(
+            orcamento=self.orcamento,
+            servico=self.servico,
+            horas_por_dia=8,
+            quantidade_dias=1,
+            quantidade_pessoas=1,
+        )
+        custo_original = item.custo_servico_total
+
+        self.servico.horas_base_diaria = 10
+        self.servico.save()
+        item.save()
+        item.refresh_from_db()
+
+        self.assertEqual(item.horas_base_diaria_usada, 8)
+        self.assertEqual(item.custo_servico_total, custo_original)
+        self.assertEqual(item.custo_servico_total, Decimal("100.00"))
+
+    def test_item_diario_mantem_extra_apos_alterar_percentual_do_servico(self):
+        item = OrcamentoItem.objects.create(
+            orcamento=self.orcamento,
+            servico=self.servico,
+            horas_por_dia=10,
+            quantidade_dias=1,
+            quantidade_pessoas=1,
+        )
+        custo_original = item.custo_servico_total
+        extra_original = item.valor_horas_extras_total
+
+        self.servico.percentual_hora_extra = Decimal("3.00")
+        self.servico.save()
+        item.save()
+        item.refresh_from_db()
+
+        self.assertEqual(item.percentual_hora_extra_usado, Decimal("1.50"))
+        self.assertEqual(item.custo_servico_total, custo_original)
+        self.assertEqual(item.valor_horas_extras_total, extra_original)
+        self.assertEqual(item.custo_servico_total, Decimal("137.50"))
+
+    def test_item_existente_nao_atualiza_snapshots_automaticamente(self):
+        item = OrcamentoItem.objects.create(
+            orcamento=self.orcamento,
+            servico=self.servico,
+            horas_por_dia=10,
+            quantidade_dias=1,
+            quantidade_pessoas=1,
+        )
+
+        self.servico.horas_base_diaria = 10
+        self.servico.percentual_hora_extra = Decimal("3.00")
+        self.servico.save()
+        item.quantidade_pessoas = 2
+        item.save()
+        item.refresh_from_db()
+
+        self.assertEqual(item.horas_base_diaria_usada, 8)
+        self.assertEqual(item.percentual_hora_extra_usado, Decimal("1.50"))
+        self.assertEqual(item.custo_servico_total, Decimal("275.00"))
+
+    def test_item_meia_diaria_preserva_snapshots_historicos(self):
+        item = OrcamentoItem.objects.create(
+            orcamento=self.orcamento,
+            servico=self.servico,
+            horas_por_dia=4,
+            quantidade_dias=1,
+            quantidade_pessoas=1,
+        )
+
+        self.servico.horas_base_diaria = 12
+        self.servico.percentual_hora_extra = Decimal("2.50")
+        self.servico.save()
+        item.save()
+        item.refresh_from_db()
+
+        self.assertEqual(item.horas_base_diaria_usada, 8)
+        self.assertEqual(item.percentual_hora_extra_usado, Decimal("1.50"))
+        self.assertEqual(item.custo_servico_total, Decimal("50.00"))
+
+    def test_edicao_item_aprovado_sincroniza_evento_com_snapshots_historicos(self):
+        item = OrcamentoItem.objects.create(
+            orcamento=self.orcamento,
+            servico=self.servico,
+            horas_por_dia=10,
+            quantidade_dias=1,
+            quantidade_pessoas=1,
+        )
+        evento = self.orcamento.aprovar_e_gerar_evento()
+
+        self.servico.horas_base_diaria = 10
+        self.servico.percentual_hora_extra = Decimal("3.00")
+        self.servico.save()
+        item.quantidade_dias = 2
+        item.save()
+        item.refresh_from_db()
+
+        custo_evento = EventoCustoServico.objects.get(evento=evento, servico=self.servico)
+        self.assertEqual(item.horas_base_diaria_usada, 8)
+        self.assertEqual(item.percentual_hora_extra_usado, Decimal("1.50"))
+        self.assertEqual(item.custo_servico_total, Decimal("275.00"))
+        self.assertEqual(custo_evento.valor_diarias, Decimal("275.00"))
+
     def _servico_por_hora(self, valor_unitario=Decimal("116.00")):
         return Servico.objects.create(
             nome=f"Consultoria Hora {valor_unitario}",
@@ -4032,6 +4146,8 @@ class OrcamentoItemTests(TenantScopedTestCase):
 
         servico.valor_unitario = Decimal("200.00")
         servico.diaria_padrao = Decimal("200.00")
+        servico.horas_base_diaria = 4
+        servico.percentual_hora_extra = Decimal("4.00")
         servico.save()
         item.horas_por_dia = 6
         item.save()
@@ -4039,6 +4155,7 @@ class OrcamentoItemTests(TenantScopedTestCase):
         item.refresh_from_db()
         self.assertEqual(item.valor_unitario_usado, Decimal("116.00"))
         self.assertEqual(item.custo_servico_total, Decimal("1740.00"))
+        self.assertEqual(item.valor_horas_extras_total, Decimal("0.00"))
 
     def test_aprovar_orcamento_com_item_por_hora_sincroniza_custo_evento(self):
         servico = self._servico_por_hora()
@@ -4060,7 +4177,7 @@ class OrcamentoItemTests(TenantScopedTestCase):
         self.assertEqual(custo_evento.valor_diarias, Decimal("1740.00"))
         self.assertEqual(evento.valor_total_previsto, self.orcamento.total_venda)
 
-    def test_migration_de_backfill_nao_recalcula_orcamentos_ou_eventos(self):
+    def test_migration_0037_de_backfill_nao_recalcula_orcamentos_ou_eventos(self):
         migration_path = (
             Path(__file__).resolve().parent
             / "migrations"
@@ -4073,6 +4190,44 @@ class OrcamentoItemTests(TenantScopedTestCase):
         self.assertNotIn(".save(", conteudo)
         self.assertNotIn("recalcular_totais", conteudo)
         self.assertNotIn("sincronizar", conteudo)
+
+    def test_migration_0038_de_backfill_nao_recalcula_orcamentos_ou_eventos(self):
+        migration_path = (
+            Path(__file__).resolve().parent
+            / "migrations"
+            / "0038_orcamentoitem_snapshots_diaria.py"
+        )
+
+        conteudo = migration_path.read_text(encoding="utf-8")
+
+        self.assertIn("apps.get_model", conteudo)
+        self.assertIn(".objects.update(", conteudo)
+        self.assertIn("Subquery", conteudo)
+        self.assertNotIn(".save(", conteudo)
+        self.assertNotIn("full_clean", conteudo)
+        self.assertNotIn("recalcular_totais", conteudo)
+        self.assertNotIn("sincronizar", conteudo)
+
+    def test_auditoria_snapshots_diaria_apenas_informa_divergencias(self):
+        item = OrcamentoItem.objects.create(
+            orcamento=self.orcamento,
+            servico=self.servico,
+            horas_por_dia=8,
+            quantidade_dias=1,
+            quantidade_pessoas=1,
+        )
+        custo_original = item.custo_servico_total
+        self.servico.horas_base_diaria = 10
+        self.servico.save()
+
+        saida = StringIO()
+        call_command("auditar_snapshots_diaria_orcamentos", "--json", stdout=saida)
+        payload = json.loads(saida.getvalue())
+        item.refresh_from_db()
+
+        self.assertEqual(payload["totalPotentialDivergences"], 1)
+        self.assertEqual(payload["items"][0]["itemId"], item.id)
+        self.assertEqual(item.custo_servico_total, custo_original)
 
     def test_recalcular_totais_ignora_cache_prefetchado_de_itens(self):
         OrcamentoItem.objects.create(
@@ -4325,12 +4480,16 @@ class OrcamentoItemTests(TenantScopedTestCase):
         self.assertIn("valor_unitario_usado", OrcamentoItemInline.fields)
         self.assertIn("quantidade_horas_cobradas", OrcamentoItemInline.fields)
         self.assertIn("valor_diaria_usada", OrcamentoItemInline.fields)
+        self.assertIn("horas_base_diaria_usada", OrcamentoItemInline.fields)
+        self.assertIn("percentual_hora_extra_usado", OrcamentoItemInline.fields)
         self.assertIn("valor_alimentacao_usado", OrcamentoItemInline.fields)
         self.assertIn("valor_transporte_usado", OrcamentoItemInline.fields)
         self.assertNotIn("unidade_cobranca_usada", OrcamentoItemInline.readonly_fields)
         self.assertNotIn("valor_unitario_usado", OrcamentoItemInline.readonly_fields)
         self.assertNotIn("quantidade_horas_cobradas", OrcamentoItemInline.readonly_fields)
         self.assertNotIn("valor_diaria_usada", OrcamentoItemInline.readonly_fields)
+        self.assertIn("horas_base_diaria_usada", OrcamentoItemInline.readonly_fields)
+        self.assertIn("percentual_hora_extra_usado", OrcamentoItemInline.readonly_fields)
 
     def test_editar_valor_diaria_do_item_aprovado_substitui_derivados(self):
         item = OrcamentoItem.objects.create(
@@ -5078,6 +5237,11 @@ class RecadastroManualPm06Tests(TestCase):
         self.assertEqual(
             payload["budgets"][0]["items"][0]["serviceName"],
             servico.nome,
+        )
+        self.assertEqual(payload["budgets"][0]["items"][0]["usedBaseHours"], 8)
+        self.assertEqual(
+            payload["budgets"][0]["items"][0]["usedOvertimePercent"],
+            "1.50",
         )
         self.assertEqual(
             payload["budgets"][0]["extraCosts"][0]["description"],
@@ -47499,6 +47663,15 @@ class OrcamentosHoraTenantTests(TenantScopedTestCase):
             secure=True,
         )
 
+    def _put_json(self, orcamento, payload):
+        self.client.force_login(self.usuario)
+        return self.client.put(
+            reverse("caixa:api_orcamento_detalhe", args=[orcamento.id]),
+            data=json.dumps(payload),
+            content_type="application/json",
+            secure=True,
+        )
+
     def _servico_hora(self, codigo="consultoria-hora-api-orcamento-tenant"):
         return Servico.objects.create(
             nome=f"Consultoria Hora {codigo}",
@@ -47509,6 +47682,56 @@ class OrcamentosHoraTenantTests(TenantScopedTestCase):
             horas_base_diaria=8,
             percentual_hora_extra=Decimal("2.00"),
         )
+
+    def _servico_diaria_extra(self, codigo, *, diaria="180.00", base=6, extra="2.00"):
+        return Servico.objects.create(
+            nome=f"Servico Diaria {codigo}",
+            codigo=codigo,
+            diaria_padrao=Decimal(diaria),
+            valor_unitario=Decimal(diaria),
+            horas_base_diaria=base,
+            percentual_hora_extra=Decimal(extra),
+        )
+
+    def _orcamento_com_item(
+        self,
+        numero,
+        *,
+        servico=None,
+        horas_por_dia=8,
+        quantidade_dias=1,
+        quantidade_pessoas=1,
+        **item_kwargs,
+    ):
+        orcamento = Orcamento.objects.create(
+            cliente=self.cliente,
+            configuracao_financeira=self.configuracao,
+            numero=numero,
+            nome_evento=f"Evento {numero}",
+            data_evento=date(2026, 5, 20),
+            status="rascunho",
+        )
+        item = OrcamentoItem.objects.create(
+            orcamento=orcamento,
+            servico=servico or self.servico_diaria,
+            horas_por_dia=horas_por_dia,
+            quantidade_dias=quantidade_dias,
+            quantidade_pessoas=quantidade_pessoas,
+            **item_kwargs,
+        )
+        return orcamento, item
+
+    def _item_payload(self, item, *, include_id=True, **overrides):
+        payload = {
+            "serviceId": item.servico_id,
+            "hoursPerDay": item.horas_por_dia,
+            "daysCount": item.quantidade_dias,
+            "peopleCount": item.quantidade_pessoas,
+        }
+        if include_id:
+            payload["id"] = item.id
+        payload.update(overrides)
+        return payload
 
     def test_api_orcamentos_cria_item_por_hora(self):
         servico_hora = self._servico_hora()
@@ -47539,6 +47762,8 @@ class OrcamentosHoraTenantTests(TenantScopedTestCase):
         self.assertEqual(item_payload["billingUnitUsed"], "hora")
         self.assertEqual(item_payload["unitRateUsed"], "116.00")
         self.assertEqual(item_payload["billedHoursQuantity"], "15.00")
+        self.assertEqual(item_payload["baseHoursUsed"], 8)
+        self.assertEqual(item_payload["overtimePercentUsed"], "2.00")
         self.assertEqual(item_payload["serviceCostAmount"], "1740.00")
 
     def test_api_orcamentos_bloqueia_item_por_hora_sem_horas_cobradas(self):
@@ -47583,8 +47808,422 @@ class OrcamentosHoraTenantTests(TenantScopedTestCase):
         self.assertEqual(item.unidade_cobranca_usada, Servico.UNIDADE_COBRANCA_DIARIA)
         self.assertEqual(item.valor_diaria_usada, Decimal("180.00"))
         self.assertEqual(item.valor_unitario_usado, Decimal("180.00"))
+        self.assertEqual(item.horas_base_diaria_usada, 8)
+        self.assertEqual(item.percentual_hora_extra_usado, Decimal("1.50"))
         self.assertEqual(item_payload["dailyRateUsed"], "180.00")
         self.assertEqual(item_payload["unitRateUsed"], "180.00")
+        self.assertEqual(item_payload["baseHoursUsed"], 8)
+        self.assertEqual(item_payload["overtimePercentUsed"], "1.50")
+
+    def test_put_orcamento_legado_preserva_snapshots_de_item_diario(self):
+        orcamento = Orcamento.objects.create(
+            cliente=self.cliente,
+            configuracao_financeira=self.configuracao,
+            numero="ORC-API-SNAPSHOT-DIARIA",
+            nome_evento="Evento API Snapshot Diaria",
+            data_evento=date(2026, 5, 20),
+            status="rascunho",
+        )
+        item_original = OrcamentoItem.objects.create(
+            orcamento=orcamento,
+            servico=self.servico_diaria,
+            horas_por_dia=8,
+            quantidade_dias=1,
+            quantidade_pessoas=1,
+        )
+        custo_original = item_original.custo_servico_total
+
+        self.servico_diaria.horas_base_diaria = 10
+        self.servico_diaria.percentual_hora_extra = Decimal("3.00")
+        self.servico_diaria.save()
+
+        response = self._put_json(
+            orcamento,
+            self._payload(
+                number="ORC-API-SNAPSHOT-DIARIA",
+                eventName="Evento API Snapshot Diaria Editado",
+                status="rascunho",
+                items=[
+                    {
+                        "serviceId": self.servico_diaria.id,
+                        "hoursPerDay": 8,
+                        "daysCount": 1,
+                        "peopleCount": 1,
+                        "dailyRateUsed": "100.00",
+                    }
+                ],
+                extraCosts=[],
+            ),
+        )
+        item = Orcamento.objects.get(pk=orcamento.pk).itens.get()
+        item_payload = response.json()["data"]["budget"]["items"][0]
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(item.horas_base_diaria_usada, 8)
+        self.assertEqual(item.percentual_hora_extra_usado, Decimal("1.50"))
+        self.assertEqual(item.custo_servico_total, custo_original)
+        self.assertEqual(item.custo_servico_total, Decimal("100.00"))
+        self.assertEqual(item_payload["baseHoursUsed"], 8)
+        self.assertEqual(item_payload["overtimePercentUsed"], "1.50")
+        self.assertEqual(item_payload["serviceCostAmount"], "100.00")
+
+    def test_put_item_existente_com_id_preserva_snapshots_do_banco(self):
+        orcamento, item_original = self._orcamento_com_item(
+            "ORC-API-ID-SNAPSHOT-BANCO",
+            horas_por_dia=10,
+        )
+        self.servico_diaria.horas_base_diaria = 12
+        self.servico_diaria.percentual_hora_extra = Decimal("4.00")
+        self.servico_diaria.diaria_padrao = Decimal("250.00")
+        self.servico_diaria.valor_unitario = Decimal("250.00")
+        self.servico_diaria.usa_regra_especial = True
+        self.servico_diaria.save()
+
+        response = self._put_json(
+            orcamento,
+            self._payload(
+                number="ORC-API-ID-SNAPSHOT-BANCO",
+                items=[
+                    self._item_payload(
+                        item_original,
+                        peopleCount=2,
+                        billingUnitUsed=Servico.UNIDADE_COBRANCA_HORA,
+                        unitRateUsed="999.00",
+                        dailyRateUsed="999.00",
+                        baseHoursUsed=12,
+                        overtimePercentUsed="4.00",
+                        usesSpecialRule=True,
+                    )
+                ],
+            ),
+        )
+        item = Orcamento.objects.get(pk=orcamento.pk).itens.get()
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(item.quantidade_pessoas, 2)
+        self.assertEqual(item.unidade_cobranca_usada, Servico.UNIDADE_COBRANCA_DIARIA)
+        self.assertEqual(item.valor_unitario_usado, Decimal("100.00"))
+        self.assertEqual(item.valor_diaria_usada, Decimal("100.00"))
+        self.assertEqual(item.horas_base_diaria_usada, 8)
+        self.assertEqual(item.percentual_hora_extra_usado, Decimal("1.50"))
+        self.assertFalse(item.usa_regra_especial)
+
+    def test_put_item_existente_ignora_base_hours_used_do_payload(self):
+        orcamento, item_original = self._orcamento_com_item(
+            "ORC-API-ID-BASE-PAYLOAD",
+            horas_por_dia=10,
+        )
+
+        response = self._put_json(
+            orcamento,
+            self._payload(
+                number="ORC-API-ID-BASE-PAYLOAD",
+                items=[
+                    self._item_payload(item_original, baseHoursUsed=4)
+                ],
+            ),
+        )
+        item = Orcamento.objects.get(pk=orcamento.pk).itens.get()
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(item.horas_base_diaria_usada, 8)
+
+    def test_put_item_existente_ignora_overtime_percent_used_do_payload(self):
+        orcamento, item_original = self._orcamento_com_item(
+            "ORC-API-ID-EXTRA-PAYLOAD",
+            horas_por_dia=10,
+        )
+
+        response = self._put_json(
+            orcamento,
+            self._payload(
+                number="ORC-API-ID-EXTRA-PAYLOAD",
+                items=[
+                    self._item_payload(item_original, overtimePercentUsed="9.00")
+                ],
+            ),
+        )
+        item = Orcamento.objects.get(pk=orcamento.pk).itens.get()
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(item.percentual_hora_extra_usado, Decimal("1.50"))
+
+    def test_put_item_existente_rejeita_id_inexistente_sem_apagar_itens(self):
+        orcamento, item_original = self._orcamento_com_item("ORC-API-ID-INEXISTENTE")
+
+        response = self._put_json(
+            orcamento,
+            self._payload(
+                number="ORC-API-ID-INEXISTENTE",
+                items=[
+                    self._item_payload(item_original, id=item_original.id + 9999)
+                ],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("items[0].id", response.json()["errors"])
+        self.assertTrue(OrcamentoItem.objects.filter(pk=item_original.pk).exists())
+        self.assertEqual(orcamento.itens.count(), 1)
+
+    def test_put_item_existente_rejeita_id_de_outro_orcamento(self):
+        orcamento, item_original = self._orcamento_com_item("ORC-API-ID-ORCAMENTO-A")
+        outro_orcamento, outro_item = self._orcamento_com_item("ORC-API-ID-ORCAMENTO-B")
+
+        response = self._put_json(
+            orcamento,
+            self._payload(
+                number="ORC-API-ID-ORCAMENTO-A",
+                items=[
+                    self._item_payload(item_original, id=outro_item.id)
+                ],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("items[0].id", response.json()["errors"])
+        self.assertTrue(OrcamentoItem.objects.filter(pk=item_original.pk).exists())
+        self.assertTrue(OrcamentoItem.objects.filter(pk=outro_item.pk).exists())
+        self.assertEqual(outro_orcamento.itens.count(), 1)
+
+    def test_put_item_existente_rejeita_id_duplicado_no_payload(self):
+        orcamento, item_original = self._orcamento_com_item("ORC-API-ID-DUPLICADO")
+
+        response = self._put_json(
+            orcamento,
+            self._payload(
+                number="ORC-API-ID-DUPLICADO",
+                items=[
+                    self._item_payload(item_original),
+                    self._item_payload(item_original, peopleCount=2),
+                ],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("items[1].id", response.json()["errors"])
+        self.assertTrue(OrcamentoItem.objects.filter(pk=item_original.pk).exists())
+
+    def test_put_item_existente_rejeita_troca_de_servico_com_mesmo_id(self):
+        orcamento, item_original = self._orcamento_com_item("ORC-API-ID-TROCA-SERVICO")
+        outro_servico = self._servico_diaria_extra("troca-servico-com-id")
+
+        response = self._put_json(
+            orcamento,
+            self._payload(
+                number="ORC-API-ID-TROCA-SERVICO",
+                items=[
+                    self._item_payload(item_original, serviceId=outro_servico.id)
+                ],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("items[0].serviceId", response.json()["errors"])
+        self.assertIn(
+            "sem id",
+            response.json()["errors"]["items[0].serviceId"][0],
+        )
+        self.assertTrue(OrcamentoItem.objects.filter(pk=item_original.pk).exists())
+
+    def test_put_troca_de_servico_sem_id_cria_nova_composicao(self):
+        orcamento, item_original = self._orcamento_com_item("ORC-API-TROCA-SEM-ID")
+        novo_servico = self._servico_diaria_extra(
+            "troca-servico-sem-id",
+            diaria="180.00",
+            base=6,
+            extra="2.00",
+        )
+
+        response = self._put_json(
+            orcamento,
+            self._payload(
+                number="ORC-API-TROCA-SEM-ID",
+                items=[
+                    {
+                        "serviceId": novo_servico.id,
+                        "hoursPerDay": 8,
+                        "daysCount": 1,
+                        "peopleCount": 1,
+                    }
+                ],
+            ),
+        )
+        item = Orcamento.objects.get(pk=orcamento.pk).itens.get()
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertFalse(OrcamentoItem.objects.filter(pk=item_original.pk).exists())
+        self.assertEqual(item.servico_id, novo_servico.id)
+        self.assertEqual(item.valor_diaria_usada, Decimal("180.00"))
+        self.assertEqual(item.horas_base_diaria_usada, 6)
+        self.assertEqual(item.percentual_hora_extra_usado, Decimal("2.00"))
+
+    def test_put_reordenacao_preserva_snapshots_por_id(self):
+        orcamento, item_antigo = self._orcamento_com_item(
+            "ORC-API-REORDENA-ID",
+            horas_por_dia=10,
+            quantidade_pessoas=1,
+        )
+        self.servico_diaria.horas_base_diaria = 6
+        self.servico_diaria.percentual_hora_extra = Decimal("2.00")
+        self.servico_diaria.save()
+        item_novo = OrcamentoItem.objects.create(
+            orcamento=orcamento,
+            servico=self.servico_diaria,
+            horas_por_dia=10,
+            quantidade_dias=1,
+            quantidade_pessoas=2,
+        )
+
+        response = self._put_json(
+            orcamento,
+            self._payload(
+                number="ORC-API-REORDENA-ID",
+                items=[
+                    self._item_payload(item_novo, peopleCount=4),
+                    self._item_payload(item_antigo, peopleCount=3),
+                ],
+            ),
+        )
+        itens = {
+            item.quantidade_pessoas: item
+            for item in Orcamento.objects.get(pk=orcamento.pk).itens.all()
+        }
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(itens[3].horas_base_diaria_usada, 8)
+        self.assertEqual(itens[3].percentual_hora_extra_usado, Decimal("1.50"))
+        self.assertEqual(itens[4].horas_base_diaria_usada, 6)
+        self.assertEqual(itens[4].percentual_hora_extra_usado, Decimal("2.00"))
+
+    def test_put_dois_itens_mesmo_servico_mantem_snapshots_distintos(self):
+        orcamento, item_base_8 = self._orcamento_com_item(
+            "ORC-API-DUPLICADO-SNAPSHOT",
+            horas_por_dia=10,
+            quantidade_pessoas=1,
+        )
+        self.servico_diaria.horas_base_diaria = 5
+        self.servico_diaria.percentual_hora_extra = Decimal("2.50")
+        self.servico_diaria.save()
+        item_base_5 = OrcamentoItem.objects.create(
+            orcamento=orcamento,
+            servico=self.servico_diaria,
+            horas_por_dia=10,
+            quantidade_dias=1,
+            quantidade_pessoas=2,
+        )
+
+        response = self._put_json(
+            orcamento,
+            self._payload(
+                number="ORC-API-DUPLICADO-SNAPSHOT",
+                items=[
+                    self._item_payload(item_base_8, peopleCount=1),
+                    self._item_payload(item_base_5, peopleCount=2),
+                ],
+            ),
+        )
+        itens = {
+            item.quantidade_pessoas: item
+            for item in Orcamento.objects.get(pk=orcamento.pk).itens.all()
+        }
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(itens[1].horas_base_diaria_usada, 8)
+        self.assertEqual(itens[1].percentual_hora_extra_usado, Decimal("1.50"))
+        self.assertEqual(itens[2].horas_base_diaria_usada, 5)
+        self.assertEqual(itens[2].percentual_hora_extra_usado, Decimal("2.50"))
+
+    def test_put_cliente_legado_sem_id_continua_funcionando_sem_ambiguidade(self):
+        orcamento, item_original = self._orcamento_com_item(
+            "ORC-API-LEGADO-SEM-ID",
+            horas_por_dia=10,
+        )
+        self.servico_diaria.horas_base_diaria = 12
+        self.servico_diaria.percentual_hora_extra = Decimal("3.00")
+        self.servico_diaria.save()
+
+        response = self._put_json(
+            orcamento,
+            self._payload(
+                number="ORC-API-LEGADO-SEM-ID",
+                items=[
+                    self._item_payload(
+                        item_original,
+                        include_id=False,
+                        peopleCount=2,
+                    )
+                ],
+            ),
+        )
+        item = Orcamento.objects.get(pk=orcamento.pk).itens.get()
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(item.quantidade_pessoas, 2)
+        self.assertEqual(item.horas_base_diaria_usada, 8)
+        self.assertEqual(item.percentual_hora_extra_usado, Decimal("1.50"))
+
+    def test_put_cliente_legado_ambiguo_com_itens_duplicados_retorna_erro(self):
+        orcamento, item_a = self._orcamento_com_item(
+            "ORC-API-LEGADO-AMBIGUO",
+            quantidade_pessoas=1,
+        )
+        item_b = OrcamentoItem.objects.create(
+            orcamento=orcamento,
+            servico=self.servico_diaria,
+            horas_por_dia=8,
+            quantidade_dias=1,
+            quantidade_pessoas=2,
+        )
+
+        response = self._put_json(
+            orcamento,
+            self._payload(
+                number="ORC-API-LEGADO-AMBIGUO",
+                items=[
+                    self._item_payload(item_a, include_id=False),
+                    self._item_payload(item_b, include_id=False),
+                ],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("items[0].id", response.json()["errors"])
+        self.assertTrue(OrcamentoItem.objects.filter(pk=item_a.pk).exists())
+        self.assertTrue(OrcamentoItem.objects.filter(pk=item_b.pk).exists())
+
+    def test_put_mass_assignment_nao_altera_snapshots_historicos(self):
+        orcamento, item_original = self._orcamento_com_item(
+            "ORC-API-MASS-ASSIGNMENT",
+            horas_por_dia=10,
+        )
+
+        response = self._put_json(
+            orcamento,
+            self._payload(
+                number="ORC-API-MASS-ASSIGNMENT",
+                items=[
+                    self._item_payload(
+                        item_original,
+                        billingUnitUsed=Servico.UNIDADE_COBRANCA_HORA,
+                        unitRateUsed="999.99",
+                        dailyRateUsed="888.88",
+                        baseHoursUsed=3,
+                        overtimePercentUsed="9.99",
+                        usesSpecialRule=True,
+                    )
+                ],
+            ),
+        )
+        item = Orcamento.objects.get(pk=orcamento.pk).itens.get()
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(item.unidade_cobranca_usada, Servico.UNIDADE_COBRANCA_DIARIA)
+        self.assertEqual(item.valor_unitario_usado, Decimal("100.00"))
+        self.assertEqual(item.valor_diaria_usada, Decimal("100.00"))
+        self.assertEqual(item.horas_base_diaria_usada, 8)
+        self.assertEqual(item.percentual_hora_extra_usado, Decimal("1.50"))
+        self.assertFalse(item.usa_regra_especial)
 
 
 class OrcamentosApiTests(TestCase):
