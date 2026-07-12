@@ -19,8 +19,25 @@ from .utils_financeiros import decimal_zero, quantizar_moeda
 
 
 class Servico(models.Model):
+    UNIDADE_COBRANCA_DIARIA = "diaria"
+    UNIDADE_COBRANCA_HORA = "hora"
+    UNIDADE_COBRANCA_CHOICES = [
+        (UNIDADE_COBRANCA_DIARIA, "Diaria"),
+        (UNIDADE_COBRANCA_HORA, "Hora"),
+    ]
+
     nome = models.CharField(max_length=100, unique=True)
     codigo = models.SlugField(max_length=50, unique=True)
+    unidade_cobranca = models.CharField(
+        max_length=10,
+        choices=UNIDADE_COBRANCA_CHOICES,
+        default=UNIDADE_COBRANCA_DIARIA,
+    )
+    valor_unitario = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
     diaria_padrao = models.DecimalField(max_digits=10, decimal_places=2)
     horas_base_diaria = models.PositiveIntegerField(default=8)
     percentual_hora_extra = models.DecimalField(
@@ -41,6 +58,14 @@ class Servico(models.Model):
             models.Index(fields=["ativo", "nome"]),
         ]
         constraints = [
+            models.CheckConstraint(
+                condition=models.Q(unidade_cobranca__in=["diaria", "hora"]),
+                name="ck_servico_unidade_cobranca",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(valor_unitario__gte=0),
+                name="ck_servico_valor_unit_nn",
+            ),
             models.CheckConstraint(
                 condition=models.Q(diaria_padrao__gte=0),
                 name="ck_servico_diaria_nn",
@@ -73,9 +98,17 @@ class Servico(models.Model):
     def clean(self):
         super().clean()
         self._normalizar_campos_texto()
+        if not self.unidade_cobranca:
+            self.unidade_cobranca = self.UNIDADE_COBRANCA_DIARIA
+        if self.valor_unitario in (None, Decimal("0.00")) and self.diaria_padrao is not None:
+            self.valor_unitario = self.diaria_padrao
 
     def save(self, *args, **kwargs):
         self._normalizar_campos_texto()
+        if not self.unidade_cobranca:
+            self.unidade_cobranca = self.UNIDADE_COBRANCA_DIARIA
+        if self.valor_unitario in (None, Decimal("0.00")) and self.diaria_padrao is not None:
+            self.valor_unitario = self.diaria_padrao
         super().save(*args, **kwargs)
 
     @property
@@ -395,6 +428,21 @@ class OrcamentoItem(models.Model):
     quantidade_dias = models.PositiveIntegerField(default=1)
     quantidade_pessoas = models.PositiveIntegerField(default=1)
 
+    unidade_cobranca_usada = models.CharField(
+        max_length=10,
+        choices=Servico.UNIDADE_COBRANCA_CHOICES,
+        default=Servico.UNIDADE_COBRANCA_DIARIA,
+    )
+    valor_unitario_usado = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("0.00")
+    )
+    quantidade_horas_cobradas = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        default=Decimal("0.00")
+    )
     valor_diaria_usada = models.DecimalField(
         max_digits=10,
         decimal_places=2,
@@ -459,6 +507,8 @@ class OrcamentoItem(models.Model):
             models.CheckConstraint(
                 condition=(
                     models.Q(valor_diaria_usada__gte=0)
+                    & models.Q(valor_unitario_usado__gte=0)
+                    & models.Q(quantidade_horas_cobradas__gte=0)
                     & models.Q(valor_alimentacao_usado__gte=0)
                     & models.Q(valor_transporte_usado__gte=0)
                     & models.Q(margem_lucro_usada__gte=0)
@@ -476,6 +526,17 @@ class OrcamentoItem(models.Model):
                 ),
                 name="ck_orc_item_valores_nn",
             ),
+            models.CheckConstraint(
+                condition=models.Q(unidade_cobranca_usada__in=["diaria", "hora"]),
+                name="ck_orc_item_unidade_cobranca",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(unidade_cobranca_usada=Servico.UNIDADE_COBRANCA_HORA)
+                    | models.Q(quantidade_horas_cobradas__gt=0)
+                ),
+                name="ck_orc_item_hora_qtd_pos",
+            ),
         ]
 
     def __str__(self):
@@ -492,6 +553,12 @@ class OrcamentoItem(models.Model):
 
         if self.quantidade_pessoas <= 0:
             erros["quantidade_pessoas"] = "Quantidade de pessoas deve ser maior que zero."
+
+        if self.unidade_cobranca_usada == Servico.UNIDADE_COBRANCA_HORA:
+            if self.quantidade_horas_cobradas <= 0:
+                erros["quantidade_horas_cobradas"] = (
+                    "Quantidade de horas cobradas deve ser maior que zero."
+                )
 
         if erros:
             raise ValidationError(erros)
@@ -561,6 +628,13 @@ class OrcamentoItem(models.Model):
             restante -= turno
 
         return self.arredondar2(total)
+
+    def calcular_custo_servico_por_hora(self):
+        return self.arredondar2(
+            self.valor_unitario_usado *
+            self.quantidade_horas_cobradas *
+            self.quantidade_pessoas
+        )
 
     def calcular_quantidade_alimentacao_regra_especial(self, horas):
         restante = horas
@@ -642,7 +716,10 @@ class OrcamentoItem(models.Model):
         return self.arredondar2(total)
 
     def calcular_totais(self):
-        valor_dia = self.calcular_valor_dia()
+        cobranca_por_hora = (
+            self.unidade_cobranca_usada == Servico.UNIDADE_COBRANCA_HORA
+        )
+        valor_dia = Decimal("0.00") if cobranca_por_hora else self.calcular_valor_dia()
         qtd_alimentacao = self.calcular_quantidade_alimentacao()
         qtd_transporte = self.calcular_quantidade_transporte()
 
@@ -653,9 +730,12 @@ class OrcamentoItem(models.Model):
             Decimal(qtd_transporte) * self.valor_transporte_usado
         )
 
-        custo_servico_total = self.arredondar2(
-            valor_dia * self.quantidade_dias * self.quantidade_pessoas
-        )
+        if cobranca_por_hora:
+            custo_servico_total = self.calcular_custo_servico_por_hora()
+        else:
+            custo_servico_total = self.arredondar2(
+                valor_dia * self.quantidade_dias * self.quantidade_pessoas
+            )
         gasto_alimentacao_total = self.arredondar2(
             alimentacao_dia * self.quantidade_dias * self.quantidade_pessoas
         )
@@ -676,11 +756,14 @@ class OrcamentoItem(models.Model):
         preco_venda = self.arredondar2(valor_com_margem + valor_imposto)
         lucro = self.arredondar2(valor_com_margem - custo_total)
 
-        valor_horas_extras_total = self.arredondar2(
-            self.calcular_valor_horas_extras_por_pessoa_dia() *
-            self.quantidade_dias *
-            self.quantidade_pessoas
-        )
+        if cobranca_por_hora:
+            valor_horas_extras_total = Decimal("0.00")
+        else:
+            valor_horas_extras_total = self.arredondar2(
+                self.calcular_valor_horas_extras_por_pessoa_dia() *
+                self.quantidade_dias *
+                self.quantidade_pessoas
+            )
 
         self.valor_dia_por_pessoa = valor_dia
         self.quantidade_alimentacao_por_dia = qtd_alimentacao
@@ -697,6 +780,8 @@ class OrcamentoItem(models.Model):
 
     def save(self, *args, **kwargs):
         if self._state.adding:
+            self.unidade_cobranca_usada = self.servico.unidade_cobranca
+            self.valor_unitario_usado = self.servico.valor_unitario
             self.valor_diaria_usada = self.servico.diaria_padrao
             self.usa_regra_especial = self.servico.usa_regra_especial
 

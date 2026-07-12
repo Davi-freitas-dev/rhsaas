@@ -182,6 +182,8 @@ class ServicoAdmin(admin.ModelAdmin):
     list_display = (
         "nome",
         "codigo",
+        "unidade_cobranca",
+        "valor_unitario",
         "diaria_padrao",
         "horas_base_diaria",
         "percentual_hora_extra",
@@ -236,6 +238,9 @@ class OrcamentoItemInline(admin.TabularInline):
         "horas_por_dia",
         "quantidade_dias",
         "quantidade_pessoas",
+        "unidade_cobranca_usada",
+        "valor_unitario_usado",
+        "quantidade_horas_cobradas",
         "valor_diaria_usada",
         "valor_alimentacao_usado",
         "valor_transporte_usado",
@@ -258,6 +263,9 @@ class OrcamentoItemInline(admin.TabularInline):
     def formfield_for_dbfield(self, db_field, request, **kwargs):
         formfield = super().formfield_for_dbfield(db_field, request, **kwargs)
         labels = {
+            "unidade_cobranca_usada": "Unidade de cobranca usada",
+            "valor_unitario_usado": "Valor unitario usado",
+            "quantidade_horas_cobradas": "Quantidade de horas cobradas",
             "valor_diaria_usada": "Valor da diaria usado",
             "valor_alimentacao_usado": "Valor de alimentacao usado",
             "valor_transporte_usado": "Valor de transporte usado",

@@ -49,6 +49,8 @@ from .views_clientes_api import JsonBodySafeSessionAuthentication
 
 EDITABLE_BUDGET_STATUSES = {"rascunho", "enviado"}
 ITEM_EDITABLE_VALUE_FIELDS = {
+    "unidade_cobranca_usada",
+    "valor_unitario_usado",
     "valor_diaria_usada",
     "valor_alimentacao_usado",
     "valor_transporte_usado",
@@ -186,6 +188,17 @@ def _optional_rate_decimal_payload_value(payload, field_name, *keys):
     return _rate_decimal_payload_value(payload, field_name, *keys, required=True)
 
 
+def _billing_unit_payload_value(payload, field_name, *keys):
+    unidade = _string_payload_value(payload, *keys).lower()
+    unidades_validas = {
+        Servico.UNIDADE_COBRANCA_DIARIA,
+        Servico.UNIDADE_COBRANCA_HORA,
+    }
+    if unidade not in unidades_validas:
+        raise ValidationError({field_name: "Informe diaria ou hora."})
+    return unidade
+
+
 def _boolean_payload_value(payload, field_name, *keys, default=False):
     if not _payload_has_any(payload, *keys):
         return default
@@ -293,6 +306,8 @@ def _serialize_servico_option(servico):
         "id": servico.id,
         "name": servico.nome,
         "code": servico.codigo,
+        "billingUnit": servico.unidade_cobranca,
+        "unitRate": _money(servico.valor_unitario),
         "dailyRate": _money(servico.diaria_padrao),
         "baseHours": servico.horas_base_diaria,
         "overtimePercent": _money(servico.percentual_hora_extra),
@@ -310,6 +325,9 @@ def _serialize_orcamento_item(item):
         "hoursPerDay": item.horas_por_dia,
         "daysCount": item.quantidade_dias,
         "peopleCount": item.quantidade_pessoas,
+        "billingUnitUsed": item.unidade_cobranca_usada,
+        "unitRateUsed": _money(item.valor_unitario_usado),
+        "billedHoursQuantity": _money(item.quantidade_horas_cobradas),
         "dailyRateUsed": _money(item.valor_diaria_usada),
         "mealAmountUsed": _money(item.valor_alimentacao_usado),
         "transportAmountUsed": _money(item.valor_transporte_usado),
@@ -483,6 +501,12 @@ def _blank_item_payload(item):
             "quantidade_dias",
             "peopleCount",
             "quantidade_pessoas",
+            "billingUnitUsed",
+            "unidade_cobranca_usada",
+            "unitRateUsed",
+            "valor_unitario_usado",
+            "billedHoursQuantity",
+            "quantidade_horas_cobradas",
             "dailyRateUsed",
             "valor_diaria_usada",
             "mealAmountUsed",
@@ -548,7 +572,30 @@ def _itens_from_payload(payload):
             ),
         }
 
+        quantidade_horas_cobradas = _optional_decimal_payload_value(
+            raw_item,
+            f"items[{index}].billedHoursQuantity",
+            "billedHoursQuantity",
+            "quantidade_horas_cobradas",
+        )
+        if quantidade_horas_cobradas is not None:
+            item_data["quantidade_horas_cobradas"] = quantidade_horas_cobradas
+
+        if _payload_has_any(raw_item, "billingUnitUsed", "unidade_cobranca_usada"):
+            item_data["unidade_cobranca_usada"] = _billing_unit_payload_value(
+                raw_item,
+                f"items[{index}].billingUnitUsed",
+                "billingUnitUsed",
+                "unidade_cobranca_usada",
+            )
+
         decimal_fields = [
+            (
+                "valor_unitario_usado",
+                "unitRateUsed",
+                "valor_unitario_usado",
+                _optional_decimal_payload_value,
+            ),
             (
                 "valor_diaria_usada",
                 "dailyRateUsed",
@@ -589,6 +636,12 @@ def _itens_from_payload(payload):
             )
             if value is not None:
                 item_data[model_field] = value
+
+        if (
+            "valor_unitario_usado" not in item_data
+            and "valor_diaria_usada" in item_data
+        ):
+            item_data["valor_unitario_usado"] = item_data["valor_diaria_usada"]
 
         if _payload_has_any(raw_item, "usesSpecialRule", "usa_regra_especial"):
             item_data["usa_regra_especial"] = _boolean_payload_value(

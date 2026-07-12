@@ -56,10 +56,13 @@ def _payload_json(request):
 
 def _first_payload_value(payload, *keys, default=""):
     for key in keys:
-        value = payload.get(key)
-        if value is not None:
-            return value
+        if key in payload:
+            return payload.get(key)
     return default
+
+
+def _payload_has_any(payload, *keys):
+    return any(key in payload for key in keys)
 
 
 def _string_payload_value(payload, *keys, default=""):
@@ -90,6 +93,21 @@ def _decimal_payload_value(payload, field_name, *keys, default="0.00"):
         return Decimal(text.replace(",", "."))
     except (InvalidOperation, ValueError) as error:
         raise ValidationError({field_name: "Informe um valor numerico valido."}) from error
+
+
+def _billing_unit_payload_value(payload, field_name, *keys):
+    unidade = _string_payload_value(
+        payload,
+        *keys,
+        default=Servico.UNIDADE_COBRANCA_DIARIA,
+    ).lower()
+    unidades_validas = {
+        Servico.UNIDADE_COBRANCA_DIARIA,
+        Servico.UNIDADE_COBRANCA_HORA,
+    }
+    if unidade not in unidades_validas:
+        raise ValidationError({field_name: "Informe diaria ou hora."})
+    return unidade
 
 
 def _integer_payload_value(payload, field_name, *keys, default=0):
@@ -130,6 +148,8 @@ def _serialize_servico(servico):
         "id": servico.id,
         "name": servico.nome,
         "code": servico.codigo,
+        "billingUnit": servico.unidade_cobranca,
+        "unitRate": _money(servico.valor_unitario),
         "dailyRate": _money(servico.diaria_padrao),
         "baseHours": servico.horas_base_diaria,
         "overtimePercent": f"{servico.percentual_hora_extra:.2f}",
@@ -143,15 +163,51 @@ def _serialize_servico(servico):
     }
 
 
-def _servico_data_from_payload(payload):
+def _servico_create_data_from_payload(payload):
+    unidade_cobranca = _billing_unit_payload_value(
+        payload,
+        "unidade_cobranca",
+        "billingUnit",
+        "unidade_cobranca",
+    )
+    has_unit_rate = _payload_has_any(payload, "unitRate", "valor_unitario")
+    has_daily_rate = _payload_has_any(payload, "dailyRate", "diaria_padrao")
+
+    if has_unit_rate:
+        valor_unitario = _decimal_payload_value(
+            payload,
+            "valor_unitario",
+            "unitRate",
+            "valor_unitario",
+        )
+    elif has_daily_rate:
+        valor_unitario = _decimal_payload_value(
+            payload,
+            "valor_unitario",
+            "dailyRate",
+            "diaria_padrao",
+        )
+    else:
+        valor_unitario = Decimal("0.00")
+
+    if has_daily_rate:
+        diaria_padrao = _decimal_payload_value(
+            payload,
+            "diaria_padrao",
+            "diaria_padrao",
+            "dailyRate",
+        )
+    elif has_unit_rate:
+        diaria_padrao = valor_unitario
+    else:
+        diaria_padrao = Decimal("0.00")
+
     return {
         "nome": _string_payload_value(payload, "name"),
         "codigo": _string_payload_value(payload, "code").lower(),
-        "diaria_padrao": _decimal_payload_value(
-            payload,
-            "diaria_padrao",
-            "dailyRate",
-        ),
+        "unidade_cobranca": unidade_cobranca,
+        "valor_unitario": valor_unitario,
+        "diaria_padrao": diaria_padrao,
         "horas_base_diaria": _integer_payload_value(
             payload,
             "horas_base_diaria",
@@ -171,6 +227,79 @@ def _servico_data_from_payload(payload):
         ),
         "ativo": _boolean_payload_value(payload, "isActive", default=True),
     }
+
+
+def _servico_update_data_from_payload(payload, servico):
+    data = {}
+
+    if _payload_has_any(payload, "name"):
+        data["nome"] = _string_payload_value(payload, "name")
+
+    if _payload_has_any(payload, "code"):
+        data["codigo"] = _string_payload_value(payload, "code").lower()
+
+    if _payload_has_any(payload, "billingUnit", "unidade_cobranca"):
+        data["unidade_cobranca"] = _billing_unit_payload_value(
+            payload,
+            "unidade_cobranca",
+            "billingUnit",
+            "unidade_cobranca",
+        )
+
+    has_unit_rate = _payload_has_any(payload, "unitRate", "valor_unitario")
+    has_daily_rate = _payload_has_any(payload, "dailyRate", "diaria_padrao")
+
+    if has_unit_rate:
+        data["valor_unitario"] = _decimal_payload_value(
+            payload,
+            "valor_unitario",
+            "unitRate",
+            "valor_unitario",
+        )
+
+    if has_daily_rate:
+        diaria_padrao = _decimal_payload_value(
+            payload,
+            "diaria_padrao",
+            "diaria_padrao",
+            "dailyRate",
+        )
+        data["diaria_padrao"] = diaria_padrao
+
+        unidade_efetiva = data.get("unidade_cobranca", servico.unidade_cobranca)
+        if (
+            not has_unit_rate
+            and unidade_efetiva == Servico.UNIDADE_COBRANCA_DIARIA
+        ):
+            data["valor_unitario"] = diaria_padrao
+
+    if _payload_has_any(payload, "baseHours", "horas_base_diaria"):
+        data["horas_base_diaria"] = _integer_payload_value(
+            payload,
+            "horas_base_diaria",
+            "horas_base_diaria",
+            "baseHours",
+        )
+
+    if _payload_has_any(payload, "overtimePercent", "percentual_hora_extra"):
+        data["percentual_hora_extra"] = _decimal_payload_value(
+            payload,
+            "percentual_hora_extra",
+            "percentual_hora_extra",
+            "overtimePercent",
+        )
+
+    if _payload_has_any(payload, "usesSpecialRule", "usa_regra_especial"):
+        data["usa_regra_especial"] = _boolean_payload_value(
+            payload,
+            "usesSpecialRule",
+            "usa_regra_especial",
+        )
+
+    if _payload_has_any(payload, "isActive", "ativo"):
+        data["ativo"] = _boolean_payload_value(payload, "isActive", "ativo")
+
+    return data
 
 
 def _duplicidade_errors(servico):
@@ -195,6 +324,15 @@ def _duplicidade_errors(servico):
 
 def _servico_validation_errors(servico):
     errors = {}
+
+    if servico.unidade_cobranca not in {
+        Servico.UNIDADE_COBRANCA_DIARIA,
+        Servico.UNIDADE_COBRANCA_HORA,
+    }:
+        errors["unidade_cobranca"] = ["Informe diaria ou hora."]
+
+    if servico.valor_unitario < 0:
+        errors["valor_unitario"] = ["O valor unitario nao pode ser negativo."]
 
     if servico.diaria_padrao < 0:
         errors["diaria_padrao"] = ["A diaria padrao nao pode ser negativa."]
@@ -335,7 +473,7 @@ def _criar_servico_response(request):
         return api_no_store_json_response({"detail": "JSON invalido."}, status=400)
 
     try:
-        servico = Servico(**_servico_data_from_payload(payload))
+        servico = Servico(**_servico_create_data_from_payload(payload))
     except ValidationError as error:
         return api_no_store_json_response(
             {"errors": _errors_from_validation_error(error)},
@@ -377,7 +515,7 @@ def _atualizar_servico_response(request, servico):
         return api_no_store_json_response({"detail": "JSON invalido."}, status=400)
 
     try:
-        for field, value in _servico_data_from_payload(payload).items():
+        for field, value in _servico_update_data_from_payload(payload, servico).items():
             setattr(servico, field, value)
     except ValidationError as error:
         return api_no_store_json_response(
