@@ -289,6 +289,9 @@ class Orcamento(models.Model):
         verbose_name = "Orçamento"
         verbose_name_plural = "Orçamentos"
         ordering = ["-criado_em"]
+        permissions = [
+            ("approve_orcamento", "Pode aprovar orçamento"),
+        ]
         indexes = [
             models.Index(fields=["status", "data_evento"]),
             models.Index(fields=["cliente", "status"]),
@@ -389,27 +392,30 @@ class Orcamento(models.Model):
         )
 
     def aprovar_e_gerar_evento(self):
-        if not self.pk:
-            raise ValidationError("Salve o orçamento antes de aprovar.")
+        # Os services e signals chamados abaixo usam a mesma conexão do tenant.
+        # O bloco externo mantém status, evento e movimentações consistentes.
+        with transaction.atomic():
+            if not self.pk:
+                raise ValidationError("Salve o orçamento antes de aprovar.")
 
-        if not self.itens.exists():
-            raise ValidationError("Não é possível aprovar um orçamento sem itens.")
+            if not self.itens.exists():
+                raise ValidationError("Não é possível aprovar um orçamento sem itens.")
 
-        self.full_clean()
-        self.recalcular_totais()
+            self.full_clean()
+            self.recalcular_totais()
 
-        self.status = "aprovado"
-        super().save(update_fields=["status", "atualizado_em"])
+            self.status = "aprovado"
+            super().save(update_fields=["status", "atualizado_em"])
 
-        from .services_orcamentos import criar_ou_atualizar_evento_do_orcamento
+            from .services_orcamentos import criar_ou_atualizar_evento_do_orcamento
 
-        evento = criar_ou_atualizar_evento_do_orcamento(self)
+            evento = criar_ou_atualizar_evento_do_orcamento(self)
 
-        evento.gerar_movimentacoes_previstas()
-        self.sincronizar_custos_servicos_evento(evento)
-        self.sincronizar_custos_extras_evento(evento)
+            evento.gerar_movimentacoes_previstas()
+            self.sincronizar_custos_servicos_evento(evento)
+            self.sincronizar_custos_extras_evento(evento)
 
-        return evento
+            return evento
 
 
 class OrcamentoItem(models.Model):
@@ -846,7 +852,7 @@ class Evento(models.Model):
         on_delete=models.PROTECT,
         related_name="eventos"
     )
-    numero = models.CharField(max_length=30, unique=True)
+    numero = models.CharField(max_length=34, unique=True)
     nome_evento = models.CharField(max_length=150)
     data_inicio = models.DateField(db_index=True)
     data_fim = models.DateField(db_index=True)
@@ -960,21 +966,9 @@ class Evento(models.Model):
 
     @classmethod
     def criar_a_partir_do_orcamento(cls, orcamento):
-        evento = cls.objects.create(
-            orcamento=orcamento,
-            cliente=orcamento.cliente,
-            numero=f"EVT-{orcamento.numero}",
-            nome_evento=orcamento.nome_evento,
-            data_inicio=orcamento.data_evento,
-            data_fim=orcamento.data_evento,
-            local=orcamento.local,
-            status="planejado",
-            observacoes=orcamento.observacoes,
-            valor_total_previsto=orcamento.total_venda,
-            custo_total_previsto=quantizar_moeda(orcamento.subtotal_custos + orcamento.total_impostos),
-            lucro_previsto=orcamento.total_lucro,
-        )
-        return evento
+        from .services_orcamentos import criar_ou_atualizar_evento_do_orcamento
+
+        return criar_ou_atualizar_evento_do_orcamento(orcamento)
 
 
 class ReceitaOperacional(models.Model):

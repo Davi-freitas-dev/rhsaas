@@ -1,7 +1,11 @@
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError, transaction
+
 from .models_custos_extras import EventoCustoExtra
 from .models_servico import EventoCustoServico
+from .utils_eventos import gerar_numero_evento_orcamento
 from .utils_financeiros import decimal_zero, quantizar_moeda
 
 
@@ -162,11 +166,20 @@ def custo_servico_possui_movimento(custo_servico):
 def criar_ou_atualizar_evento_do_orcamento(orcamento):
     from .models import Evento
 
-    evento, criado = Evento.objects.get_or_create(
-        orcamento=orcamento,
-        defaults={
+    evento = Evento.objects.filter(orcamento=orcamento).first()
+    criado = evento is None
+
+    if criado:
+        numero_evento = gerar_numero_evento_orcamento(orcamento.numero)
+        _validar_numero_evento_disponivel(
+            Evento,
+            numero_evento,
+            orcamento,
+        )
+        dados_evento = {
+            "orcamento": orcamento,
             "cliente": orcamento.cliente,
-            "numero": f"EVT-{orcamento.numero}",
+            "numero": numero_evento,
             "nome_evento": orcamento.nome_evento,
             "data_inicio": orcamento.data_evento,
             "data_fim": orcamento.data_evento,
@@ -178,8 +191,26 @@ def criar_ou_atualizar_evento_do_orcamento(orcamento):
                 orcamento.subtotal_custos + orcamento.total_impostos
             ),
             "lucro_previsto": orcamento.total_lucro,
-        },
-    )
+        }
+
+        try:
+            # O savepoint permite converter uma colisão concorrente sem deixar
+            # a transação externa de aprovação inutilizável.
+            with transaction.atomic():
+                evento = Evento.objects.create(**dados_evento)
+        except IntegrityError as error:
+            evento_concorrente = Evento.objects.filter(orcamento=orcamento).first()
+            if evento_concorrente is not None:
+                evento = evento_concorrente
+                criado = False
+            else:
+                _validar_numero_evento_disponivel(
+                    Evento,
+                    numero_evento,
+                    orcamento,
+                    causa=error,
+                )
+                raise
 
     if not criado:
         evento.cliente = orcamento.cliente
@@ -197,6 +228,35 @@ def criar_ou_atualizar_evento_do_orcamento(orcamento):
         evento.save()
 
     return evento
+
+
+def _validar_numero_evento_disponivel(
+    evento_model,
+    numero_evento,
+    orcamento,
+    *,
+    causa=None,
+):
+    conflito = (
+        evento_model.objects.filter(numero=numero_evento)
+        .exclude(orcamento=orcamento)
+        .only("id", "orcamento_id")
+        .first()
+    )
+    if conflito is None:
+        return
+
+    erro = ValidationError(
+        {
+            "numero": (
+                f"Já existe outro evento com o número {numero_evento} "
+                "que não pertence a este orçamento."
+            )
+        }
+    )
+    if causa is not None:
+        raise erro from causa
+    raise erro
 
 
 def sincronizar_evento_do_orcamento_aprovado(
