@@ -92,6 +92,7 @@ from .models_pagamentos import PagamentoEventoCustoExtra, PagamentoEventoCustoSe
 from .models_servico import EventoCustoServico
 from .permissions import sincronizar_grupos_permissoes
 from .selectors_backups import listar_backups_disponiveis, obter_caminho_backup
+from .tenant_files import artifact_scope_for_schema, backup_dir_for_schema
 from .selectors_cadastros import (
     categorias_despesas_para_filtro,
     filtrar_despesas,
@@ -5427,6 +5428,9 @@ class PermissoesTests(TenantScopedTestCase):
             "canViewServices": False,
             "canAddService": False,
             "canChangeService": False,
+            "canViewFinancialConfigurations": False,
+            "canAddFinancialConfiguration": False,
+            "canChangeFinancialConfiguration": False,
             "canViewBudgets": False,
             "canAddBudget": False,
             "canChangeBudget": False,
@@ -6004,6 +6008,8 @@ class PermissoesTests(TenantScopedTestCase):
                 "displayName",
                 "isStaff",
                 "isSuperuser",
+                "isTenantAdmin",
+                "isPlatformOperator",
                 *expected_permissions.keys(),
                 "permissions",
             },
@@ -6013,6 +6019,8 @@ class PermissoesTests(TenantScopedTestCase):
         self.assertEqual(payload["user"]["displayName"], "Ana Login")
         self.assertFalse(payload["user"]["isStaff"])
         self.assertFalse(payload["user"]["isSuperuser"])
+        self.assertFalse(payload["user"]["isTenantAdmin"])
+        self.assertFalse(payload["user"]["isPlatformOperator"])
         self.assertEqual(payload["user"]["permissions"], expected_permissions)
         for permission_name, expected_value in expected_permissions.items():
             self.assertEqual(payload["user"][permission_name], expected_value)
@@ -6067,6 +6075,8 @@ class PermissoesTests(TenantScopedTestCase):
         self.assertEqual(payload["user"]["displayName"], "Ana Sessao")
         self.assertFalse(payload["user"]["isStaff"])
         self.assertFalse(payload["user"]["isSuperuser"])
+        self.assertFalse(payload["user"]["isTenantAdmin"])
+        self.assertFalse(payload["user"]["isPlatformOperator"])
         self.assertTrue(payload["user"]["canViewDashboard"])
         self.assertTrue(payload["user"]["canViewRevenues"])
         self.assertFalse(payload["user"]["canViewExpenses"])
@@ -6104,6 +6114,9 @@ class PermissoesTests(TenantScopedTestCase):
             "canViewServices": False,
             "canAddService": False,
             "canChangeService": False,
+            "canViewFinancialConfigurations": False,
+            "canAddFinancialConfiguration": False,
+            "canChangeFinancialConfiguration": False,
             "canViewBudgets": False,
             "canAddBudget": False,
             "canChangeBudget": False,
@@ -6135,6 +6148,8 @@ class PermissoesTests(TenantScopedTestCase):
                 "displayName",
                 "isStaff",
                 "isSuperuser",
+                "isTenantAdmin",
+                "isPlatformOperator",
                 *expected_permissions.keys(),
                 "permissions",
             },
@@ -7795,6 +7810,38 @@ class SmokeViewsTests(TenantScopedTestCase):
 
 @override_settings(STORAGES=TEST_STATICFILES_STORAGES)
 class SegurancaTests(TenantScopedTestCase):
+    def _write_valid_backup(
+        self,
+        filename,
+        *,
+        content=b"[]",
+        modified_at=None,
+    ):
+        scope, schema_name = artifact_scope_for_schema()
+        backup_dir = backup_dir_for_schema(schema_name)
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_path = backup_dir / filename
+        backup_path.write_bytes(content)
+        metadata_path = backup_path.with_name(f"{backup_path.stem}.meta.json")
+        metadata_path.write_text(
+            json.dumps(
+                {
+                    "arquivo": backup_path.name,
+                    "criado_em": "2026-06-01T01:02:03-03:00",
+                    "mes_referencia": "2026-06",
+                    "scope": scope,
+                    "schema_name": schema_name,
+                    "sha256": hashlib.sha256(content).hexdigest(),
+                    "tamanho_bytes": backup_path.stat().st_size,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        if modified_at is not None:
+            os.utime(backup_path, (modified_at, modified_at))
+        return backup_path
+
     def _assert_json_no_store(self, response):
         self.assertEqual(response["Content-Type"], "application/json")
         self.assertIn("no-store", response["Cache-Control"])
@@ -7834,6 +7881,8 @@ class SegurancaTests(TenantScopedTestCase):
                 "createdAt",
                 "criado_em",
                 "downloadPath",
+                "scope",
+                "schemaName",
             },
         )
         self.assertEqual(backup["name"], backup["nome"])
@@ -7841,6 +7890,8 @@ class SegurancaTests(TenantScopedTestCase):
         self.assertTrue(backup["createdAt"])
         self.assertTrue(backup["downloadPath"].startswith("/backups/"))
         self.assertTrue(backup["downloadPath"].endswith("/download/"))
+        self.assertEqual(backup["scope"], "tenant")
+        self.assertEqual(backup["schemaName"], connection.schema_name)
 
     def test_login_usa_logo_otimizado_e_csp_restritiva(self):
         response = self.client.get(reverse("caixa:login"), secure=True)
@@ -8109,7 +8160,7 @@ class SegurancaTests(TenantScopedTestCase):
         self.assertEqual(
             response.json(),
             {
-                "detail": "N\u00e3o foi poss\u00edvel criar o backup manual. Verifique os logs do servidor.",
+                "detail": "Nao foi possivel criar o backup manual. Verifique os logs do servidor.",
             },
         )
         self._assert_json_no_store(response)
@@ -8199,26 +8250,29 @@ class SegurancaTests(TenantScopedTestCase):
 
         with TemporaryDirectory() as temp_dir:
             base_dir = Path(temp_dir)
-            backup_dir = base_dir / "backups" / "db"
-            backup_dir.mkdir(parents=True)
-            backup_antigo = backup_dir / "backup_banco_2026-05_20260501_010203_000001.json"
-            backup_recente = backup_dir / "backup_banco_2026-06_20260601_010203_000001.json"
-            metadata = backup_dir / "backup_banco_2026-06_20260601_010203_000001.meta.json"
-            fora_do_padrao = backup_dir / "outro.json"
-            diretorio_compativel = backup_dir / "backup_banco_2026-07_20260701_010203_000001.json"
-            backup_antigo.write_text("[]", encoding="utf-8")
-            backup_recente.write_text("[1,2,3]", encoding="utf-8")
-            metadata.write_text("{}", encoding="utf-8")
-            fora_do_padrao.write_text("{}", encoding="utf-8")
-            diretorio_compativel.mkdir()
             antigo_mtime = 1_700_000_000
             recente_mtime = 1_800_000_000
-            backup_antigo.touch()
-            backup_recente.touch()
-            os.utime(backup_antigo, (antigo_mtime, antigo_mtime))
-            os.utime(backup_recente, (recente_mtime, recente_mtime))
 
             with override_settings(BASE_DIR=base_dir):
+                backup_antigo = self._write_valid_backup(
+                    "backup_banco_2026-05_20260501_010203_000001.json",
+                    modified_at=antigo_mtime,
+                )
+                backup_recente = self._write_valid_backup(
+                    "backup_banco_2026-06_20260601_010203_000001.json",
+                    content=b"[1,2,3]",
+                    modified_at=recente_mtime,
+                )
+                backup_dir = backup_dir_for_schema()
+                (backup_dir / "outro.json").write_text("{}", encoding="utf-8")
+                (backup_dir / "backup_banco_sem_metadata.json").write_text(
+                    "{}",
+                    encoding="utf-8",
+                )
+                (
+                    backup_dir
+                    / "backup_banco_2026-07_20260701_010203_000001.json"
+                ).mkdir()
                 response = self.client.get(reverse("caixa:api_backups"))
 
         self.assertEqual(response.status_code, 200)
@@ -8244,6 +8298,8 @@ class SegurancaTests(TenantScopedTestCase):
                 "createdAt",
                 "criado_em",
                 "downloadPath",
+                "scope",
+                "schemaName",
             },
         )
         self.assertEqual(primeiro["name"], primeiro["nome"])
@@ -8254,6 +8310,10 @@ class SegurancaTests(TenantScopedTestCase):
         self.assertEqual(segundo["sizeMb"], round(segundo["tamanho_mb"], 4))
         self.assertTrue(primeiro["createdAt"])
         self.assertTrue(segundo["createdAt"])
+        self.assertEqual(primeiro["scope"], "tenant")
+        self.assertEqual(segundo["scope"], "tenant")
+        self.assertEqual(primeiro["schemaName"], connection.schema_name)
+        self.assertEqual(segundo["schemaName"], connection.schema_name)
         self.assertEqual(
             primeiro["downloadPath"],
             "/backups/backup_banco_2026-06_20260601_010203_000001.json/download/",
@@ -8294,7 +8354,7 @@ class SegurancaTests(TenantScopedTestCase):
                 self.assertTrue(payload["backup"]["downloadPath"].startswith("/backups/"))
                 self.assertEqual(len(listar_backups_disponiveis()), 1)
 
-                backup_dir = base_dir / "backups" / "db"
+                backup_dir = backup_dir_for_schema()
                 backup_files = [
                     path
                     for path in backup_dir.glob("backup_banco_*.json")
@@ -8311,11 +8371,15 @@ class SegurancaTests(TenantScopedTestCase):
                         "arquivo",
                         "criado_em",
                         "mes_referencia",
+                        "scope",
+                        "schema_name",
                         "sha256",
                         "tamanho_bytes",
                     },
                 )
                 self.assertEqual(metadata["arquivo"], backup_file.name)
+                self.assertEqual(metadata["scope"], "tenant")
+                self.assertEqual(metadata["schema_name"], connection.schema_name)
                 self.assertEqual(metadata["tamanho_bytes"], backup_file.stat().st_size)
                 self.assertEqual(
                     metadata["sha256"],
@@ -8335,23 +8399,17 @@ class SegurancaTests(TenantScopedTestCase):
 
         with TemporaryDirectory() as temp_dir:
             base_dir = Path(temp_dir)
-            backup_dir = base_dir / "backups" / "db"
-            backup_dir.mkdir(parents=True)
-
-            for indice in range(3):
-                backup = backup_dir / (
-                    f"backup_banco_2026-0{indice + 1}_"
-                    f"20260{indice + 1}01_010203_00000{indice + 1}.json"
-                )
-                backup.write_text("[]", encoding="utf-8")
-                backup.with_name(f"{backup.stem}.meta.json").write_text(
-                    "{}",
-                    encoding="utf-8",
-                )
-                timestamp = 1_700_000_000 + indice
-                os.utime(backup, (timestamp, timestamp))
 
             with override_settings(BASE_DIR=base_dir):
+                backup_dir = backup_dir_for_schema()
+                for indice in range(3):
+                    self._write_valid_backup(
+                        (
+                            f"backup_banco_2026-0{indice + 1}_"
+                            f"20260{indice + 1}01_010203_00000{indice + 1}.json"
+                        ),
+                        modified_at=1_700_000_000 + indice,
+                    )
                 response = self.client.post(reverse("caixa:api_backup_criar_manual"))
 
                 self.assertEqual(response.status_code, 201)
@@ -8412,16 +8470,11 @@ class SegurancaTests(TenantScopedTestCase):
     def test_backups_restringem_download_a_arquivos_json_reais(self):
         with TemporaryDirectory() as temp_dir:
             base_dir = Path(temp_dir)
-            backup_dir = base_dir / "backups" / "db"
-            backup_dir.mkdir(parents=True)
-            backup = backup_dir / "backup_banco_202605.json"
-            metadata = backup_dir / "backup_banco_202605.meta.json"
-            outro = backup_dir / "outro.json"
-            backup.write_text("[]", encoding="utf-8")
-            metadata.write_text("{}", encoding="utf-8")
-            outro.write_text("[]", encoding="utf-8")
 
             with override_settings(BASE_DIR=base_dir):
+                backup = self._write_valid_backup("backup_banco_202605.json")
+                backup_dir = backup_dir_for_schema()
+                (backup_dir / "outro.json").write_text("[]", encoding="utf-8")
                 self.assertEqual(
                     [arquivo["nome"] for arquivo in listar_backups_disponiveis()],
                     ["backup_banco_202605.json"],
@@ -14084,7 +14137,11 @@ class FiltrosHtmlTests(TenantScopedTestCase):
         self.assertGreater(vencidos["count"], 0)
         self.assertGreater(vencidos["amount"], 0)
 
-    def test_dashboard_overdue_payables_all_time_faz_fallback_visual_sem_canonico_filtrado(self):
+    @patch("django.utils.timezone.localdate", return_value=date(2026, 6, 15))
+    def test_dashboard_overdue_payables_all_time_faz_fallback_visual_sem_canonico_filtrado(
+        self,
+        _localdate,
+    ):
         _, evento = self._criar_cliente_evento_overview(
             "FALLBACK",
             date(2026, 5, 1),
@@ -21021,7 +21078,11 @@ class FiltrosHtmlTests(TenantScopedTestCase):
         self.assertIn("sourceDetail", resposta.json()["errors"])
         self.assertIn("no-store", resposta["Cache-Control"])
 
-    def test_api_liquidar_obrigacao_parcela_fcf_cria_pagamento_dedicado_idempotente(self):
+    @patch("django.utils.timezone.localdate", return_value=date(2026, 6, 15))
+    def test_api_liquidar_obrigacao_parcela_fcf_cria_pagamento_dedicado_idempotente(
+        self,
+        _localdate,
+    ):
         self.user.user_permissions.add(
             Permission.objects.get(codename="add_pagamentoparceladivida"),
             Permission.objects.get(codename="view_lancamentofinanceiro"),
@@ -23649,16 +23710,23 @@ class FiltrosHtmlTests(TenantScopedTestCase):
             "redis://:***@127.0.0.1:6379/1",
         )
         self.assertIn(
-            "rest_framework.throttling.AnonRateThrottle",
+            "caixa.throttling.TenantAnonRateThrottle",
             payload["apiThrottling"]["classes"],
         )
         self.assertIn(
-            "rest_framework.throttling.UserRateThrottle",
+            "caixa.throttling.TenantUserRateThrottle",
             payload["apiThrottling"]["classes"],
         )
         self.assertEqual(
             set(payload["apiThrottling"]["rates"]),
-            {"anon", "user", "auth_login"},
+            {
+                "anon",
+                "user",
+                "auth_login",
+                "backup_create",
+                "backup_download",
+                "export_csv",
+            },
         )
         self.assertNotIn("senha-cache", saida_json.getvalue())
         self.assertEqual(payload["cookies"]["sessionCookieDomain"], ".taquiondev.com.br")
@@ -23683,41 +23751,17 @@ class FiltrosHtmlTests(TenantScopedTestCase):
             "--frontend-deploy-url=<url-deploy-vercel>",
             payload["pm02StrictServerCommandWithDeployUrl"],
         )
-        self.assertIn(
-            "--perfil-legado-producao",
+        comandos_legados = {
             payload["pm02StrictServerCommandLegacyProduction"],
-        )
-        self.assertIn(
-            "--frontend-ref=<commit-ou-deploy-vercel>",
-            payload["pm02StrictServerCommandLegacyProduction"],
-        )
-        self.assertIn(
-            "--frontend-deploy-url=<url-deploy-vercel>",
             payload["pm02StrictServerCommandLegacyProductionWithDeployUrl"],
-        )
-        self.assertIn(
-            "--exigir-frontend-deploy-url-https",
-            payload["pm02StrictServerCommandLegacyProductionWithDeployUrl"],
-        )
-        self.assertIn(
-            "--diretorio-evidencias=<diretorio-evidencias-pm02>",
             payload["pm02StrictServerCommandLegacyProductionWithEvidence"],
-        )
-        self.assertIn(
-            "--exigir-arquivos-evidencia",
-            payload["pm02StrictServerCommandLegacyProductionWithEvidence"],
-        )
-        self.assertIn(
-            "--frontend-deploy-url=<url-deploy-vercel>",
             payload[
                 "pm02StrictServerCommandLegacyProductionWithDeployUrlAndEvidence"
             ],
-        )
-        self.assertIn(
-            "--exigir-arquivos-evidencia",
-            payload[
-                "pm02StrictServerCommandLegacyProductionWithDeployUrlAndEvidence"
-            ],
+        }
+        self.assertEqual(
+            comandos_legados,
+            {"DESATIVADO no RH SaaS: perfil legado do projeto antigo."},
         )
 
         with TemporaryDirectory() as temp_dir:
@@ -23839,13 +23883,9 @@ class FiltrosHtmlTests(TenantScopedTestCase):
             "--modo-servidor-estrito",
             payload["pm02NextAction"]["suggestedCommand"],
         )
-        self.assertIn(
-            "--diretorio-evidencias=<diretorio-evidencias-pm02>",
+        self.assertEqual(
             payload["pm02NextAction"]["suggestedLegacyCommand"],
-        )
-        self.assertIn(
-            "--exigir-arquivos-evidencia",
-            payload["pm02NextAction"]["suggestedLegacyCommand"],
+            "DESATIVADO no RH SaaS: perfil legado do projeto antigo.",
         )
         self.assertIn(
             "evidencia pendente: Release/tag/commit do backend",
@@ -23908,7 +23948,7 @@ class FiltrosHtmlTests(TenantScopedTestCase):
             payload["executionRecord"]["markdown"],
         )
         self.assertIn(
-            "pm02NextActionSuggestedLegacyCommand: python manage.py validar_baseline_pm02 --modo-servidor-estrito --perfil-legado-producao",
+            "pm02NextActionSuggestedLegacyCommand: DESATIVADO no RH SaaS",
             payload["executionRecord"]["markdown"],
         )
         self.assertIn(
@@ -23919,33 +23959,15 @@ class FiltrosHtmlTests(TenantScopedTestCase):
             "--frontend-deploy-url=<url-deploy-vercel>",
             payload["strictServerCommandWithDeployUrl"],
         )
-        self.assertIn(
-            "--perfil-legado-producao",
+        comandos_legados = {
             payload["strictServerCommandLegacyProduction"],
-        )
-        self.assertIn(
-            "--exigir-frontend-deploy-url-https",
             payload["strictServerCommandLegacyProductionWithDeployUrl"],
-        )
-        self.assertIn(
-            "--diretorio-evidencias=<diretorio-evidencias-pm02>",
             payload["strictServerCommandLegacyProductionWithEvidence"],
-        )
-        self.assertIn(
-            "--exigir-arquivos-evidencia",
-            payload["strictServerCommandLegacyProductionWithEvidence"],
-        )
-        self.assertIn(
-            "--frontend-deploy-url=<url-deploy-vercel>",
-            payload[
-                "strictServerCommandLegacyProductionWithDeployUrlAndEvidence"
-            ],
-        )
-        self.assertIn(
-            "--exigir-arquivos-evidencia",
-            payload[
-                "strictServerCommandLegacyProductionWithDeployUrlAndEvidence"
-            ],
+            payload["strictServerCommandLegacyProductionWithDeployUrlAndEvidence"],
+        }
+        self.assertEqual(
+            comandos_legados,
+            {"DESATIVADO no RH SaaS: perfil legado do projeto antigo."},
         )
         self.assertIn(
             "--release-ref=<tag-ou-commit-backend>",
@@ -23979,37 +24001,20 @@ class FiltrosHtmlTests(TenantScopedTestCase):
         )
         self.assertEqual(
             manual_requirements["environmentLabel"]["suggestedLegacyCommand"],
-            "--perfil-legado-producao",
+            "DESATIVADO no RH SaaS: perfil legado do projeto antigo.",
         )
-        self.assertIn(
-            "--perfil-legado-producao",
-            manual_requirements["serverValidationRecord"][
-                "suggestedLegacyCommand"
-            ],
-        )
-        self.assertIn(
-            "--frontend-deploy-url=<url-deploy-vercel>",
-            manual_requirements["serverValidationRecord"][
-                "suggestedLegacyCommandWithDeployUrl"
-            ],
-        )
-        self.assertIn(
-            "--exigir-frontend-deploy-url-https",
-            manual_requirements["serverValidationRecord"][
-                "suggestedLegacyCommandWithDeployUrl"
-            ],
-        )
-        self.assertIn(
-            "--diretorio-evidencias=<diretorio-evidencias-pm02>",
-            manual_requirements["serverValidationRecord"][
-                "suggestedLegacyCommandWithEvidence"
-            ],
-        )
-        self.assertIn(
-            "--exigir-arquivos-evidencia",
-            manual_requirements["serverValidationRecord"][
-                "suggestedLegacyCommandWithDeployUrlAndEvidence"
-            ],
+        comandos_legados_requisito = {
+            manual_requirements["serverValidationRecord"][campo]
+            for campo in (
+                "suggestedLegacyCommand",
+                "suggestedLegacyCommandWithDeployUrl",
+                "suggestedLegacyCommandWithEvidence",
+                "suggestedLegacyCommandWithDeployUrlAndEvidence",
+            )
+        }
+        self.assertEqual(
+            comandos_legados_requisito,
+            {"DESATIVADO no RH SaaS: perfil legado do projeto antigo."},
         )
         checks = {check["key"]: check for check in payload["checks"]}
         self.assertTrue(checks["snapshot"]["ok"])
@@ -24454,158 +24459,16 @@ class FiltrosHtmlTests(TenantScopedTestCase):
         checks = {check["key"]: check for check in payload["checks"]}
         self.assertTrue(checks["environmentExpectations"]["ok"])
 
-        saida_perfil = StringIO()
-        call_command(
-            "validar_baseline_pm02",
-            "--json",
-            "--perfil-legado-producao",
-            stdout=saida_perfil,
-        )
-        payload_perfil = json.loads(saida_perfil.getvalue())
-        expectations_perfil = {
-            expectation["key"]: expectation
-            for expectation in payload_perfil["environmentExpectations"]
-        }
-
-        self.assertTrue(payload_perfil["ready"], payload_perfil["issues"])
-        self.assertEqual(
-            payload_perfil["serverEvidence"]["environmentLabel"],
-            "producao",
-        )
-        self.assertEqual(payload_perfil["environmentProfile"], "legado-producao")
-        self.assertEqual(
-            payload_perfil["serverEvidence"]["environmentProfile"],
-            "legado-producao",
-        )
-        self.assertEqual(
-            payload_perfil["environmentProfileDefaults"]["ambiente"],
-            "producao",
-        )
-        self.assertEqual(
-            payload_perfil["environmentProfileDefaultsApplied"]["ambiente"],
-            "producao",
-        )
-        self.assertEqual(
-            payload_perfil["environmentProfileDefaults"][
-                "esperar_cache_location"
-            ],
-            "redis://127.0.0.1:6379/1",
-        )
-        self.assertEqual(payload_perfil["environmentProfileOverrides"], {})
-        self.assertTrue(expectations_perfil["sessionCookieDomain"]["ok"])
-        self.assertTrue(expectations_perfil["csrfCookieDomain"]["ok"])
-        self.assertFalse(expectations_perfil["sessionCookieSecure"]["required"])
-        self.assertFalse(expectations_perfil["csrfCookieSecure"]["required"])
-        self.assertFalse(expectations_perfil["sessionCookieSameSite"]["required"])
-        self.assertFalse(expectations_perfil["csrfCookieSameSite"]["required"])
-        self.assertTrue(expectations_perfil["cacheBackend"]["ok"])
-        self.assertTrue(expectations_perfil["cacheLocation"]["ok"])
-        self.assertIn(
-            "--perfil-legado-producao",
-            payload_perfil["strictServerCommandResolved"],
-        )
-        self.assertIn(
-            "--ambiente=producao",
-            payload_perfil["strictServerCommandResolved"],
-        )
-        self.assertIn(
-            "--esperar-session-cookie-domain=.taquiondev.com.br",
-            payload_perfil["strictServerCommandResolved"],
-        )
-        self.assertIn(
-            "--esperar-csrf-cookie-domain=.taquiondev.com.br",
-            payload_perfil["strictServerCommandResolved"],
-        )
-        self.assertIn(
-            "--esperar-cache-backend=django.core.cache.backends.redis.RedisCache",
-            payload_perfil["strictServerCommandResolved"],
-        )
-        self.assertIn(
-            "--esperar-cache-location=redis://127.0.0.1:6379/1",
-            payload_perfil["strictServerCommandResolved"],
-        )
-        self.assertIn(
-            "Ambiente: producao",
-            payload_perfil["executionRecord"]["markdown"],
-        )
-        self.assertIn(
-            "Perfil de ambiente: legado-producao",
-            payload_perfil["executionRecord"]["markdown"],
-        )
-        self.assertIn(
-            "Defaults do perfil de ambiente: ambiente=producao",
-            payload_perfil["executionRecord"]["markdown"],
-        )
-        self.assertIn(
-            "Defaults aplicados do perfil de ambiente: ambiente=producao",
-            payload_perfil["executionRecord"]["markdown"],
-        )
-        self.assertIn(
-            "Overrides do perfil de ambiente: -",
-            payload_perfil["executionRecord"]["markdown"],
-        )
-        self.assertIn(
-            "CACHE_LOCATION esperado=redis://127.0.0.1:6379/1",
-            payload_perfil["executionRecord"]["markdown"],
-        )
-
-        saida_perfil_com_override = StringIO()
-        call_command(
-            "validar_baseline_pm02",
-            "--json",
-            "--perfil-legado-producao",
-            "--ambiente=homologacao",
-            f"--esperar-database-engine={connection.settings_dict['ENGINE']}",
-            stdout=saida_perfil_com_override,
-        )
-        payload_perfil_com_override = json.loads(
-            saida_perfil_com_override.getvalue()
-        )
-
-        self.assertTrue(
-            payload_perfil_com_override["ready"],
-            payload_perfil_com_override["issues"],
-        )
-        self.assertEqual(
-            payload_perfil_com_override["serverEvidence"]["environmentLabel"],
-            "homologacao",
-        )
-        self.assertEqual(
-            payload_perfil_com_override["environmentProfileDefaults"]["ambiente"],
-            "producao",
-        )
-        self.assertNotIn(
-            "ambiente",
-            payload_perfil_com_override["environmentProfileDefaultsApplied"],
-        )
-        self.assertEqual(
-            payload_perfil_com_override["environmentProfileOverrides"]["ambiente"][
-                "profileDefault"
-            ],
-            "producao",
-        )
-        self.assertEqual(
-            payload_perfil_com_override["environmentProfileOverrides"]["ambiente"][
-                "effective"
-            ],
-            "homologacao",
-        )
-        self.assertIn(
-            "Overrides do perfil de ambiente: ambiente: default=producao; efetivo=homologacao",
-            payload_perfil_com_override["executionRecord"]["markdown"],
-        )
-        self.assertIn(
-            "--ambiente=homologacao",
-            payload_perfil_com_override["strictServerCommandResolved"],
-        )
-        self.assertNotIn(
-            "--ambiente=producao",
-            payload_perfil_com_override["strictServerCommandResolved"],
-        )
-        self.assertIn(
-            f"--esperar-database-engine={connection.settings_dict['ENGINE']}",
-            payload_perfil_com_override["strictServerCommandResolved"],
-        )
+        with self.assertRaisesMessage(
+            CommandError,
+            "O perfil legado --perfil-legado-producao esta desativado no RH SaaS",
+        ):
+            call_command(
+                "validar_baseline_pm02",
+                "--json",
+                "--perfil-legado-producao",
+                stdout=StringIO(),
+            )
 
         with self.assertRaisesMessage(
             CommandError,
@@ -37609,8 +37472,8 @@ class FiltrosHtmlTests(TenantScopedTestCase):
         response = self.client.get(
             reverse("caixa:api_mes_financeiro"),
             {
-                "data_inicial": "2026-06-01",
-                "data_final": "2026-06-30",
+                "startDate": "2026-06-01",
+                "endDate": "2026-06-30",
             },
         )
         payload = response.json()
@@ -40921,7 +40784,11 @@ class FiltrosHtmlTests(TenantScopedTestCase):
         self.assertFalse(inline.has_add_permission(request, obj=parcela_paga))
         self.assertTrue(inline.has_add_permission(request, obj=parcela_parcial))
 
-    def test_prorrogacao_de_parcelas_ignora_parcela_sem_saldo_real(self):
+    @patch("django.utils.timezone.localdate", return_value=date(2026, 6, 15))
+    def test_prorrogacao_de_parcelas_ignora_parcela_sem_saldo_real(
+        self,
+        _localdate,
+    ):
         usuario = User.objects.create_user("usuario-prorrogacao", password="senha")
         divida = DividaFinanceira.objects.create(
             descricao="Divida para prorrogacao",
@@ -40963,7 +40830,11 @@ class FiltrosHtmlTests(TenantScopedTestCase):
         self.assertEqual(parcela_sem_saldo.data_vencimento_atual, date(2026, 6, 10))
         self.assertEqual(parcela_sem_saldo.status, "aberta")
 
-    def test_pagamento_parcial_recalcula_status_de_parcela_prorrogada(self):
+    @patch("django.utils.timezone.localdate", return_value=date(2026, 6, 15))
+    def test_pagamento_parcial_recalcula_status_de_parcela_prorrogada(
+        self,
+        _localdate,
+    ):
         criar_entrada_caixa_teste(data=date(2026, 5, 1))
         usuario = User.objects.create_user("usuario-prorrogada-parcial", password="senha")
         divida = DividaFinanceira.objects.create(
