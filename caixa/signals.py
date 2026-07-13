@@ -37,6 +37,7 @@ from .services_modelagem_canonica import (
 from .services_dividas_fcf import sincronizar_entrada_fcf_divida
 from .services_pagamentos_servico import sincronizar_pagamento_servico_e_recalcular_evento
 from .services_sincronizacao import sincronizar_evento_financeiro
+from .signal_utils import exclusao_originada_por_evento
 
 @receiver(post_migrate)
 def criar_grupos_permissoes(sender, using, **kwargs):
@@ -61,6 +62,9 @@ def atualizar_despesas_apos_salvar_custo_servico(sender, instance, **kwargs):
 
 @receiver(post_delete, sender=EventoCustoServico)
 def atualizar_despesas_apos_excluir_custo_servico(sender, instance, **kwargs):
+    if exclusao_originada_por_evento(kwargs.get("origin")):
+        return
+
     sincronizar_evento_financeiro(instance.evento)
 
 
@@ -75,6 +79,9 @@ def atualizar_despesas_apos_salvar_custo_extra(sender, instance, **kwargs):
 
 @receiver(post_delete, sender=EventoCustoExtra)
 def atualizar_despesas_apos_excluir_custo_extra(sender, instance, **kwargs):
+    if exclusao_originada_por_evento(kwargs.get("origin")):
+        return
+
     sincronizar_evento_financeiro(instance.evento)
 
 
@@ -102,6 +109,9 @@ def atualizar_despesas_apos_salvar_pagamento_servico(sender, instance, **kwargs)
 
 @receiver(post_delete, sender=PagamentoEventoCustoServico)
 def atualizar_despesas_apos_excluir_pagamento_servico(sender, instance, **kwargs):
+    if exclusao_originada_por_evento(kwargs.get("origin")):
+        return
+
     sincronizar_pagamento_servico_e_recalcular_evento(instance.custo_servico.evento)
     sincronizar_obrigacoes_custo_servico_canonicas(instance.custo_servico)
 
@@ -110,6 +120,8 @@ def atualizar_despesas_apos_excluir_pagamento_servico(sender, instance, **kwargs
 @receiver(post_delete, sender=DespesaOperacional)
 def recalcular_evento_apos_excluir_movimento(sender, instance, **kwargs):
     if kwargs.get("raw"):
+        return
+    if exclusao_originada_por_evento(kwargs.get("origin")):
         return
 
     recalcular_evento_realizado_apos_commit(instance.evento_id)
@@ -287,6 +299,8 @@ def sincronizar_lancamento_apos_salvar_pagamento_extra(sender, instance, **kwarg
 @receiver(post_delete, sender=PagamentoEventoCustoExtra)
 def sincronizar_obrigacao_apos_excluir_pagamento_extra(sender, instance, **kwargs):
     if kwargs.get("raw"):
+        return
+    if exclusao_originada_por_evento(kwargs.get("origin")):
         return
 
     sincronizar_obrigacao_custo_extra_canonica(instance.custo_extra)
