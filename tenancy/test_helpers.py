@@ -3,8 +3,9 @@ from datetime import date
 
 from django.contrib.auth import get_user_model
 from django.db import connection
-from django.test import Client
-from django_tenants.test.cases import TenantTestCase
+from django.test import Client, override_settings
+from django.urls import clear_url_caches
+from django_tenants.test.cases import FastTenantTestCase, TenantTestCase
 from django_tenants.utils import get_public_schema_name, schema_context
 
 from caixa.models import Cliente, Evento
@@ -12,6 +13,74 @@ from tenancy.models import Domain, Tenant
 
 
 OPERATIONAL_GROUPS = ("Administrador", "Financeiro", "Operacional")
+
+
+class TenantAppTestCase(FastTenantTestCase):
+    """Base rápida para testes de apps instalados somente nos tenants."""
+
+    test_schema_name = "tenant_app_tests"
+    test_tenant_name = "Tenant App Tests"
+    test_tenant_domain = "testserver"
+
+    @classmethod
+    def get_test_schema_name(cls):
+        return cls.test_schema_name
+
+    @classmethod
+    def get_test_tenant_domain(cls):
+        return cls.test_tenant_domain
+
+    @classmethod
+    def setup_tenant(cls, tenant):
+        tenant.name = cls.test_tenant_name
+
+    @classmethod
+    def setup_domain(cls, domain):
+        domain.is_primary = True
+
+    @classmethod
+    def use_existing_tenant(cls):
+        cls.domain = cls.tenant.get_primary_domain()
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tenant_urlconf_override = override_settings(
+            ROOT_URLCONF="config.test_tenant_urls"
+        )
+        cls._tenant_urlconf_override.enable()
+        clear_url_caches()
+        try:
+            super().setUpClass()
+        except Exception:
+            cls._tenant_urlconf_override.disable()
+            clear_url_caches()
+            raise
+
+    @classmethod
+    def tearDownClass(cls):
+        try:
+            super().tearDownClass()
+        finally:
+            cls._tenant_urlconf_override.disable()
+            clear_url_caches()
+
+    @classmethod
+    def _pre_setup(cls):
+        # Outro TestCase pode ter deixado a conexão em public. Reative o tenant
+        # antes de abrir a transação de isolamento do próximo teste.
+        connection.set_tenant(cls.tenant)
+        super()._pre_setup()
+        connection.set_tenant(cls.tenant)
+
+    @classmethod
+    def create_tenant_user(cls, username="tenant-test-user", password=None, **extra):
+        if connection.schema_name != cls.tenant.schema_name:
+            connection.set_tenant(cls.tenant)
+        return get_user_model().objects.create_user(
+            username=username,
+            password=password,
+            **extra,
+        )
 
 
 @contextmanager

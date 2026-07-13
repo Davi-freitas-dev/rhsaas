@@ -27,8 +27,9 @@ from django.test import Client, RequestFactory, TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import NoReverseMatch, clear_url_caches, reverse
 from django.utils import timezone
-from django_tenants.test.cases import TenantTestCase
 from rest_framework.throttling import SimpleRateThrottle
+
+from tenancy.test_helpers import TenantAppTestCase
 
 from .admin import (
     CredorAdmin,
@@ -194,18 +195,8 @@ from .services_pagamentos_servico import registrar_pagamento_custo_servico_com_l
 from .utils_request import filtros_texto, normalizar_data_iso, normalizar_mes_iso
 
 
-class TenantScopedTestCase(TenantTestCase):
-    @classmethod
-    def setup_tenant(cls, tenant):
-        tenant.name = "Tenant Teste"
-
-    @classmethod
-    def setup_domain(cls, domain):
-        domain.is_primary = True
-
-    @classmethod
-    def get_test_tenant_domain(cls):
-        return "testserver"
+class TenantScopedTestCase(TenantAppTestCase):
+    """Compatibilidade para a suíte legada operacional de caixa."""
 
 
 def rest_framework_settings_with_throttle_rates(**rates):
@@ -234,7 +225,7 @@ def criar_entrada_caixa_teste(valor=Decimal("10000.00"), data=date(2026, 1, 1)):
     )
 
 
-class CustoFixoTests(TestCase):
+class CustoFixoTests(TenantScopedTestCase):
     def test_select_for_update_self_restringe_lock_a_tabela_principal_quando_suportado(self):
         with patch.object(connection.features, "has_select_for_update_of", True):
             queryset = select_for_update_self(DespesaOperacional.objects.all())
@@ -298,7 +289,7 @@ class CustoFixoTests(TestCase):
         self.assertTrue(all(not filho.recorrente for filho in filhos))
 
 
-class AliasesSemanticosModelsTests(TestCase):
+class AliasesSemanticosModelsTests(TenantScopedTestCase):
     def test_models_operacionais_publicam_contas_pendentes(self):
         cliente = Cliente.objects.create(
             nome_razao_social="Cliente Aliases",
@@ -372,7 +363,7 @@ class AliasesSemanticosModelsTests(TestCase):
         self.assertNotIn("saldo_transporte", EventoCustoServicoAdmin.readonly_fields)
 
 
-class DatasTests(TestCase):
+class DatasTests(TenantScopedTestCase):
     def test_adicionar_meses_respeita_ultimo_dia_do_mes(self):
         self.assertEqual(adicionar_meses(date(2026, 1, 31), 1), date(2026, 2, 28))
         self.assertEqual(adicionar_meses(date(2024, 1, 31), 1), date(2024, 2, 29))
@@ -3067,7 +3058,7 @@ class DatasTests(TestCase):
         self.assertEqual(contexto["movimentacoes"][0]["tipo"], "Movimentação de financiamento")
 
 
-class RecalculoExclusaoTests(TestCase):
+class RecalculoExclusaoTests(TenantScopedTestCase):
     def setUp(self):
         self.cliente = Cliente.objects.create(
             nome_razao_social="Cliente Recalculo",
@@ -3186,7 +3177,7 @@ class RecalculoExclusaoTests(TestCase):
         self.assertEqual(divida.status, "ativa")
 
 
-class FechamentoPorValorMenorTests(TestCase):
+class FechamentoPorValorMenorTests(TenantScopedTestCase):
     def setUp(self):
         criar_entrada_caixa_teste(data=date(2026, 5, 1))
 
@@ -3546,7 +3537,7 @@ class FechamentoPorValorMenorTests(TestCase):
         self.assertEqual(despesa_extra.status, "pago")
 
 
-class CaixaTravadoTests(TestCase):
+class CaixaTravadoTests(TenantScopedTestCase):
     def setUp(self):
         self.cliente = Cliente.objects.create(
             nome_razao_social="Cliente Caixa Travado",
@@ -4893,7 +4884,7 @@ class OrcamentoItemTests(TenantScopedTestCase):
         self.assertEqual(evento.custo_total_realizado, Decimal("40.00"))
 
 
-class RecadastroManualPm06Tests(TestCase):
+class RecadastroManualPm06Tests(TenantScopedTestCase):
     def test_comando_validar_prontidao_base_limpa_pm06_bloqueia_sem_evidencias(self):
         saida = StringIO()
         call_command("validar_prontidao_base_limpa_pm06", "--json", stdout=saida)
@@ -5326,7 +5317,7 @@ class UrlsTests(TestCase):
             reverse("caixa:aprovar_orcamento", args=[1])
 
 
-class ApiDocsUrlsTests(TestCase):
+class ApiDocsUrlsTests(TenantScopedTestCase):
     api_docs_routes = {
         "api_schema": "/api/schema/",
         "api_docs": "/api/docs/",
@@ -5335,8 +5326,10 @@ class ApiDocsUrlsTests(TestCase):
 
     def _reload_config_urls(self):
         import config.urls as config_urls
+        import config.tenant_urls as tenant_urls
 
         clear_url_caches()
+        importlib.reload(tenant_urls)
         importlib.reload(config_urls)
         clear_url_caches()
 
@@ -5400,7 +5393,7 @@ class ApiDocsUrlsTests(TestCase):
             self._reload_config_urls()
 
 
-class PermissoesTests(TestCase):
+class PermissoesTests(TenantScopedTestCase):
     auth_frontend_origin = "http://localhost:3000"
 
     def _auth_csrf_token(self, client):
@@ -6587,7 +6580,7 @@ class PermissoesTests(TestCase):
                 self.assertEqual(response.status_code, 200)
 
 
-class SmokeViewsTests(TestCase):
+class SmokeViewsTests(TenantScopedTestCase):
     def setUp(self):
         self.superuser = User.objects.create_superuser(
             "super-smoke",
@@ -7801,7 +7794,7 @@ class SmokeViewsTests(TestCase):
 
 
 @override_settings(STORAGES=TEST_STATICFILES_STORAGES)
-class SegurancaTests(TestCase):
+class SegurancaTests(TenantScopedTestCase):
     def _assert_json_no_store(self, response):
         self.assertEqual(response["Content-Type"], "application/json")
         self.assertIn("no-store", response["Cache-Control"])
@@ -8758,7 +8751,7 @@ class ServicosApiTenantTests(TenantScopedTestCase):
         self.assertEqual(servico.unidade_cobranca, Servico.UNIDADE_COBRANCA_DIARIA)
 
 
-class FiltrosHtmlTests(TestCase):
+class FiltrosHtmlTests(TenantScopedTestCase):
     def setUp(self):
         self.user = User.objects.create_user(
             username="tester",
@@ -8801,10 +8794,11 @@ class FiltrosHtmlTests(TestCase):
         self.user.user_permissions.add(*permissoes)
 
     def _criar_cliente_evento_overview(self, sufixo, data_evento):
+        sequencia_documento = Cliente.objects.count() + 1
         cliente = Cliente.objects.create(
             nome_razao_social=f"Cliente Overview {sufixo}",
             tipo_pessoa="PJ",
-            cpf_cnpj=f"91.000.000/000{sufixo}-90",
+            cpf_cnpj=f"91.{sequencia_documento:03d}.000/0001-{sequencia_documento % 100:02d}",
         )
         evento = Evento.objects.create(
             cliente=cliente,
@@ -41259,7 +41253,7 @@ class FiltrosHtmlTests(TestCase):
         self.assertEqual(grupo["lucro_real"], Decimal("320.00"))
 
 
-class RecuperacaoSenhaTests(TestCase):
+class RecuperacaoSenhaTests(TenantScopedTestCase):
     def setUp(self):
         cache.clear()
         User.objects.create_user(
@@ -41284,7 +41278,7 @@ class RecuperacaoSenhaTests(TestCase):
         self.assertEqual(len(mail.outbox), 1)
 
 
-class PagamentosEventoTests(TestCase):
+class PagamentosEventoTests(TenantScopedTestCase):
     def setUp(self):
         criar_entrada_caixa_teste(data=date(2026, 5, 1))
         self.cliente = Cliente.objects.create(
@@ -44040,7 +44034,7 @@ class PagamentosEventoTests(TestCase):
         self.assertIsNone(despesa.origem_custo_extra_id)
 
 
-class ModelagemIntegridadeBancoTests(TestCase):
+class ModelagemIntegridadeBancoTests(TenantScopedTestCase):
     def test_configuracao_financeira_permite_apenas_uma_ativa_no_banco(self):
         ConfiguracaoFinanceira.objects.create(
             nome="Padrao",
@@ -44097,7 +44091,7 @@ class ModelagemIntegridadeBancoTests(TestCase):
         self.assertIn("dia_vencimento", erros)
 
 
-class LancamentoFinanceiroDominioTests(TestCase):
+class LancamentoFinanceiroDominioTests(TenantScopedTestCase):
     def setUp(self):
         self.cliente = Cliente.objects.create(
             nome_razao_social="Cliente Lancamento Financeiro",
@@ -45221,7 +45215,7 @@ class LancamentoFinanceiroDominioTests(TestCase):
         self.assertIn("tipo", contexto.exception.message_dict)
 
 
-class ModelagemFinanceiraCanonicaTests(TestCase):
+class ModelagemFinanceiraCanonicaTests(TenantScopedTestCase):
     def setUp(self):
         self.cliente = Cliente.objects.create(
             nome_razao_social="Cliente Modelagem Canonica",
@@ -47455,7 +47449,7 @@ class ModelagemFinanceiraCanonicaTests(TestCase):
         self.assertEqual(alocacao.valor_alocado, Decimal("40.00"))
 
 
-class ContratoVisualEventoDominioTests(TestCase):
+class ContratoVisualEventoDominioTests(TenantScopedTestCase):
     def setUp(self):
         self.cliente = Cliente.objects.create(
             nome_razao_social="Cliente Contrato Visual",
@@ -48226,7 +48220,7 @@ class OrcamentosHoraTenantTests(TenantScopedTestCase):
         self.assertFalse(item.usa_regra_especial)
 
 
-class OrcamentosApiTests(TestCase):
+class OrcamentosApiTests(TenantScopedTestCase):
     def setUp(self):
         self.cliente = Cliente.objects.create(
             nome_razao_social="Cliente API Orcamento",
@@ -48405,6 +48399,8 @@ class OrcamentosApiTests(TestCase):
                 "unitRateUsed",
                 "billedHoursQuantity",
                 "dailyRateUsed",
+                "baseHoursUsed",
+                "overtimePercentUsed",
                 "mealAmountUsed",
                 "transportAmountUsed",
                 "profitMarginUsed",
@@ -49589,7 +49585,7 @@ class OrcamentosApiTests(TestCase):
         self.assertEqual(lista_orcamento["saleAmount"], f"{orcamento.total_venda:.2f}")
         self.assertEqual(lista_payload["summary"]["saleAmount"], f"{orcamento.total_venda:.2f}")
 
-    def test_api_orcamento_detalhe_edita_campos_do_item_antes_da_aprovacao(self):
+    def test_api_orcamento_detalhe_edita_campos_permitidos_e_preserva_snapshots(self):
         outro_servico = Servico.objects.create(
             nome="Coordenacao API Orcamento",
             codigo="coordenacao-api-orcamento",
@@ -49618,19 +49614,19 @@ class OrcamentosApiTests(TestCase):
             ("hoursPerDay", 9, "horas_por_dia", 9),
             ("daysCount", 3, "quantidade_dias", 3),
             ("peopleCount", 4, "quantidade_pessoas", 4),
-            ("unitRateUsed", "166.50", "valor_unitario_usado", Decimal("166.50")),
+            ("unitRateUsed", "166.50", "valor_unitario_usado", Decimal("100.00")),
             (
                 "billedHoursQuantity",
                 "2.50",
                 "quantidade_horas_cobradas",
                 Decimal("2.50"),
             ),
-            ("dailyRateUsed", "155.50", "valor_diaria_usada", Decimal("155.50")),
+            ("dailyRateUsed", "155.50", "valor_diaria_usada", Decimal("100.00")),
             ("mealAmountUsed", "31.25", "valor_alimentacao_usado", Decimal("31.25")),
             ("transportAmountUsed", "19.75", "valor_transporte_usado", Decimal("19.75")),
             ("profitMarginUsed", "0.42", "margem_lucro_usada", Decimal("0.42")),
             ("taxRateUsed", "0.09", "aliquota_imposto_usada", Decimal("0.09")),
-            ("usesSpecialRule", True, "usa_regra_especial", True),
+            ("usesSpecialRule", True, "usa_regra_especial", False),
         ]
 
         for api_field, api_value, model_field, expected_value in casos:
@@ -49866,10 +49862,10 @@ class OrcamentosApiTests(TestCase):
         self.assertEqual(response_sem_permissao.status_code, 403)
         self.assertEqual(response_sem_permissao.json(), {"detail": "Permission denied."})
         self._assert_json_no_store(response_sem_permissao)
-        self.assertEqual(response_nao_superuser.status_code, 400)
+        self.assertEqual(response_nao_superuser.status_code, 403)
         self.assertEqual(
             response_nao_superuser.json(),
-            {"detail": "Apenas superusuários podem aprovar orçamentos por esta tela."},
+            {"detail": "Permission denied."},
         )
         self._assert_json_no_store(response_nao_superuser)
         self._assert_django_404_padrao(response_inexistente)
@@ -49965,9 +49961,9 @@ class OrcamentosApiTests(TestCase):
             response.json(),
             {
                 "detail": (
-                    "Não foi possível aprovar o contrato ORC-API-APROVAR-SEM-ITENS: "
-                    "['Não é possível aprovar um orçamento sem itens.']"
-                )
+                    "Não foi possível aprovar o orçamento. "
+                    "Tente novamente ou contate o suporte."
+                ),
             },
         )
         self._assert_json_no_store(response)
@@ -50057,7 +50053,7 @@ class OrcamentosApiTests(TestCase):
         self.assertEqual(payload["event"]["number"], "EVT-ORC-API-APROVAR")
 
 
-class EventosApiTests(TestCase):
+class EventosApiTests(TenantScopedTestCase):
     def setUp(self):
         self.cliente = Cliente.objects.create(
             nome_razao_social="Cliente API Evento",
@@ -50736,7 +50732,7 @@ class EventosApiTests(TestCase):
         self.assertEqual(evento.numero, "EVT-API-SEM-CHANGE")
 
 
-class ReceitasApiTests(TestCase):
+class ReceitasApiTests(TenantScopedTestCase):
     def setUp(self):
         self.cliente = Cliente.objects.create(
             nome_razao_social="Cliente API Receita",
@@ -51277,7 +51273,7 @@ class ReceitasApiTests(TestCase):
         self.assertEqual(self.receita.valor_recebido, Decimal("0.00"))
 
 
-class DespesasApiTests(TestCase):
+class DespesasApiTests(TenantScopedTestCase):
     def setUp(self):
         self.cliente = Cliente.objects.create(
             nome_razao_social="Cliente API Despesa",
