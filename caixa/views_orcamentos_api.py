@@ -50,6 +50,8 @@ from .views_clientes_api import JsonBodySafeSessionAuthentication
 
 EDITABLE_BUDGET_STATUSES = {"rascunho", "enviado"}
 ITEM_EDITABLE_VALUE_FIELDS = {
+    "valor_unitario_usado",
+    "valor_diaria_usada",
     "valor_alimentacao_usado",
     "valor_transporte_usado",
     "margem_lucro_usada",
@@ -61,8 +63,6 @@ ITEM_HISTORICAL_SNAPSHOT_FIELDS = {
 }
 ITEM_EXISTING_BACKEND_AUTHORITY_FIELDS = {
     "unidade_cobranca_usada",
-    "valor_unitario_usado",
-    "valor_diaria_usada",
     "usa_regra_especial",
     *ITEM_HISTORICAL_SNAPSHOT_FIELDS,
 }
