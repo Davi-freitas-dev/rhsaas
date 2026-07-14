@@ -837,8 +837,6 @@ def _orcamento_data_from_payload(payload):
 def _backend_authority_values_from_item(item):
     return {
         "unidade_cobranca_usada": item.unidade_cobranca_usada,
-        "valor_unitario_usado": item.valor_unitario_usado,
-        "valor_diaria_usada": item.valor_diaria_usada,
         "usa_regra_especial": item.usa_regra_especial,
         "horas_base_diaria_usada": item.horas_base_diaria_usada,
         "percentual_hora_extra_usado": item.percentual_hora_extra_usado,
