@@ -3800,6 +3800,39 @@ class CaixaTravadoTests(TenantScopedTestCase):
 
 
 class OrcamentoItemTests(TenantScopedTestCase):
+
+    def test_servico_por_diaria_preserva_regra_antiga_de_alimentacao(self):
+        item = OrcamentoItem.objects.create(
+            orcamento=self.orcamento,
+            servico=self.servico,
+            horas_por_dia=Decimal("2.00"),
+            quantidade_dias=5,
+            quantidade_pessoas=2,
+        )
+    
+        self.assertEqual(item.quantidade_alimentacao_por_dia, 0)
+        self.assertEqual(item.gasto_alimentacao_total, Decimal("0.00"))
+
+    def test_servico_por_hora_sempre_usa_uma_alimentacao_por_pessoa_dia(self):
+         servico_hora = Servico.objects.create(
+             nome="Servico por hora com alimentacao",
+             codigo="servico-hora-alimentacao",
+             unidade_cobranca=Servico.UNIDADE_COBRANCA_HORA,
+             valor_unitario=Decimal("100.00"),
+             diaria_padrao=Decimal("100.00"),
+         )
+     
+         item = OrcamentoItem.objects.create(
+             orcamento=self.orcamento,
+             servico=servico_hora,
+             horas_por_dia=Decimal("2.00"),
+             quantidade_dias=5,
+             quantidade_pessoas=2,
+         )
+     
+         self.assertEqual(item.quantidade_alimentacao_por_dia, 1)
+         self.assertEqual(item.gasto_alimentacao_total, Decimal("200.00"))
+
     def setUp(self):
         self.configuracao = ConfiguracaoFinanceira.objects.create(
             nome="Padrao",

@@ -670,26 +670,29 @@ class OrcamentoItem(models.Model):
         return total
 
     def calcular_quantidade_alimentacao(self):
+        if self.unidade_cobranca_usada == Servico.UNIDADE_COBRANCA_HORA:
+            return 1
+    
         horas = self.horas_por_dia
-
+    
         if self.usa_regra_especial:
             return self.calcular_quantidade_alimentacao_regra_especial(horas)
-
+    
         restante = horas
         total = 0
-
+    
         while restante > 0:
-            turno = min(restante, 10)
-
-            if turno <= 4:
+            turno = min(restante, Decimal("10.00"))
+    
+            if turno <= Decimal("4.00"):
                 total += 0
-            elif turno <= 8:
+            elif turno <= Decimal("8.00"):
                 total += 1
             else:
                 total += 2
-
+    
             restante -= turno
-
+    
         return total
 
     def calcular_quantidade_transporte(self):
