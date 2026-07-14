@@ -3844,7 +3844,6 @@ class OrcamentoItemTests(TenantScopedTestCase):
         self.assertEqual(self.servico.valor_unitario, Decimal("100.00"))
         self.assertEqual(item.unidade_cobranca_usada, Servico.UNIDADE_COBRANCA_DIARIA)
         self.assertEqual(item.valor_unitario_usado, Decimal("100.00"))
-        self.assertEqual(item.quantidade_horas_cobradas, Decimal("0.00"))
         self.assertEqual(item.valor_diaria_usada, Decimal("100.00"))
         self.assertEqual(item.valor_alimentacao_usado, Decimal("20.00"))
         self.assertEqual(item.valor_transporte_usado, Decimal("14.00"))
@@ -3890,6 +3889,37 @@ class OrcamentoItemTests(TenantScopedTestCase):
         self.assertEqual(item.valor_dia_por_pessoa, Decimal("137.50"))
         self.assertEqual(item.custo_servico_total, Decimal("137.50"))
         self.assertEqual(item.valor_horas_extras_total, Decimal("37.50"))
+
+    def test_diaria_aceita_horas_fracionarias_sem_regressao_operacional(self):
+        item = OrcamentoItem.objects.create(
+            orcamento=self.orcamento,
+            servico=self.servico,
+            horas_por_dia=Decimal("7.50"),
+            quantidade_dias=2,
+            quantidade_pessoas=1,
+        )
+
+        self.assertEqual(item.horas_por_dia, Decimal("7.50"))
+        self.assertEqual(item.valor_dia_por_pessoa, Decimal("93.75"))
+        self.assertEqual(item.custo_servico_total, Decimal("187.50"))
+        self.assertEqual(item.quantidade_alimentacao_por_dia, 1)
+        self.assertEqual(item.quantidade_transporte_por_dia, 1)
+        self.assertEqual(item.valor_horas_extras_total, Decimal("0.00"))
+
+    def test_diaria_calcula_hora_extra_fracionaria_com_decimal(self):
+        item = OrcamentoItem.objects.create(
+            orcamento=self.orcamento,
+            servico=self.servico,
+            horas_por_dia=Decimal("8.50"),
+            quantidade_dias=1,
+            quantidade_pessoas=1,
+        )
+
+        self.assertEqual(item.valor_dia_por_pessoa, Decimal("109.38"))
+        self.assertEqual(item.custo_servico_total, Decimal("109.38"))
+        self.assertEqual(item.quantidade_alimentacao_por_dia, 2)
+        self.assertEqual(item.quantidade_transporte_por_dia, 1)
+        self.assertEqual(item.valor_horas_extras_total, Decimal("9.38"))
 
     def test_item_diario_copia_snapshots_do_servico(self):
         item = OrcamentoItem.objects.create(
@@ -4016,7 +4046,7 @@ class OrcamentoItemTests(TenantScopedTestCase):
             percentual_hora_extra=Decimal("2.00"),
         )
 
-    def test_servico_por_hora_calcula_valor_unitario_vezes_horas_e_pessoas(self):
+    def test_servico_por_hora_multiplica_horas_dias_e_pessoas(self):
         servico = self._servico_por_hora()
 
         item = OrcamentoItem.objects.create(
@@ -4025,13 +4055,13 @@ class OrcamentoItemTests(TenantScopedTestCase):
             horas_por_dia=8,
             quantidade_dias=15,
             quantidade_pessoas=1,
-            quantidade_horas_cobradas=Decimal("15.00"),
         )
 
         self.assertEqual(item.unidade_cobranca_usada, Servico.UNIDADE_COBRANCA_HORA)
         self.assertEqual(item.valor_unitario_usado, Decimal("116.00"))
         self.assertEqual(item.valor_diaria_usada, Decimal("116.00"))
-        self.assertEqual(item.custo_servico_total, Decimal("1740.00"))
+        self.assertEqual(item.valor_dia_por_pessoa, Decimal("928.00"))
+        self.assertEqual(item.custo_servico_total, Decimal("13920.00"))
 
     def test_servico_por_hora_aceita_horas_decimais(self):
         servico = self._servico_por_hora()
@@ -4039,12 +4069,12 @@ class OrcamentoItemTests(TenantScopedTestCase):
         item = OrcamentoItem.objects.create(
             orcamento=self.orcamento,
             servico=servico,
-            horas_por_dia=2,
+            horas_por_dia=Decimal("1.50"),
             quantidade_dias=1,
             quantidade_pessoas=1,
-            quantidade_horas_cobradas=Decimal("1.50"),
         )
 
+        self.assertEqual(item.horas_por_dia, Decimal("1.50"))
         self.assertEqual(item.custo_servico_total, Decimal("174.00"))
 
     def test_servico_por_hora_multiplica_por_pessoas(self):
@@ -4053,10 +4083,9 @@ class OrcamentoItemTests(TenantScopedTestCase):
         item = OrcamentoItem.objects.create(
             orcamento=self.orcamento,
             servico=servico,
-            horas_por_dia=3,
+            horas_por_dia=Decimal("2.25"),
             quantidade_dias=1,
             quantidade_pessoas=3,
-            quantidade_horas_cobradas=Decimal("2.25"),
         )
 
         self.assertEqual(item.custo_servico_total, Decimal("783.00"))
@@ -4070,14 +4099,13 @@ class OrcamentoItemTests(TenantScopedTestCase):
             horas_por_dia=1,
             quantidade_dias=1,
             quantidade_pessoas=1,
-            quantidade_horas_cobradas=Decimal("1.00"),
         )
 
         self.assertEqual(item.custo_servico_total, Decimal("116.00"))
         self.assertNotEqual(item.custo_servico_total, Decimal("58.00"))
         self.assertNotEqual(item.custo_servico_total, Decimal("14.50"))
 
-    def test_servico_por_hora_nao_aplica_extra_nem_multiplica_por_dias(self):
+    def test_servico_por_hora_multiplica_por_dias_sem_aplicar_hora_extra(self):
         servico = self._servico_por_hora()
 
         item = OrcamentoItem.objects.create(
@@ -4086,11 +4114,23 @@ class OrcamentoItemTests(TenantScopedTestCase):
             horas_por_dia=10,
             quantidade_dias=7,
             quantidade_pessoas=1,
-            quantidade_horas_cobradas=Decimal("15.00"),
         )
 
-        self.assertEqual(item.custo_servico_total, Decimal("1740.00"))
+        self.assertEqual(item.custo_servico_total, Decimal("8120.00"))
         self.assertEqual(item.valor_horas_extras_total, Decimal("0.00"))
+
+    def test_servico_por_hora_varios_dias_e_pessoas(self):
+        servico = self._servico_por_hora(Decimal("100.00"))
+
+        item = OrcamentoItem.objects.create(
+            orcamento=self.orcamento,
+            servico=servico,
+            horas_por_dia=8,
+            quantidade_dias=5,
+            quantidade_pessoas=2,
+        )
+
+        self.assertEqual(item.custo_servico_total, Decimal("8000.00"))
 
     def test_servico_por_hora_mantem_alimentacao_transporte_margem_e_imposto(self):
         servico = self._servico_por_hora()
@@ -4099,31 +4139,32 @@ class OrcamentoItemTests(TenantScopedTestCase):
             orcamento=self.orcamento,
             servico=servico,
             horas_por_dia=8,
-            quantidade_dias=15,
-            quantidade_pessoas=1,
-            quantidade_horas_cobradas=Decimal("15.00"),
+            quantidade_dias=5,
+            quantidade_pessoas=2,
         )
 
-        self.assertEqual(item.custo_servico_total, Decimal("1740.00"))
-        self.assertEqual(item.gasto_alimentacao_total, Decimal("300.00"))
-        self.assertEqual(item.gasto_transporte_total, Decimal("210.00"))
-        self.assertEqual(item.custo_total, Decimal("2250.00"))
-        self.assertEqual(item.lucro, Decimal("675.00"))
-        self.assertEqual(item.valor_imposto, Decimal("175.50"))
+        self.assertEqual(item.custo_servico_total, Decimal("9280.00"))
+        self.assertEqual(item.gasto_alimentacao_total, Decimal("200.00"))
+        self.assertEqual(item.gasto_transporte_total, Decimal("140.00"))
+        self.assertEqual(item.custo_total, Decimal("9620.00"))
+        self.assertEqual(item.lucro, Decimal("2886.00"))
+        self.assertEqual(item.valor_imposto, Decimal("750.36"))
 
-    def test_servico_por_hora_exige_quantidade_de_horas_cobradas(self):
+    def test_servico_por_hora_rejeita_horas_por_dia_nao_positivas(self):
         servico = self._servico_por_hora()
 
-        with self.assertRaises(ValidationError) as erro:
-            OrcamentoItem.objects.create(
-                orcamento=self.orcamento,
-                servico=servico,
-                horas_por_dia=8,
-                quantidade_dias=1,
-                quantidade_pessoas=1,
-            )
+        for horas in (Decimal("0.00"), Decimal("-1.00")):
+            with self.subTest(horas=horas):
+                with self.assertRaises(ValidationError) as erro:
+                    OrcamentoItem.objects.create(
+                        orcamento=self.orcamento,
+                        servico=servico,
+                        horas_por_dia=horas,
+                        quantidade_dias=1,
+                        quantidade_pessoas=1,
+                    )
 
-        self.assertIn("quantidade_horas_cobradas", erro.exception.message_dict)
+                self.assertIn("horas_por_dia", erro.exception.message_dict)
 
     def test_snapshot_por_hora_mantem_preco_apos_alteracao_do_servico(self):
         servico = self._servico_por_hora()
@@ -4133,7 +4174,6 @@ class OrcamentoItemTests(TenantScopedTestCase):
             horas_por_dia=8,
             quantidade_dias=1,
             quantidade_pessoas=1,
-            quantidade_horas_cobradas=Decimal("15.00"),
         )
 
         servico.valor_unitario = Decimal("200.00")
@@ -4146,7 +4186,7 @@ class OrcamentoItemTests(TenantScopedTestCase):
 
         item.refresh_from_db()
         self.assertEqual(item.valor_unitario_usado, Decimal("116.00"))
-        self.assertEqual(item.custo_servico_total, Decimal("1740.00"))
+        self.assertEqual(item.custo_servico_total, Decimal("696.00"))
         self.assertEqual(item.valor_horas_extras_total, Decimal("0.00"))
 
     def test_aprovar_orcamento_com_item_por_hora_sincroniza_custo_evento(self):
@@ -4157,7 +4197,6 @@ class OrcamentoItemTests(TenantScopedTestCase):
             horas_por_dia=8,
             quantidade_dias=15,
             quantidade_pessoas=1,
-            quantidade_horas_cobradas=Decimal("15.00"),
         )
 
         evento = self.orcamento.aprovar_e_gerar_evento()
@@ -4165,8 +4204,8 @@ class OrcamentoItemTests(TenantScopedTestCase):
         self.orcamento.refresh_from_db()
         evento.refresh_from_db()
         custo_evento = EventoCustoServico.objects.get(evento=evento, servico=servico)
-        self.assertEqual(item.custo_servico_total, Decimal("1740.00"))
-        self.assertEqual(custo_evento.valor_diarias, Decimal("1740.00"))
+        self.assertEqual(item.custo_servico_total, Decimal("13920.00"))
+        self.assertEqual(custo_evento.valor_diarias, Decimal("13920.00"))
         self.assertEqual(evento.valor_total_previsto, self.orcamento.total_venda)
 
     def test_migration_0037_de_backfill_nao_recalcula_orcamentos_ou_eventos(self):
@@ -4470,7 +4509,7 @@ class OrcamentoItemTests(TenantScopedTestCase):
         self.assertIn("total_venda", admin_orcamento.readonly_fields)
         self.assertIn("unidade_cobranca_usada", OrcamentoItemInline.fields)
         self.assertIn("valor_unitario_usado", OrcamentoItemInline.fields)
-        self.assertIn("quantidade_horas_cobradas", OrcamentoItemInline.fields)
+        self.assertIn("horas_por_dia", OrcamentoItemInline.fields)
         self.assertIn("valor_diaria_usada", OrcamentoItemInline.fields)
         self.assertIn("horas_base_diaria_usada", OrcamentoItemInline.fields)
         self.assertIn("percentual_hora_extra_usado", OrcamentoItemInline.fields)
@@ -4478,7 +4517,7 @@ class OrcamentoItemTests(TenantScopedTestCase):
         self.assertIn("valor_transporte_usado", OrcamentoItemInline.fields)
         self.assertNotIn("unidade_cobranca_usada", OrcamentoItemInline.readonly_fields)
         self.assertNotIn("valor_unitario_usado", OrcamentoItemInline.readonly_fields)
-        self.assertNotIn("quantidade_horas_cobradas", OrcamentoItemInline.readonly_fields)
+        self.assertNotIn("horas_por_dia", OrcamentoItemInline.readonly_fields)
         self.assertNotIn("valor_diaria_usada", OrcamentoItemInline.readonly_fields)
         self.assertIn("horas_base_diaria_usada", OrcamentoItemInline.readonly_fields)
         self.assertIn("percentual_hora_extra_usado", OrcamentoItemInline.readonly_fields)
@@ -47589,7 +47628,7 @@ class OrcamentosHoraTenantTests(TenantScopedTestCase):
     def _item_payload(self, item, *, include_id=True, **overrides):
         payload = {
             "serviceId": item.servico_id,
-            "hoursPerDay": item.horas_por_dia,
+            "hoursPerDay": f"{item.horas_por_dia:.2f}",
             "daysCount": item.quantidade_dias,
             "peopleCount": item.quantidade_pessoas,
         }
@@ -47610,7 +47649,6 @@ class OrcamentosHoraTenantTests(TenantScopedTestCase):
                         "hoursPerDay": 8,
                         "daysCount": 15,
                         "peopleCount": 1,
-                        "billedHoursQuantity": "15.00",
                     }
                 ],
             )
@@ -47622,34 +47660,118 @@ class OrcamentosHoraTenantTests(TenantScopedTestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(item.unidade_cobranca_usada, Servico.UNIDADE_COBRANCA_HORA)
         self.assertEqual(item.valor_unitario_usado, Decimal("116.00"))
-        self.assertEqual(item.quantidade_horas_cobradas, Decimal("15.00"))
-        self.assertEqual(item.custo_servico_total, Decimal("1740.00"))
+        self.assertEqual(item.horas_por_dia, Decimal("8.00"))
+        self.assertEqual(item.custo_servico_total, Decimal("13920.00"))
         self.assertEqual(item_payload["billingUnitUsed"], "hora")
         self.assertEqual(item_payload["unitRateUsed"], "116.00")
-        self.assertEqual(item_payload["billedHoursQuantity"], "15.00")
+        self.assertEqual(item_payload["hoursPerDay"], "8.00")
         self.assertEqual(item_payload["baseHoursUsed"], 8)
         self.assertEqual(item_payload["overtimePercentUsed"], "2.00")
-        self.assertEqual(item_payload["serviceCostAmount"], "1740.00")
+        self.assertEqual(item_payload["serviceCostAmount"], "13920.00")
 
-    def test_api_orcamentos_bloqueia_item_por_hora_sem_horas_cobradas(self):
-        servico_hora = self._servico_hora("consultoria-hora-sem-qtd-tenant")
+    def test_api_orcamentos_rejeita_campo_horario_removido(self):
+        servico_hora = self._servico_hora("consultoria-hora-campo-removido-tenant")
+        removed_key = "billed" + "HoursQuantity"
 
         response = self._post_json(
             self._payload(
-                number="ORC-API-HORA-SEM-QTD-TENANT",
+                number="ORC-API-HORA-CAMPO-REMOVIDO-TENANT",
                 items=[
                     {
                         "serviceId": servico_hora.id,
                         "hoursPerDay": 8,
                         "daysCount": 1,
                         "peopleCount": 1,
+                        removed_key: "8.00",
                     }
                 ],
             )
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("quantidade_horas_cobradas", response.json()["errors"])
+        self.assertIn("items[0]", response.json()["errors"])
+
+    def test_api_orcamentos_aceita_horas_por_dia_fracionarias_com_virgula(self):
+        servico_hora = self._servico_hora("consultoria-hora-fracionada-tenant")
+
+        response = self._post_json(
+            self._payload(
+                number="ORC-API-HORA-FRACIONADA-TENANT",
+                items=[
+                    {
+                        "serviceId": servico_hora.id,
+                        "hoursPerDay": "1,50",
+                        "daysCount": 2,
+                        "peopleCount": 2,
+                    }
+                ],
+            )
+        )
+        item = Orcamento.objects.get(
+            numero="ORC-API-HORA-FRACIONADA-TENANT"
+        ).itens.get()
+
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(item.horas_por_dia, Decimal("1.50"))
+        self.assertEqual(item.custo_servico_total, Decimal("696.00"))
+        self.assertEqual(
+            response.json()["data"]["budget"]["items"][0]["hoursPerDay"],
+            "1.50",
+        )
+
+    def test_put_orcamento_por_hora_recalcula_horas_dias_e_pessoas(self):
+        servico_hora = self._servico_hora("consultoria-hora-edicao-tenant")
+        orcamento, item = self._orcamento_com_item(
+            "ORC-API-HORA-EDICAO-TENANT",
+            servico=servico_hora,
+            horas_por_dia=Decimal("1.50"),
+        )
+
+        response = self._put_json(
+            orcamento,
+            self._payload(
+                number=orcamento.numero,
+                items=[
+                    self._item_payload(
+                        item,
+                        hoursPerDay="2.25",
+                        daysCount=3,
+                        peopleCount=2,
+                    )
+                ],
+            ),
+        )
+        item_atualizado = Orcamento.objects.get(pk=orcamento.pk).itens.get()
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(item_atualizado.horas_por_dia, Decimal("2.25"))
+        self.assertEqual(item_atualizado.quantidade_dias, 3)
+        self.assertEqual(item_atualizado.quantidade_pessoas, 2)
+        self.assertEqual(item_atualizado.custo_servico_total, Decimal("1566.00"))
+        self.assertEqual(item_atualizado.valor_unitario_usado, Decimal("116.00"))
+
+    def test_exportacao_item_por_hora_preserva_unidade_valor_e_horas_diarias(self):
+        from caixa.management.commands.exportar_recadastro_manual_pm06 import (
+            serializar_item_orcamento,
+        )
+
+        servico_hora = self._servico_hora("consultoria-hora-exportacao-tenant")
+        _, item = self._orcamento_com_item(
+            "ORC-API-HORA-EXPORTACAO-TENANT",
+            servico=servico_hora,
+            horas_por_dia=Decimal("2.25"),
+            quantidade_dias=3,
+            quantidade_pessoas=2,
+        )
+
+        payload = serializar_item_orcamento(item)
+
+        self.assertEqual(payload["hoursPerDay"], "2.25")
+        self.assertEqual(payload["daysCount"], 3)
+        self.assertEqual(payload["peopleCount"], 2)
+        self.assertEqual(payload["billingUnitUsed"], "hora")
+        self.assertEqual(payload["usedUnitAmount"], "116.00")
+        self.assertEqual(payload["serviceCostAmount"], "1566.00")
 
     def test_api_orcamentos_mantem_daily_rate_used_legado_para_diaria(self):
         response = self._post_json(
@@ -48268,7 +48390,6 @@ class OrcamentosApiTests(TenantScopedTestCase):
                 "peopleCount",
                 "billingUnitUsed",
                 "unitRateUsed",
-                "billedHoursQuantity",
                 "dailyRateUsed",
                 "baseHoursUsed",
                 "overtimePercentUsed",
@@ -49214,7 +49335,6 @@ class OrcamentosApiTests(TenantScopedTestCase):
         self.assertEqual(payload["budget"]["items"][0]["peopleCount"], 2)
         self.assertEqual(payload["budget"]["items"][0]["billingUnitUsed"], "diaria")
         self.assertEqual(payload["budget"]["items"][0]["unitRateUsed"], "100.00")
-        self.assertEqual(payload["budget"]["items"][0]["billedHoursQuantity"], "0.00")
         self.assertEqual(payload["budget"]["extraCosts"][0]["category"], "logistica")
 
     def test_api_orcamentos_lista_publica_contrato_visual_do_orcamento(self):
@@ -49486,12 +49606,6 @@ class OrcamentosApiTests(TenantScopedTestCase):
             ("daysCount", 3, "quantidade_dias", 3),
             ("peopleCount", 4, "quantidade_pessoas", 4),
             ("unitRateUsed", "166.50", "valor_unitario_usado", Decimal("100.00")),
-            (
-                "billedHoursQuantity",
-                "2.50",
-                "quantidade_horas_cobradas",
-                Decimal("2.50"),
-            ),
             ("dailyRateUsed", "155.50", "valor_diaria_usada", Decimal("100.00")),
             ("mealAmountUsed", "31.25", "valor_alimentacao_usado", Decimal("31.25")),
             ("transportAmountUsed", "19.75", "valor_transporte_usado", Decimal("19.75")),

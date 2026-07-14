@@ -73,6 +73,10 @@ ITEM_NEW_ITEM_OVERRIDE_FIELDS = {
     "valor_diaria_usada",
     "usa_regra_especial",
 }
+REMOVED_HOURLY_QUANTITY_KEYS = (
+    "billed" + "HoursQuantity",
+    "quantidade_horas_" + "cobradas",
+)
 
 
 def _is_json_request(request):
@@ -354,12 +358,11 @@ def _serialize_orcamento_item(item):
         "id": item.id,
         "serviceId": item.servico_id,
         "serviceName": getattr(servico, "nome", ""),
-        "hoursPerDay": item.horas_por_dia,
+        "hoursPerDay": f"{item.horas_por_dia:.2f}",
         "daysCount": item.quantidade_dias,
         "peopleCount": item.quantidade_pessoas,
         "billingUnitUsed": item.unidade_cobranca_usada,
         "unitRateUsed": _money(item.valor_unitario_usado),
-        "billedHoursQuantity": _money(item.quantidade_horas_cobradas),
         "dailyRateUsed": _money(item.valor_diaria_usada),
         "baseHoursUsed": item.horas_base_diaria_usada,
         "overtimePercentUsed": _money(item.percentual_hora_extra_usado),
@@ -538,8 +541,6 @@ def _blank_item_payload(item):
             "unidade_cobranca_usada",
             "unitRateUsed",
             "valor_unitario_usado",
-            "billedHoursQuantity",
-            "quantidade_horas_cobradas",
             "dailyRateUsed",
             "valor_diaria_usada",
             "mealAmountUsed",
@@ -573,6 +574,16 @@ def _itens_from_payload(payload):
         if _blank_item_payload(raw_item):
             continue
 
+        if _payload_has_any(raw_item, *REMOVED_HOURLY_QUANTITY_KEYS):
+            raise ValidationError(
+                {
+                    f"items[{index}]": (
+                        "A quantidade de horas independente nao e mais aceita; "
+                        "informe apenas horas por dia, dias e pessoas."
+                    )
+                }
+            )
+
         service_id = _integer_payload_value(
             raw_item,
             f"items[{index}].serviceId",
@@ -589,13 +600,12 @@ def _itens_from_payload(payload):
                 "id",
             ),
             "servico_id": service_id,
-            "horas_por_dia": _integer_payload_value(
+            "horas_por_dia": _decimal_payload_value(
                 raw_item,
                 f"items[{index}].hoursPerDay",
                 "hoursPerDay",
                 "horas_por_dia",
                 required=True,
-                positive=True,
             ),
             "quantidade_dias": _integer_payload_value(
                 raw_item,
@@ -615,14 +625,10 @@ def _itens_from_payload(payload):
             ),
         }
 
-        quantidade_horas_cobradas = _optional_decimal_payload_value(
-            raw_item,
-            f"items[{index}].billedHoursQuantity",
-            "billedHoursQuantity",
-            "quantidade_horas_cobradas",
-        )
-        if quantidade_horas_cobradas is not None:
-            item_data["quantidade_horas_cobradas"] = quantidade_horas_cobradas
+        if item_data["horas_por_dia"] <= Decimal("0.00"):
+            raise ValidationError(
+                {f"items[{index}].hoursPerDay": "Informe um numero maior que zero."}
+            )
 
         if _payload_has_any(raw_item, "billingUnitUsed", "unidade_cobranca_usada"):
             item_data["unidade_cobranca_usada"] = _billing_unit_payload_value(

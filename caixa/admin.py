@@ -241,7 +241,6 @@ class OrcamentoItemInline(admin.TabularInline):
         "quantidade_pessoas",
         "unidade_cobranca_usada",
         "valor_unitario_usado",
-        "quantidade_horas_cobradas",
         "valor_diaria_usada",
         "horas_base_diaria_usada",
         "percentual_hora_extra_usado",
@@ -270,7 +269,6 @@ class OrcamentoItemInline(admin.TabularInline):
         labels = {
             "unidade_cobranca_usada": "Unidade de cobranca usada",
             "valor_unitario_usado": "Valor unitario usado",
-            "quantidade_horas_cobradas": "Quantidade de horas cobradas",
             "valor_diaria_usada": "Valor da diaria usado",
             "horas_base_diaria_usada": "Horas base da diaria usadas",
             "percentual_hora_extra_usado": "Percentual de hora extra usado",

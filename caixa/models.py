@@ -430,7 +430,10 @@ class OrcamentoItem(models.Model):
         related_name="itens_orcamento"
     )
 
-    horas_por_dia = models.PositiveIntegerField()
+    horas_por_dia = models.DecimalField(
+        max_digits=4,
+        decimal_places=2,
+    )
     quantidade_dias = models.PositiveIntegerField(default=1)
     quantidade_pessoas = models.PositiveIntegerField(default=1)
 
@@ -441,11 +444,6 @@ class OrcamentoItem(models.Model):
     )
     valor_unitario_usado = models.DecimalField(
         max_digits=10,
-        decimal_places=2,
-        default=Decimal("0.00")
-    )
-    quantidade_horas_cobradas = models.DecimalField(
-        max_digits=8,
         decimal_places=2,
         default=Decimal("0.00")
     )
@@ -520,7 +518,6 @@ class OrcamentoItem(models.Model):
                 condition=(
                     models.Q(valor_diaria_usada__gte=0)
                     & models.Q(valor_unitario_usado__gte=0)
-                    & models.Q(quantidade_horas_cobradas__gte=0)
                     & models.Q(valor_alimentacao_usado__gte=0)
                     & models.Q(valor_transporte_usado__gte=0)
                     & models.Q(margem_lucro_usada__gte=0)
@@ -541,13 +538,6 @@ class OrcamentoItem(models.Model):
             models.CheckConstraint(
                 condition=models.Q(unidade_cobranca_usada__in=["diaria", "hora"]),
                 name="ck_orc_item_unidade_cobranca",
-            ),
-            models.CheckConstraint(
-                condition=(
-                    ~models.Q(unidade_cobranca_usada=Servico.UNIDADE_COBRANCA_HORA)
-                    | models.Q(quantidade_horas_cobradas__gt=0)
-                ),
-                name="ck_orc_item_hora_qtd_pos",
             ),
             models.CheckConstraint(
                 condition=models.Q(horas_base_diaria_usada__gt=0),
@@ -573,12 +563,6 @@ class OrcamentoItem(models.Model):
 
         if self.quantidade_pessoas <= 0:
             erros["quantidade_pessoas"] = "Quantidade de pessoas deve ser maior que zero."
-
-        if self.unidade_cobranca_usada == Servico.UNIDADE_COBRANCA_HORA:
-            if self.quantidade_horas_cobradas <= 0:
-                erros["quantidade_horas_cobradas"] = (
-                    "Quantidade de horas cobradas deve ser maior que zero."
-                )
 
         if self.horas_base_diaria_usada <= 0:
             erros["horas_base_diaria_usada"] = (
@@ -659,12 +643,13 @@ class OrcamentoItem(models.Model):
 
         return self.arredondar2(total)
 
-    def calcular_custo_servico_por_hora(self):
-        return self.arredondar2(
-            self.valor_unitario_usado *
-            self.quantidade_horas_cobradas *
-            self.quantidade_pessoas
-        )
+    def calcular_valor_base_por_pessoa_dia(self):
+        if self.unidade_cobranca_usada == Servico.UNIDADE_COBRANCA_HORA:
+            return self.arredondar2(
+                self.valor_unitario_usado * self.horas_por_dia
+            )
+
+        return self.calcular_valor_dia()
 
     def calcular_quantidade_alimentacao_regra_especial(self, horas):
         restante = horas
@@ -749,7 +734,7 @@ class OrcamentoItem(models.Model):
         cobranca_por_hora = (
             self.unidade_cobranca_usada == Servico.UNIDADE_COBRANCA_HORA
         )
-        valor_dia = Decimal("0.00") if cobranca_por_hora else self.calcular_valor_dia()
+        valor_dia = self.calcular_valor_base_por_pessoa_dia()
         qtd_alimentacao = self.calcular_quantidade_alimentacao()
         qtd_transporte = self.calcular_quantidade_transporte()
 
@@ -760,12 +745,9 @@ class OrcamentoItem(models.Model):
             Decimal(qtd_transporte) * self.valor_transporte_usado
         )
 
-        if cobranca_por_hora:
-            custo_servico_total = self.calcular_custo_servico_por_hora()
-        else:
-            custo_servico_total = self.arredondar2(
-                valor_dia * self.quantidade_dias * self.quantidade_pessoas
-            )
+        custo_servico_total = self.arredondar2(
+            valor_dia * self.quantidade_dias * self.quantidade_pessoas
+        )
         gasto_alimentacao_total = self.arredondar2(
             alimentacao_dia * self.quantidade_dias * self.quantidade_pessoas
         )
