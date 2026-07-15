@@ -5,6 +5,8 @@ from django.db import connection
 from django_tenants.utils import get_public_schema_name
 from rest_framework.throttling import AnonRateThrottle, SimpleRateThrottle, UserRateThrottle
 
+from config.client_ip import get_axes_client_ip
+
 
 def current_schema_name():
     return getattr(connection, "schema_name", None) or get_public_schema_name()
@@ -69,6 +71,26 @@ class BackupDownloadRateThrottle(TenantScopedOperationRateThrottle):
 
 class ExportCsvRateThrottle(TenantScopedOperationRateThrottle):
     scope = "export_csv"
+
+
+class DemoTrustedClientIpThrottleMixin:
+    def get_ident(self, request):
+        django_request = getattr(request, "_request", request)
+        return get_axes_client_ip(django_request) or super().get_ident(request)
+
+
+class DemoLeaseRateThrottle(
+    DemoTrustedClientIpThrottleMixin,
+    TenantScopedOperationRateThrottle,
+):
+    scope = "demo_lease"
+
+
+class DemoExchangeRateThrottle(
+    DemoTrustedClientIpThrottleMixin,
+    TenantScopedOperationRateThrottle,
+):
+    scope = "demo_exchange"
 
 
 def django_rate_limited_response(wait=None):

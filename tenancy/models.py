@@ -47,6 +47,16 @@ class DemoTenantSlot(models.Model):
     assigned_name = models.CharField(max_length=150, blank=True)
     assigned_email = models.EmailField(blank=True)
     assigned_phone = models.CharField(max_length=30, blank=True)
+    visitor_key_hash = models.CharField(max_length=64, blank=True, db_index=True)
+    network_key_hash = models.CharField(max_length=64, blank=True, db_index=True)
+    exchange_token_digest = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        unique=True,
+    )
+    exchange_token_expires_at = models.DateTimeField(null=True, blank=True)
+    exchange_token_consumed_at = models.DateTimeField(null=True, blank=True)
     lease_started_at = models.DateTimeField(null=True, blank=True)
     lease_expires_at = models.DateTimeField(null=True, blank=True)
     last_reset_at = models.DateTimeField(null=True, blank=True)

@@ -1,13 +1,13 @@
-from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection, transaction
 from django.utils import timezone
-from django_tenants.utils import get_public_schema_name, schema_context
+from django_tenants.utils import get_public_schema_name
 
 from tenancy.command_guards import ensure_demo_pool_schema
 from tenancy.management.commands.ocupar_tenant_demo import DEFAULT_USERNAME
 from tenancy.management.commands.provisionar_pool_demo import DEFAULT_DOMAIN_SUFFIX
 from tenancy.models import DemoTenantSlot, Domain
+from tenancy.services_demo_pool import cleanup_demo_tenant_access
 
 
 class Command(BaseCommand):
@@ -58,29 +58,52 @@ class Command(BaseCommand):
         expired_count = 0
         deactivated_count = 0
         missing_user_count = 0
+        sessions_removed = 0
+        axes_rows_removed = 0
+        cache_keys_removed = 0
 
         with transaction.atomic():
             locked_slots = self._select_slots(options.get("slot"), now, for_update=True)
             for slot in locked_slots:
                 schema_name = self._validate_slot(slot)
-                user_deactivated = self._deactivate_user(schema_name, username)
+                cleanup = cleanup_demo_tenant_access(
+                    schema_name,
+                    username=username,
+                )
 
                 slot.status = DemoTenantSlot.Status.EXPIRADO
+                slot.exchange_token_digest = None
+                slot.exchange_token_expires_at = None
+                slot.exchange_token_consumed_at = None
                 slot.full_clean()
-                slot.save(update_fields=["status", "updated_at"])
+                slot.save(
+                    update_fields=[
+                        "status",
+                        "exchange_token_digest",
+                        "exchange_token_expires_at",
+                        "exchange_token_consumed_at",
+                        "updated_at",
+                    ]
+                )
 
                 expired_count += 1
-                if user_deactivated is True:
+                if cleanup["user_deactivated"]:
                     deactivated_count += 1
-                elif user_deactivated is None:
+                else:
                     missing_user_count += 1
+                sessions_removed += cleanup["sessions_removed"]
+                axes_rows_removed += cleanup["axes_rows_removed"]
+                cache_keys_removed += cleanup["cache_keys_removed"]
 
         self.stdout.write(
             self.style.SUCCESS(
                 "Leases demo expirados. "
                 f"slots={expired_count}; "
                 f"usuarios_desativados={deactivated_count}; "
-                f"usuarios_ausentes={missing_user_count}."
+                f"usuarios_ausentes_ou_inativos={missing_user_count}; "
+                f"sessoes_removidas={sessions_removed}; "
+                f"axes_removidos={axes_rows_removed}; "
+                f"cache_removido={cache_keys_removed}."
             )
         )
 
@@ -125,16 +148,3 @@ class Command(BaseCommand):
             )
 
         return schema_name
-
-    def _deactivate_user(self, schema_name, username):
-        with schema_context(schema_name):
-            User = get_user_model()
-            user = User.objects.filter(username=username).first()
-            if user is None:
-                return None
-            if not user.is_active:
-                return False
-
-            user.is_active = False
-            user.save(update_fields=["is_active"])
-            return True

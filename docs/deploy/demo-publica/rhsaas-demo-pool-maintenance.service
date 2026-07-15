@@ -1,0 +1,17 @@
+[Unit]
+Description=RH SaaS - expirar e resetar pool da demo publica
+After=postgresql.service redis-server.service
+ConditionPathExists=/opt/rhsaas/manage.py
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=www-data
+WorkingDirectory=/opt/rhsaas
+Environment="DJANGO_SETTINGS_MODULE=config.settings"
+Environment="PATH=/opt/rhsaas/venv/bin"
+ExecStart=/opt/rhsaas/venv/bin/python manage.py manter_pool_demo --verbosity=1
+TimeoutStartSec=15min
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true

@@ -8,9 +8,11 @@ Group=www-data
 WorkingDirectory=/opt/rhsaas
 Environment="DJANGO_SETTINGS_MODULE=config.settings"
 Environment="PATH=/opt/rhsaas/venv/bin"
-ExecStart=/opt/rhsaas/venv/bin/gunicorn config.wsgi:application --bind 127.0.0.1:8000 --workers 3 --timeout 90 --access-logfile - --error-logfile -
+ExecStart=/opt/rhsaas/venv/bin/gunicorn config.wsgi:application --bind 127.0.0.1:8002 --workers 1 --threads 2 --timeout 90 --access-logfile - --error-logfile -
 Restart=on-failure
 RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target

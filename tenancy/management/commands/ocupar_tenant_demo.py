@@ -10,6 +10,7 @@ from django_tenants.utils import get_public_schema_name, schema_context
 from tenancy.command_guards import ensure_demo_pool_schema
 from tenancy.management.commands.provisionar_pool_demo import DEFAULT_DOMAIN_SUFFIX
 from tenancy.models import DemoTenantSlot, Domain
+from tenancy.services_demo_pool import sync_demo_public_user
 
 
 DEFAULT_LEASE_DAYS = 3
@@ -93,6 +94,11 @@ class Command(BaseCommand):
             slot.assigned_name = tester_name
             slot.assigned_email = tester_email
             slot.assigned_phone = tester_phone
+            slot.visitor_key_hash = ""
+            slot.network_key_hash = ""
+            slot.exchange_token_digest = None
+            slot.exchange_token_expires_at = None
+            slot.exchange_token_consumed_at = None
             slot.lease_started_at = now
             slot.lease_expires_at = now + timedelta(days=duration_days)
             slot.last_assigned_at = now
@@ -103,6 +109,11 @@ class Command(BaseCommand):
                     "assigned_name",
                     "assigned_email",
                     "assigned_phone",
+                    "visitor_key_hash",
+                    "network_key_hash",
+                    "exchange_token_digest",
+                    "exchange_token_expires_at",
+                    "exchange_token_consumed_at",
                     "lease_started_at",
                     "lease_expires_at",
                     "last_assigned_at",
@@ -201,37 +212,15 @@ class Command(BaseCommand):
                         "Para criar usuario demo novo, informe --password-env com "
                         "uma variavel de ambiente contendo a senha inicial."
                     )
-                user = User.objects.create_user(
-                    username=username,
-                    email=email,
-                    password=password,
-                    first_name=name[:150],
-                    is_staff=True,
-                    is_superuser=True,
-                    is_active=True,
-                )
-                return "criado"
+                result = "criado"
+            else:
+                result = "existente" if user.is_active else "ativado"
 
-            update_fields = []
-            if not user.is_active:
-                user.is_active = True
-                update_fields.append("is_active")
-            if user.email != email:
-                user.email = email
-                update_fields.append("email")
-            if user.first_name != name[:150]:
-                user.first_name = name[:150]
-                update_fields.append("first_name")
-            if not user.is_staff:
-                user.is_staff = True
-                update_fields.append("is_staff")
-            if not user.is_superuser:
-                user.is_superuser = True
-                update_fields.append("is_superuser")
-            if password is not None:
-                user.set_password(password)
-                update_fields.append("password")
-            if update_fields:
-                user.save(update_fields=sorted(set(update_fields)))
-                return "ativado"
-            return "existente"
+        sync_demo_public_user(
+            schema_name,
+            username=username,
+            password=password,
+            display_name=name,
+            email=email,
+        )
+        return result

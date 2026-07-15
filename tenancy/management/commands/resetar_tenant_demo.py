@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from django.conf import settings
-from django.contrib.auth.models import Group
 from django.contrib.sessions.models import Session
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection, transaction
@@ -16,7 +15,6 @@ from django_tenants.utils import (
     schema_exists,
 )
 
-from caixa.permissions import PERMISSION_PROFILES, sincronizar_grupos_permissoes
 from caixa.tenant_files import artifacts_root_for_schema
 from tenancy.command_guards import (
     ensure_demo_pool_reset_confirmation,
@@ -24,6 +22,7 @@ from tenancy.command_guards import (
 )
 from tenancy.management.commands.provisionar_pool_demo import DEFAULT_DOMAIN_SUFFIX
 from tenancy.models import DemoTenantSlot, Domain
+from tenancy.services_demo_pool import clear_demo_tenant_cache, seed_demo_tenant
 
 
 ALLOWED_RESET_STATUSES = {
@@ -106,8 +105,10 @@ class Command(BaseCommand):
                 self._mark_reset_in_progress(slot)
 
             sessions_removed = 0
+            cache_keys_removed = 0
             try:
                 sessions_removed = self._delete_tenant_sessions(plan.slot_code)
+                cache_keys_removed = clear_demo_tenant_cache(plan.slot_code)
                 self._drop_schema(plan.slot_code)
                 self._recreate_schema(slot.tenant, verbosity=options.get("verbosity", 1))
                 self._validate_recreated_schema(plan.slot_code)
@@ -127,6 +128,7 @@ class Command(BaseCommand):
                 "Tenant demo resetado. "
                 f"slot={plan.slot_code}; "
                 f"sessoes_removidas={sessions_removed}; "
+                f"cache_removido={cache_keys_removed}; "
                 f"artefatos_removidos={artifacts_removed}; "
                 "status=livre."
             )
@@ -279,18 +281,12 @@ class Command(BaseCommand):
             return bool(cursor.fetchone()[0])
 
     def _sync_minimal_seed(self, schema_name):
-        with schema_context(schema_name):
-            sincronizar_grupos_permissoes()
-            missing_groups = set(PERMISSION_PROFILES) - set(
-                Group.objects.filter(name__in=PERMISSION_PROFILES).values_list(
-                    "name",
-                    flat=True,
-                )
-            )
-            if missing_groups:
-                raise CommandError(
-                    f"Seed minimo de grupos nao foi recriado para {schema_name}."
-                )
+        try:
+            seed_demo_tenant(schema_name)
+        except Exception as exc:
+            raise CommandError(
+                f"Seed da demonstracao nao foi recriado para {schema_name}."
+            ) from exc
 
     def _delete_tenant_artifacts(self, schema_name):
         schema_name = ensure_demo_pool_schema(
@@ -343,6 +339,11 @@ class Command(BaseCommand):
             slot.assigned_name = ""
             slot.assigned_email = ""
             slot.assigned_phone = ""
+            slot.visitor_key_hash = ""
+            slot.network_key_hash = ""
+            slot.exchange_token_digest = None
+            slot.exchange_token_expires_at = None
+            slot.exchange_token_consumed_at = None
             slot.lease_started_at = None
             slot.lease_expires_at = None
             slot.last_reset_at = timezone.now()
@@ -354,6 +355,11 @@ class Command(BaseCommand):
                     "assigned_name",
                     "assigned_email",
                     "assigned_phone",
+                    "visitor_key_hash",
+                    "network_key_hash",
+                    "exchange_token_digest",
+                    "exchange_token_expires_at",
+                    "exchange_token_consumed_at",
                     "lease_started_at",
                     "lease_expires_at",
                     "last_reset_at",

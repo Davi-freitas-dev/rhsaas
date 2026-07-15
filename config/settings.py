@@ -133,6 +133,12 @@ DEFAULT_DRF_THROTTLE_BACKUP_DOWNLOAD_RATE = (
 DEFAULT_DRF_THROTTLE_EXPORT_CSV_RATE = (
     "100000/day" if IS_RUNNING_TESTS else "3/minute"
 )
+DEFAULT_DRF_THROTTLE_DEMO_LEASE_RATE = (
+    "100000/day" if IS_RUNNING_TESTS else "3/hour"
+)
+DEFAULT_DRF_THROTTLE_DEMO_EXCHANGE_RATE = (
+    "100000/day" if IS_RUNNING_TESTS else "10/hour"
+)
 DRF_THROTTLE_ANON_RATE = env_runtime_str(
     "DRF_THROTTLE_ANON_RATE",
     DEFAULT_DRF_THROTTLE_ANON_RATE,
@@ -157,6 +163,47 @@ DRF_THROTTLE_EXPORT_CSV_RATE = env_runtime_str(
     "DRF_THROTTLE_EXPORT_CSV_RATE",
     DEFAULT_DRF_THROTTLE_EXPORT_CSV_RATE,
 )
+DRF_THROTTLE_DEMO_LEASE_RATE = env_runtime_str(
+    "DRF_THROTTLE_DEMO_LEASE_RATE",
+    DEFAULT_DRF_THROTTLE_DEMO_LEASE_RATE,
+)
+DRF_THROTTLE_DEMO_EXCHANGE_RATE = env_runtime_str(
+    "DRF_THROTTLE_DEMO_EXCHANGE_RATE",
+    DEFAULT_DRF_THROTTLE_DEMO_EXCHANGE_RATE,
+)
+
+DEMO_PUBLIC_LEASE_ENABLED = env.bool("DEMO_PUBLIC_LEASE_ENABLED", default=False)
+DEMO_PUBLIC_ENTRY_SCHEMA = env(
+    "DEMO_PUBLIC_ENTRY_SCHEMA",
+    default="rh_teste",
+).strip()
+DEMO_LEASE_DURATION_MINUTES = env.int("DEMO_LEASE_DURATION_MINUTES", default=60)
+DEMO_EXCHANGE_TOKEN_TTL_SECONDS = env.int(
+    "DEMO_EXCHANGE_TOKEN_TTL_SECONDS",
+    default=300,
+)
+DEMO_VISITOR_COOKIE_MAX_AGE = env.int(
+    "DEMO_VISITOR_COOKIE_MAX_AGE",
+    default=86400,
+)
+if not DEMO_PUBLIC_ENTRY_SCHEMA:
+    raise ImproperlyConfigured("DEMO_PUBLIC_ENTRY_SCHEMA nao pode ficar vazio.")
+if DEMO_PUBLIC_ENTRY_SCHEMA in {f"demo{index}" for index in range(1, 11)}:
+    raise ImproperlyConfigured(
+        "DEMO_PUBLIC_ENTRY_SCHEMA nao pode apontar para um slot demo."
+    )
+if not 5 <= DEMO_LEASE_DURATION_MINUTES <= 1440:
+    raise ImproperlyConfigured(
+        "DEMO_LEASE_DURATION_MINUTES deve ficar entre 5 e 1440."
+    )
+if not 60 <= DEMO_EXCHANGE_TOKEN_TTL_SECONDS <= 900:
+    raise ImproperlyConfigured(
+        "DEMO_EXCHANGE_TOKEN_TTL_SECONDS deve ficar entre 60 e 900."
+    )
+if not 3600 <= DEMO_VISITOR_COOKIE_MAX_AGE <= 604800:
+    raise ImproperlyConfigured(
+        "DEMO_VISITOR_COOKIE_MAX_AGE deve ficar entre 3600 e 604800."
+    )
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
@@ -176,6 +223,8 @@ REST_FRAMEWORK = {
         "backup_create": DRF_THROTTLE_BACKUP_CREATE_RATE,
         "backup_download": DRF_THROTTLE_BACKUP_DOWNLOAD_RATE,
         "export_csv": DRF_THROTTLE_EXPORT_CSV_RATE,
+        "demo_lease": DRF_THROTTLE_DEMO_LEASE_RATE,
+        "demo_exchange": DRF_THROTTLE_DEMO_EXCHANGE_RATE,
     },
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }

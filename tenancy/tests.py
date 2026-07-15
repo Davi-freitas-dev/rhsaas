@@ -479,10 +479,14 @@ class OcuparTenantDemoCommandTests(TransactionTestCase):
         with schema_context("demo1"):
             user = User.objects.get(username="demo-user")
             self.assertTrue(user.is_active)
-            self.assertTrue(user.is_staff)
-            self.assertTrue(user.is_superuser)
+            self.assertFalse(user.is_staff)
+            self.assertFalse(user.is_superuser)
             self.assertEqual(user.email, "ana@example.com")
             self.assertTrue(user.check_password("senha-demo-segura"))
+            self.assertEqual(
+                set(user.groups.values_list("name", flat=True)),
+                {"Demo Publica"},
+            )
 
         with schema_context("demo2"):
             self.assertFalse(User.objects.filter(username="demo-user").exists())
@@ -606,7 +610,8 @@ class OcuparTenantDemoCommandTests(TransactionTestCase):
         with schema_context("demo1"):
             user_demo1 = User.objects.get(username="demo-existente")
             self.assertTrue(user_demo1.is_active)
-            self.assertTrue(user_demo1.is_superuser)
+            self.assertFalse(user_demo1.is_staff)
+            self.assertFalse(user_demo1.is_superuser)
             self.assertEqual(user_demo1.email, "iara@example.com")
             self.assertTrue(user_demo1.check_password("senha-nova-demo"))
 
@@ -1008,7 +1013,8 @@ class ResetarTenantDemoCommandTests(TransactionTestCase):
         self.assertTrue(self._core_table_exists("demo1", "django_session"))
         with schema_context("demo1"):
             self.assertFalse(get_user_model().objects.filter(username="demo-user").exists())
-            self.assertEqual(Cliente.objects.count(), 0)
+            self.assertEqual(Cliente.objects.count(), 1)
+            self.assertTrue(Cliente.objects.get().email.endswith(".invalid"))
             self.assertEqual(Session.objects.count(), 0)
             self.assertEqual(
                 set(Group.objects.filter(name__in=OPERATIONAL_GROUPS).values_list(
