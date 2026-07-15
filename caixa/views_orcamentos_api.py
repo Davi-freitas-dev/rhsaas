@@ -66,13 +66,6 @@ ITEM_EXISTING_BACKEND_AUTHORITY_FIELDS = {
     "usa_regra_especial",
     *ITEM_HISTORICAL_SNAPSHOT_FIELDS,
 }
-ITEM_NEW_ITEM_OVERRIDE_FIELDS = {
-    *ITEM_EDITABLE_VALUE_FIELDS,
-    "unidade_cobranca_usada",
-    "valor_unitario_usado",
-    "valor_diaria_usada",
-    "usa_regra_especial",
-}
 REMOVED_HOURLY_QUANTITY_KEYS = (
     "billed" + "HoursQuantity",
     "quantidade_horas_" + "cobradas",
@@ -836,10 +829,8 @@ def _orcamento_data_from_payload(payload):
 
 def _backend_authority_values_from_item(item):
     return {
-        "unidade_cobranca_usada": item.unidade_cobranca_usada,
-        "usa_regra_especial": item.usa_regra_especial,
-        "horas_base_diaria_usada": item.horas_base_diaria_usada,
-        "percentual_hora_extra_usado": item.percentual_hora_extra_usado,
+        field: getattr(item, field)
+        for field in ITEM_EXISTING_BACKEND_AUTHORITY_FIELDS
     }
 
 
@@ -943,18 +934,23 @@ def _prepare_items_for_recreation(orcamento, itens_data):
             backend_values = _backend_authority_values_from_item(existing_item)
             for field in ITEM_EXISTING_BACKEND_AUTHORITY_FIELDS:
                 item_data.pop(field, None)
-            post_save_values = {
+            submitted_editable_values = {
                 field: item_data.pop(field)
                 for field in ITEM_EDITABLE_VALUE_FIELDS
                 if field in item_data
             }
+            post_save_values = {
+                field: getattr(existing_item, field)
+                for field in ITEM_EDITABLE_VALUE_FIELDS
+            }
+            post_save_values.update(submitted_editable_values)
             post_save_values.update(backend_values)
         else:
-            for field in ITEM_HISTORICAL_SNAPSHOT_FIELDS:
+            for field in ITEM_EXISTING_BACKEND_AUTHORITY_FIELDS:
                 item_data.pop(field, None)
             post_save_values = {
                 field: item_data.pop(field)
-                for field in ITEM_NEW_ITEM_OVERRIDE_FIELDS
+                for field in ITEM_EDITABLE_VALUE_FIELDS
                 if field in item_data
             }
 
