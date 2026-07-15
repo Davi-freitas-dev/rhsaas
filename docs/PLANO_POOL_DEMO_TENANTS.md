@@ -1,5 +1,11 @@
 # Plano do pool de tenants demo
 
+> **Documento historico:** este plano registra uma fase anterior, na qual
+> `demo1...demo10` ainda eram considerados uma unica pool. A arquitetura
+> vigente mantem `demo1` permanente e usa apenas `demo2...demo10` na pool
+> publica automatica. A fonte de acompanhamento atual e
+> `PLANO_LIBERACAO_DEMO_PUBLICA_AUTOMATICA.md`.
+
 Este documento descreve a fase futura para criar um pool de tenants de
 demonstracao `demo1...demo10` no RH SaaS. Ele e um plano tecnico, nao uma
 implementacao.

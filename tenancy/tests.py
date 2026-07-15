@@ -38,8 +38,11 @@ from tenancy.command_guards import (
     COMMAND_SCOPES,
     DEMO_POOL_SCHEMA_NAMES,
     SCOPE_TENANT_ONLY,
+    demo_public_pool_schema_names,
     ensure_demo_pool_confirmation,
     ensure_demo_pool_schema,
+    ensure_demo_public_pool_schema,
+    is_demo_public_pool_schema,
     is_demo_pool_schema,
 )
 from tenancy.models import DemoTenantSlot, Domain, Tenant
@@ -339,17 +342,18 @@ class ProvisionarPoolDemoCommandTests(TransactionTestCase):
             {"demo1", "demo2"},
         )
 
-        for slot_code in ("demo1", "demo2"):
-            with self.subTest(slot_code=slot_code):
-                tenant = Tenant.objects.get(schema_name=slot_code)
-                domain = Domain.objects.get(domain=self._technical_domain(slot_code))
-                slot = DemoTenantSlot.objects.get(slot_code=slot_code)
-
+        for schema_name in ("demo1", "demo2"):
+            with self.subTest(schema_name=schema_name):
+                tenant = Tenant.objects.get(schema_name=schema_name)
+                domain = Domain.objects.get(domain=self._technical_domain(schema_name))
                 self.assertEqual(domain.tenant, tenant)
                 self.assertTrue(domain.is_primary)
-                self.assertEqual(slot.tenant, tenant)
-                self.assertEqual(slot.status, DemoTenantSlot.Status.LIVRE)
-                self.assertEqual(slot.max_storage_mb, 50)
+
+        self.assertFalse(DemoTenantSlot.objects.filter(slot_code="demo1").exists())
+        slot = DemoTenantSlot.objects.get(slot_code="demo2")
+        self.assertEqual(slot.tenant.schema_name, "demo2")
+        self.assertEqual(slot.status, DemoTenantSlot.Status.LIVRE)
+        self.assertEqual(slot.max_storage_mb, 50)
 
     def test_comando_e_idempotente(self):
         self._call_command("--slots=2")
@@ -381,7 +385,8 @@ class ProvisionarPoolDemoCommandTests(TransactionTestCase):
         self.assertEqual(second_counts, first_counts)
         self.assertIn("Tenants criados=0 existentes=2", output)
         self.assertIn("Domains criados=0 existentes=2", output)
-        self.assertIn("Slots criados=0 existentes=2", output)
+        self.assertIn("Slots criados=0 existentes=1", output)
+        self.assertIn("tenants_permanentes=1", output)
 
     def test_slots_deve_ficar_entre_um_e_dez(self):
         for slots in (0, 11):
@@ -462,11 +467,11 @@ class OcuparTenantDemoCommandTests(TransactionTestCase):
         )
 
         self.assertIn("Tenant demo ocupado", output)
-        self.assertIn("slot=demo1", output)
+        self.assertIn("slot=demo2", output)
         self.assertNotIn("senha-demo-segura", output)
         self.assertNotIn("ana@example.com", output)
 
-        slot = DemoTenantSlot.objects.get(slot_code="demo1")
+        slot = DemoTenantSlot.objects.get(slot_code="demo2")
         self.assertEqual(slot.status, DemoTenantSlot.Status.OCUPADO)
         self.assertEqual(slot.assigned_name, "Ana Teste")
         self.assertEqual(slot.assigned_email, "ana@example.com")
@@ -476,7 +481,7 @@ class OcuparTenantDemoCommandTests(TransactionTestCase):
         self.assertGreater(slot.lease_expires_at, slot.lease_started_at)
 
         User = get_user_model()
-        with schema_context("demo1"):
+        with schema_context("demo2"):
             user = User.objects.get(username="demo-user")
             self.assertTrue(user.is_active)
             self.assertFalse(user.is_staff)
@@ -488,7 +493,7 @@ class OcuparTenantDemoCommandTests(TransactionTestCase):
                 {"Demo Publica"},
             )
 
-        with schema_context("demo2"):
+        with schema_context("demo1"):
             self.assertFalse(User.objects.filter(username="demo-user").exists())
 
         connection.set_schema_to_public()
@@ -505,10 +510,7 @@ class OcuparTenantDemoCommandTests(TransactionTestCase):
         )
 
         self.assertIn("slot=demo2", output)
-        self.assertEqual(
-            DemoTenantSlot.objects.get(slot_code="demo1").status,
-            DemoTenantSlot.Status.LIVRE,
-        )
+        self.assertFalse(DemoTenantSlot.objects.filter(slot_code="demo1").exists())
         self.assertEqual(
             DemoTenantSlot.objects.get(slot_code="demo2").status,
             DemoTenantSlot.Status.OCUPADO,
@@ -525,16 +527,24 @@ class OcuparTenantDemoCommandTests(TransactionTestCase):
             )
 
     def test_slot_ocupado_falha_fechado(self):
-        self._call_provisionar("--slots=1")
-        slot = DemoTenantSlot.objects.get(slot_code="demo1")
+        self._call_provisionar("--slots=2")
+        slot = DemoTenantSlot.objects.get(slot_code="demo2")
         slot.status = DemoTenantSlot.Status.OCUPADO
         slot.save(update_fields=["status", "updated_at"])
 
         with self.assertRaisesMessage(CommandError, "nao esta livre"):
             self._call_ocupar(
-                "--slot=demo1",
+                "--slot=demo2",
                 "--nome=Daniel Teste",
                 "--email=daniel@example.com",
+            )
+
+    def test_demo1_permanente_nao_pode_ser_ocupado_manualmente(self):
+        with self.assertRaisesMessage(CommandError, "tenant demo1 e permanente"):
+            self._call_ocupar(
+                "--slot=demo1",
+                "--nome=Demo Permanente",
+                "--email=permanente@example.invalid",
             )
 
     def test_schema_invalido_e_recusado_pelo_guard(self):
@@ -562,20 +572,20 @@ class OcuparTenantDemoCommandTests(TransactionTestCase):
             )
 
     def test_usa_guards_compartilhados_para_validar_slot_e_tenant(self):
-        self._call_provisionar("--slots=1")
+        self._call_provisionar("--slots=2")
 
         with patch(
-            "tenancy.management.commands.ocupar_tenant_demo.ensure_demo_pool_schema",
-            wraps=ensure_demo_pool_schema,
+            "tenancy.management.commands.ocupar_tenant_demo.ensure_demo_public_pool_schema",
+            wraps=ensure_demo_public_pool_schema,
         ) as guard:
             self._call_ocupar(
-                "--slot=demo1",
+                "--slot=demo2",
                 "--nome=Hugo Teste",
                 "--email=hugo@example.com",
             )
 
         guard.assert_any_call(
-            "demo1",
+            "demo2",
             command_name="ocupar_tenant_demo",
             action="ocupar tenant demo",
         )
@@ -583,14 +593,14 @@ class OcuparTenantDemoCommandTests(TransactionTestCase):
     def test_ativa_usuario_existente_apenas_no_schema_correto(self):
         self._call_provisionar("--slots=2")
         User = get_user_model()
-        with schema_context("demo1"):
+        with schema_context("demo2"):
             User.objects.create_user(
                 username="demo-existente",
                 email="antigo@example.com",
                 password="senha-antiga",
                 is_active=False,
             )
-        with schema_context("demo2"):
+        with schema_context("demo1"):
             User.objects.create_user(
                 username="demo-existente",
                 email="outro@example.com",
@@ -599,7 +609,7 @@ class OcuparTenantDemoCommandTests(TransactionTestCase):
             )
 
         output = self._call_ocupar(
-            "--slot=demo1",
+            "--slot=demo2",
             "--nome=Iara Teste",
             "--email=iara@example.com",
             "--username=demo-existente",
@@ -607,19 +617,19 @@ class OcuparTenantDemoCommandTests(TransactionTestCase):
         )
 
         self.assertIn("usuario=ativado", output)
-        with schema_context("demo1"):
-            user_demo1 = User.objects.get(username="demo-existente")
-            self.assertTrue(user_demo1.is_active)
-            self.assertFalse(user_demo1.is_staff)
-            self.assertFalse(user_demo1.is_superuser)
-            self.assertEqual(user_demo1.email, "iara@example.com")
-            self.assertTrue(user_demo1.check_password("senha-nova-demo"))
-
         with schema_context("demo2"):
             user_demo2 = User.objects.get(username="demo-existente")
-            self.assertFalse(user_demo2.is_active)
-            self.assertEqual(user_demo2.email, "outro@example.com")
-            self.assertTrue(user_demo2.check_password("senha-outro-tenant"))
+            self.assertTrue(user_demo2.is_active)
+            self.assertFalse(user_demo2.is_staff)
+            self.assertFalse(user_demo2.is_superuser)
+            self.assertEqual(user_demo2.email, "iara@example.com")
+            self.assertTrue(user_demo2.check_password("senha-nova-demo"))
+
+        with schema_context("demo1"):
+            user_demo1 = User.objects.get(username="demo-existente")
+            self.assertFalse(user_demo1.is_active)
+            self.assertEqual(user_demo1.email, "outro@example.com")
+            self.assertTrue(user_demo1.check_password("senha-outro-tenant"))
 
 
 class ExpirarLeasesDemoCommandTests(TransactionTestCase):
@@ -693,81 +703,81 @@ class ExpirarLeasesDemoCommandTests(TransactionTestCase):
         return f"{slot_code}.{self.technical_domain_suffix}"
 
     def test_lease_vencido_e_expirado(self):
-        self._call_provisionar("--slots=1")
+        self._call_provisionar("--slots=2")
         self._call_ocupar(
-            "--slot=demo1",
+            "--slot=demo2",
             "--nome=Ana Expira",
             "--email=ana-expira@example.com",
             "--username=demo-user",
         )
-        self._expire_slot("demo1")
+        self._expire_slot("demo2")
 
-        output = self._call_expirar("--slot=demo1", "--username=demo-user")
+        output = self._call_expirar("--slot=demo2", "--username=demo-user")
 
         self.assertIn("Leases demo expirados", output)
         self.assertIn("slots=1", output)
         self.assertNotIn("senha-demo-segura", output)
         self.assertNotIn("token", output.lower())
-        slot = DemoTenantSlot.objects.get(slot_code="demo1")
+        slot = DemoTenantSlot.objects.get(slot_code="demo2")
         self.assertEqual(slot.status, DemoTenantSlot.Status.EXPIRADO)
 
     def test_lease_ainda_valido_nao_e_alterado(self):
-        self._call_provisionar("--slots=1")
+        self._call_provisionar("--slots=2")
         self._call_ocupar(
-            "--slot=demo1",
+            "--slot=demo2",
             "--nome=Bruno Valido",
             "--email=bruno-valido@example.com",
             "--username=demo-user",
         )
 
-        output = self._call_expirar("--slot=demo1", "--username=demo-user")
+        output = self._call_expirar("--slot=demo2", "--username=demo-user")
 
         self.assertIn("slots=0", output)
-        slot = DemoTenantSlot.objects.get(slot_code="demo1")
+        slot = DemoTenantSlot.objects.get(slot_code="demo2")
         self.assertEqual(slot.status, DemoTenantSlot.Status.OCUPADO)
-        with schema_context("demo1"):
+        with schema_context("demo2"):
             self.assertTrue(get_user_model().objects.get(username="demo-user").is_active)
 
     def test_dry_run_nao_altera_banco(self):
-        self._call_provisionar("--slots=1")
+        self._call_provisionar("--slots=2")
         self._call_ocupar(
-            "--slot=demo1",
+            "--slot=demo2",
             "--nome=Carla Dry Run",
             "--email=carla-dry-run@example.com",
             "--username=demo-user",
         )
-        self._expire_slot("demo1")
+        self._expire_slot("demo2")
 
-        output = self._call_expirar("--slot=demo1", "--username=demo-user", "--dry-run")
+        output = self._call_expirar("--slot=demo2", "--username=demo-user", "--dry-run")
 
         self.assertIn("DRY-RUN", output)
-        slot = DemoTenantSlot.objects.get(slot_code="demo1")
+        slot = DemoTenantSlot.objects.get(slot_code="demo2")
         self.assertEqual(slot.status, DemoTenantSlot.Status.OCUPADO)
-        with schema_context("demo1"):
+        with schema_context("demo2"):
             self.assertTrue(get_user_model().objects.get(username="demo-user").is_active)
 
     def test_usuario_demo_e_desativado_no_schema_correto(self):
         self._call_provisionar("--slots=2")
         self._call_ocupar(
-            "--slot=demo1",
-            "--nome=Daniel Demo1",
-            "--email=daniel-demo1@example.com",
+            "--slot=demo2",
+            "--nome=Daniel Demo2",
+            "--email=daniel-demo2@example.com",
             "--username=demo-user",
         )
-        with schema_context("demo2"):
+        with schema_context("demo1"):
             get_user_model().objects.create_user(
                 username="demo-user",
-                email="demo2@example.com",
-                password="senha-demo2",
+                email="demo1@example.com",
+                password="senha-demo1",
                 is_active=True,
             )
-        self._expire_slot("demo1")
+        self._expire_slot("demo2")
 
-        self._call_expirar("--slot=demo1", "--username=demo-user")
+        self._call_expirar("--slot=demo2", "--username=demo-user")
 
-        with schema_context("demo1"):
-            self.assertFalse(get_user_model().objects.get(username="demo-user").is_active)
         with schema_context("demo2"):
+            self.assertFalse(get_user_model().objects.get(username="demo-user").is_active)
+        with schema_context("demo1"):
             self.assertTrue(get_user_model().objects.get(username="demo-user").is_active)
 
     def test_rh_teste_e_public_sao_recusados(self):
@@ -775,6 +785,10 @@ class ExpirarLeasesDemoCommandTests(TransactionTestCase):
             with self.subTest(slot_code=slot_code):
                 with self.assertRaisesMessage(CommandError, expected):
                     self._call_expirar(f"--slot={slot_code}")
+
+    def test_demo1_permanente_nao_pode_ser_expirado_manualmente(self):
+        with self.assertRaisesMessage(CommandError, "tenant demo1 e permanente"):
+            self._call_expirar("--slot=demo1")
 
     def test_schema_fora_de_demo1_demo10_e_recusado(self):
         for slot_code in ("demo11", "tenant_a"):
@@ -785,25 +799,25 @@ class ExpirarLeasesDemoCommandTests(TransactionTestCase):
     def test_inconsistencia_de_domain_tenant_falha_fechado(self):
         self._call_provisionar("--slots=2")
         self._call_ocupar(
-            "--slot=demo1",
+            "--slot=demo2",
             "--nome=Eva Inconsistente",
             "--email=eva-inconsistente@example.com",
             "--username=demo-user",
         )
-        self._expire_slot("demo1")
-        demo2 = Tenant.objects.get(schema_name="demo2")
-        Domain.objects.filter(domain=self._technical_domain("demo1")).update(
-            tenant=demo2
+        self._expire_slot("demo2")
+        demo1 = Tenant.objects.get(schema_name="demo1")
+        Domain.objects.filter(domain=self._technical_domain("demo2")).update(
+            tenant=demo1
         )
 
         with self.assertRaisesMessage(CommandError, "pertence a outro tenant"):
-            self._call_expirar("--slot=demo1", "--username=demo-user")
+            self._call_expirar("--slot=demo2", "--username=demo-user")
 
         self.assertEqual(
-            DemoTenantSlot.objects.get(slot_code="demo1").status,
+            DemoTenantSlot.objects.get(slot_code="demo2").status,
             DemoTenantSlot.Status.OCUPADO,
         )
-        with schema_context("demo1"):
+        with schema_context("demo2"):
             self.assertTrue(get_user_model().objects.get(username="demo-user").is_active)
 
 
@@ -866,7 +880,7 @@ class ResetarTenantDemoCommandTests(TransactionTestCase):
     def _confirm_arg(self, slot_code):
         return f"--confirm=RESETAR {slot_code}"
 
-    def _prepare_occupied_slot(self, slot_code="demo1", username="demo-user"):
+    def _prepare_occupied_slot(self, slot_code="demo2", username="demo-user"):
         self._call_provisionar("--slots=2")
         self._call_ocupar(
             f"--slot={slot_code}",
@@ -944,18 +958,22 @@ class ResetarTenantDemoCommandTests(TransactionTestCase):
         with self.assertRaisesMessage(CommandError, 'RESETAR demo1'):
             self._call_resetar("--slot=demo1", "--confirm= RESETAR demo1 ")
 
+    def test_demo1_permanente_nao_pode_ser_resetado_manualmente(self):
+        with self.assertRaisesMessage(CommandError, "tenant demo1 e permanente"):
+            self._call_resetar("--slot=demo1", self._confirm_arg("demo1"))
+
     def test_dry_run_nao_altera_banco(self):
-        self._prepare_occupied_slot("demo1")
-        self._set_slot_status("demo1", DemoTenantSlot.Status.EXPIRADO)
-        self._create_tenant_content("demo1", session_key="sessao-demo1-dry-run")
+        self._prepare_occupied_slot("demo2")
+        self._set_slot_status("demo2", DemoTenantSlot.Status.EXPIRADO)
+        self._create_tenant_content("demo2", session_key="sessao-demo2-dry-run")
 
         with TemporaryDirectory() as temp_dir:
             with override_settings(BASE_DIR=Path(temp_dir)):
-                artifact_path = self._write_tenant_artifact("demo1")
+                artifact_path = self._write_tenant_artifact("demo2")
 
                 output = self._call_resetar(
-                    "--slot=demo1",
-                    self._confirm_arg("demo1"),
+                    "--slot=demo2",
+                    self._confirm_arg("demo2"),
                     "--dry-run",
                 )
 
@@ -963,42 +981,42 @@ class ResetarTenantDemoCommandTests(TransactionTestCase):
 
         self.assertIn("DRY-RUN", output)
         self.assertNotIn("senha-demo-segura", output)
-        self.assertNotIn("demo1@example.com", output)
+        self.assertNotIn("demo2@example.com", output)
         self.assertNotIn("token", output.lower())
 
-        slot = DemoTenantSlot.objects.get(slot_code="demo1")
+        slot = DemoTenantSlot.objects.get(slot_code="demo2")
         self.assertEqual(slot.status, DemoTenantSlot.Status.EXPIRADO)
-        self.assertEqual(slot.assigned_email, "demo1@example.com")
-        with schema_context("demo1"):
+        self.assertEqual(slot.assigned_email, "demo2@example.com")
+        with schema_context("demo2"):
             self.assertTrue(get_user_model().objects.filter(username="demo-user").exists())
             self.assertEqual(Cliente.objects.count(), 1)
-            self.assertTrue(Session.objects.filter(session_key="sessao-demo1-dry-run").exists())
+            self.assertTrue(Session.objects.filter(session_key="sessao-demo2-dry-run").exists())
 
     def test_slot_ocupado_e_recusado(self):
-        self._prepare_occupied_slot("demo1")
+        self._prepare_occupied_slot("demo2")
 
         with self.assertRaisesMessage(CommandError, "expirado ou bloqueado"):
-            self._call_resetar("--slot=demo1", self._confirm_arg("demo1"))
+            self._call_resetar("--slot=demo2", self._confirm_arg("demo2"))
 
         self.assertEqual(
-            DemoTenantSlot.objects.get(slot_code="demo1").status,
+            DemoTenantSlot.objects.get(slot_code="demo2").status,
             DemoTenantSlot.Status.OCUPADO,
         )
 
     def test_slot_expirado_pode_ser_resetado_e_remove_dados_sessoes_e_usuario(self):
-        self._prepare_occupied_slot("demo1")
-        self._set_slot_status("demo1", DemoTenantSlot.Status.EXPIRADO)
-        self._create_tenant_content("demo1", session_key="sessao-demo1-reset")
+        self._prepare_occupied_slot("demo2")
+        self._set_slot_status("demo2", DemoTenantSlot.Status.EXPIRADO)
+        self._create_tenant_content("demo2", session_key="sessao-demo2-reset")
 
-        output = self._call_resetar("--slot=demo1", self._confirm_arg("demo1"))
+        output = self._call_resetar("--slot=demo2", self._confirm_arg("demo2"))
 
         self.assertIn("Tenant demo resetado", output)
         self.assertIn("status=livre", output)
         self.assertNotIn("senha-demo-segura", output)
-        self.assertNotIn("demo1@example.com", output)
+        self.assertNotIn("demo2@example.com", output)
         self.assertNotIn("token", output.lower())
 
-        slot = DemoTenantSlot.objects.get(slot_code="demo1")
+        slot = DemoTenantSlot.objects.get(slot_code="demo2")
         self.assertEqual(slot.status, DemoTenantSlot.Status.LIVRE)
         self.assertEqual(slot.assigned_name, "")
         self.assertEqual(slot.assigned_email, "")
@@ -1007,11 +1025,11 @@ class ResetarTenantDemoCommandTests(TransactionTestCase):
         self.assertIsNone(slot.lease_expires_at)
         self.assertIsNotNone(slot.last_reset_at)
 
-        self.assertTrue(schema_exists("demo1"))
-        self.assertTrue(self._core_table_exists("demo1", "django_migrations"))
-        self.assertTrue(self._core_table_exists("demo1", "auth_user"))
-        self.assertTrue(self._core_table_exists("demo1", "django_session"))
-        with schema_context("demo1"):
+        self.assertTrue(schema_exists("demo2"))
+        self.assertTrue(self._core_table_exists("demo2", "django_migrations"))
+        self.assertTrue(self._core_table_exists("demo2", "auth_user"))
+        self.assertTrue(self._core_table_exists("demo2", "django_session"))
+        with schema_context("demo2"):
             self.assertFalse(get_user_model().objects.filter(username="demo-user").exists())
             self.assertEqual(Cliente.objects.count(), 1)
             self.assertTrue(Cliente.objects.get().email.endswith(".invalid"))
@@ -1025,42 +1043,42 @@ class ResetarTenantDemoCommandTests(TransactionTestCase):
             )
 
         connection.set_schema_to_public()
-        self.assertTrue(Tenant.objects.filter(schema_name="demo1").exists())
-        self.assertTrue(Domain.objects.filter(domain=self._technical_domain("demo1")).exists())
+        self.assertTrue(Tenant.objects.filter(schema_name="demo2").exists())
+        self.assertTrue(Domain.objects.filter(domain=self._technical_domain("demo2")).exists())
 
     def test_slot_bloqueado_pode_ser_resetado(self):
-        self._prepare_occupied_slot("demo1")
-        self._set_slot_status("demo1", DemoTenantSlot.Status.BLOQUEADO)
+        self._prepare_occupied_slot("demo2")
+        self._set_slot_status("demo2", DemoTenantSlot.Status.BLOQUEADO)
 
-        self._call_resetar("--slot=demo1", self._confirm_arg("demo1"))
+        self._call_resetar("--slot=demo2", self._confirm_arg("demo2"))
 
         self.assertEqual(
-            DemoTenantSlot.objects.get(slot_code="demo1").status,
+            DemoTenantSlot.objects.get(slot_code="demo2").status,
             DemoTenantSlot.Status.LIVRE,
         )
 
     def test_conflito_domain_tenant_falha_fechado(self):
-        self._prepare_occupied_slot("demo1")
-        self._set_slot_status("demo1", DemoTenantSlot.Status.EXPIRADO)
-        demo2 = Tenant.objects.get(schema_name="demo2")
-        Domain.objects.filter(domain=self._technical_domain("demo1")).update(
-            tenant=demo2
+        self._prepare_occupied_slot("demo2")
+        self._set_slot_status("demo2", DemoTenantSlot.Status.EXPIRADO)
+        demo1 = Tenant.objects.get(schema_name="demo1")
+        Domain.objects.filter(domain=self._technical_domain("demo2")).update(
+            tenant=demo1
         )
 
         with self.assertRaisesMessage(CommandError, "pertence a outro tenant"):
-            self._call_resetar("--slot=demo1", self._confirm_arg("demo1"))
+            self._call_resetar("--slot=demo2", self._confirm_arg("demo2"))
 
         self.assertEqual(
-            DemoTenantSlot.objects.get(slot_code="demo1").status,
+            DemoTenantSlot.objects.get(slot_code="demo2").status,
             DemoTenantSlot.Status.EXPIRADO,
         )
-        self.assertTrue(schema_exists("demo1"))
+        self.assertTrue(schema_exists("demo2"))
 
     def test_conflito_demotenantslot_tenant_falha_fechado(self):
-        self._call_provisionar("--slots=1")
+        self._call_provisionar("--slots=2")
         tenant = Tenant(schema_name="tenant_a", name="Tenant A")
         tenant.save(verbosity=0)
-        slot = DemoTenantSlot.objects.get(slot_code="demo1")
+        slot = DemoTenantSlot.objects.get(slot_code="demo2")
         slot.status = DemoTenantSlot.Status.EXPIRADO
         slot.lease_started_at = timezone.now() - timedelta(days=4)
         slot.lease_expires_at = timezone.now() - timedelta(days=1)
@@ -1072,67 +1090,68 @@ class ResetarTenantDemoCommandTests(TransactionTestCase):
                 "updated_at",
             ]
         )
-        DemoTenantSlot.objects.filter(slot_code="demo1").update(tenant=tenant)
+        DemoTenantSlot.objects.filter(slot_code="demo2").update(tenant=tenant)
 
         with self.assertRaisesMessage(CommandError, "demo1...demo10"):
-            self._call_resetar("--slot=demo1", self._confirm_arg("demo1"))
+            self._call_resetar("--slot=demo2", self._confirm_arg("demo2"))
 
-        self.assertTrue(schema_exists("demo1"))
+        self.assertTrue(schema_exists("demo2"))
 
-    def test_reset_de_demo1_nao_altera_demo2(self):
-        self._prepare_occupied_slot("demo1")
+    def test_reset_de_demo2_nao_altera_demo3(self):
+        self._prepare_occupied_slot("demo2")
+        self._call_provisionar("--slots=3")
         self._call_ocupar(
-            "--slot=demo2",
-            "--nome=Tester demo2",
-            "--email=demo2@example.com",
+            "--slot=demo3",
+            "--nome=Tester demo3",
+            "--email=demo3@example.com",
             "--username=demo-user",
         )
-        self._create_tenant_content("demo1", session_key="sessao-demo1-isolamento")
         self._create_tenant_content("demo2", session_key="sessao-demo2-isolamento")
-        self._set_slot_status("demo1", DemoTenantSlot.Status.EXPIRADO)
+        self._create_tenant_content("demo3", session_key="sessao-demo3-isolamento")
+        self._set_slot_status("demo2", DemoTenantSlot.Status.EXPIRADO)
 
         with TemporaryDirectory() as temp_dir:
             with override_settings(BASE_DIR=Path(temp_dir)):
-                demo1_artifact = self._write_tenant_artifact("demo1")
                 demo2_artifact = self._write_tenant_artifact("demo2")
+                demo3_artifact = self._write_tenant_artifact("demo3")
 
-                output = self._call_resetar("--slot=demo1", self._confirm_arg("demo1"))
+                output = self._call_resetar("--slot=demo2", self._confirm_arg("demo2"))
 
                 self.assertIn("artefatos_removidos=", output)
-                self.assertFalse(demo1_artifact.exists())
-                self.assertFalse((Path(temp_dir) / "backups" / "tenants" / "demo1").exists())
-                self.assertTrue(demo2_artifact.exists())
+                self.assertFalse(demo2_artifact.exists())
+                self.assertFalse((Path(temp_dir) / "backups" / "tenants" / "demo2").exists())
+                self.assertTrue(demo3_artifact.exists())
 
         self.assertEqual(
-            DemoTenantSlot.objects.get(slot_code="demo1").status,
+            DemoTenantSlot.objects.get(slot_code="demo2").status,
             DemoTenantSlot.Status.LIVRE,
         )
         self.assertEqual(
-            DemoTenantSlot.objects.get(slot_code="demo2").status,
+            DemoTenantSlot.objects.get(slot_code="demo3").status,
             DemoTenantSlot.Status.OCUPADO,
         )
-        with schema_context("demo2"):
+        with schema_context("demo3"):
             self.assertTrue(get_user_model().objects.filter(username="demo-user").exists())
             self.assertEqual(Cliente.objects.count(), 1)
-            self.assertTrue(Session.objects.filter(session_key="sessao-demo2-isolamento").exists())
+            self.assertTrue(Session.objects.filter(session_key="sessao-demo3-isolamento").exists())
 
     def test_falha_simulada_na_recriacao_deixa_slot_bloqueado(self):
-        self._prepare_occupied_slot("demo1")
-        self._set_slot_status("demo1", DemoTenantSlot.Status.EXPIRADO)
+        self._prepare_occupied_slot("demo2")
+        self._set_slot_status("demo2", DemoTenantSlot.Status.EXPIRADO)
 
         with patch(
             "tenancy.management.commands.resetar_tenant_demo.Command._recreate_schema",
             side_effect=RuntimeError("falha simulada"),
         ):
             with self.assertRaisesMessage(CommandError, "slot mantido como bloqueado"):
-                self._call_resetar("--slot=demo1", self._confirm_arg("demo1"))
+                self._call_resetar("--slot=demo2", self._confirm_arg("demo2"))
 
-        slot = DemoTenantSlot.objects.get(slot_code="demo1")
+        slot = DemoTenantSlot.objects.get(slot_code="demo2")
         self.assertEqual(slot.status, DemoTenantSlot.Status.BLOQUEADO)
         self.assertIn("falhou", slot.notes)
         connection.set_schema_to_public()
-        self.assertTrue(Tenant.objects.filter(schema_name="demo1").exists())
-        self.assertTrue(Domain.objects.filter(domain=self._technical_domain("demo1")).exists())
+        self.assertTrue(Tenant.objects.filter(schema_name="demo2").exists())
+        self.assertTrue(Domain.objects.filter(domain=self._technical_domain("demo2")).exists())
 
 
 class TenantAdminDisabledTests(MultiTenantTestCase):
@@ -2592,6 +2611,17 @@ class TenantCommandGuardTests(MultiTenantTestCase):
             ),
             "demo10",
         )
+
+    def test_pool_publica_configurada_comeca_em_demo2(self):
+        self.assertEqual(
+            demo_public_pool_schema_names(),
+            {f"demo{index}" for index in range(2, 11)},
+        )
+        self.assertFalse(is_demo_public_pool_schema("demo1"))
+        self.assertTrue(is_demo_public_pool_schema("demo2"))
+        self.assertEqual(ensure_demo_public_pool_schema("demo10"), "demo10")
+        with self.assertRaisesMessage(CommandError, "tenant demo1 e permanente"):
+            ensure_demo_public_pool_schema("demo1")
 
     def test_guard_demo_pool_recusa_public_explicitamente(self):
         with self.assertRaisesMessage(CommandError, "schema public"):

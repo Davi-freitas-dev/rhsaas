@@ -7,7 +7,10 @@ from django.db import connection, transaction
 from django.utils import timezone
 from django_tenants.utils import get_public_schema_name, schema_context
 
-from tenancy.command_guards import ensure_demo_pool_schema
+from tenancy.command_guards import (
+    demo_public_pool_schema_names,
+    ensure_demo_public_pool_schema,
+)
 from tenancy.management.commands.provisionar_pool_demo import DEFAULT_DOMAIN_SUFFIX
 from tenancy.models import DemoTenantSlot, Domain
 from tenancy.services_demo_pool import sync_demo_public_user
@@ -26,7 +29,7 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument(
             "--slot",
-            help="Slot especifico do pool demo, por exemplo demo1. Se omitido, usa o primeiro livre.",
+            help="Slot temporario, por exemplo demo2. Se omitido, usa o primeiro livre.",
         )
         parser.add_argument("--nome", required=True, help="Nome do testador.")
         parser.add_argument("--email", required=True, help="Email do testador.")
@@ -144,7 +147,7 @@ class Command(BaseCommand):
 
     def _select_slot(self, requested_slot):
         if requested_slot:
-            slot_code = ensure_demo_pool_schema(
+            slot_code = ensure_demo_public_pool_schema(
                 requested_slot,
                 command_name="ocupar_tenant_demo",
                 action="ocupar tenant demo",
@@ -162,13 +165,16 @@ class Command(BaseCommand):
         slot = (
             DemoTenantSlot.objects.select_for_update()
             .select_related("tenant")
-            .filter(status=DemoTenantSlot.Status.LIVRE)
+            .filter(
+                slot_code__in=demo_public_pool_schema_names(),
+                status=DemoTenantSlot.Status.LIVRE,
+            )
             .order_by("slot_code")
             .first()
         )
         if slot is None:
             raise CommandError("Nao ha vaga livre no pool demo.")
-        ensure_demo_pool_schema(
+        ensure_demo_public_pool_schema(
             slot.slot_code,
             command_name="ocupar_tenant_demo",
             action="ocupar tenant demo",
@@ -176,7 +182,7 @@ class Command(BaseCommand):
         return slot
 
     def _validate_slot(self, slot):
-        schema_name = ensure_demo_pool_schema(
+        schema_name = ensure_demo_public_pool_schema(
             slot.tenant.schema_name,
             command_name="ocupar_tenant_demo",
             action="ocupar tenant demo",

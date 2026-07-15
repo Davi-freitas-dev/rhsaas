@@ -12,6 +12,7 @@ from django.contrib.auth.models import Group
 from django.contrib.sessions.models import Session
 from django.core.cache import cache
 from django.core.exceptions import ImproperlyConfigured
+from django.core.management.base import CommandError
 from django.db import connection, transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -25,7 +26,12 @@ from caixa.models import (
     Servico,
 )
 from caixa.permissions import PERMISSION_PROFILES, sincronizar_grupos_permissoes
-from tenancy.command_guards import ensure_demo_pool_schema
+from tenancy.command_guards import (
+    demo_public_pool_schema_names,
+    ensure_demo_permanent_tenant_schema,
+    ensure_demo_pool_schema,
+    ensure_demo_public_pool_schema,
+)
 from tenancy.models import DemoTenantSlot, Domain
 
 
@@ -115,6 +121,46 @@ def sync_demo_public_user(
             user.set_password(password)
         else:
             user.set_unusable_password()
+        user.save()
+        user.groups.set([group])
+        user.user_permissions.clear()
+        return user
+
+
+def sync_demo_permanent_user(
+    schema_name,
+    *,
+    username=DEMO_PUBLIC_USERNAME,
+    password=None,
+    display_name="Visitante Demo",
+):
+    schema_name = ensure_demo_permanent_tenant_schema(schema_name)
+
+    with schema_context(schema_name), transaction.atomic():
+        sincronizar_grupos_permissoes()
+        group = Group.objects.get(name=DEMO_PUBLIC_GROUP_NAME)
+        User = get_user_model()
+        user = User.objects.filter(username=username).first()
+
+        if user is None and not password:
+            raise ImproperlyConfigured(
+                "O usuario permanente ainda nao existe; informe a senha por "
+                "variavel de ambiente."
+            )
+        if user is not None and not user.has_usable_password() and not password:
+            raise ImproperlyConfigured(
+                "O usuario permanente nao possui senha utilizavel; informe uma "
+                "senha por variavel de ambiente."
+            )
+        if user is None:
+            user = User(username=username)
+
+        user.first_name = display_name[:150]
+        user.is_active = True
+        user.is_staff = False
+        user.is_superuser = False
+        if password:
+            user.set_password(password)
         user.save()
         user.groups.set([group])
         user.user_permissions.clear()
@@ -249,6 +295,7 @@ def allocate_demo_lease(*, visitor_identifier, network_identifier, now=None):
             .select_related("tenant")
             .filter(
                 Q(visitor_key_hash=visitor_hash) | Q(network_key_hash=network_hash),
+                slot_code__in=demo_public_pool_schema_names(),
                 status=DemoTenantSlot.Status.OCUPADO,
                 lease_expires_at__gt=now,
             )
@@ -261,14 +308,17 @@ def allocate_demo_lease(*, visitor_identifier, network_identifier, now=None):
             slot = (
                 DemoTenantSlot.objects.select_for_update(skip_locked=True)
                 .select_related("tenant")
-                .filter(status=DemoTenantSlot.Status.LIVRE)
+                .filter(
+                    slot_code__in=demo_public_pool_schema_names(),
+                    status=DemoTenantSlot.Status.LIVRE,
+                )
                 .order_by("slot_code")
                 .first()
             )
             if slot is None:
                 raise DemoPoolFull("Pool demo temporariamente cheia.")
 
-        schema_name = _validate_demo_slot(slot)
+        schema_name = _validate_public_demo_slot(slot)
         seed_demo_tenant(schema_name)
         sync_demo_public_user(schema_name)
 
@@ -326,7 +376,10 @@ def consume_demo_exchange_token(*, schema_name, raw_token, now=None):
             )
             if slot is None:
                 raise DemoAccessTokenInvalid("Token de acesso invalido.")
-            _validate_demo_slot(slot)
+            try:
+                _validate_public_demo_slot(slot)
+            except DemoPoolUnavailable as exc:
+                raise DemoAccessTokenInvalid("Token de acesso invalido.") from exc
             if slot.slot_code != schema_name:
                 raise DemoAccessTokenInvalid("Token de acesso invalido.")
             if slot.status != DemoTenantSlot.Status.OCUPADO:
@@ -398,11 +451,12 @@ def expire_due_demo_leases(
     now = now or timezone.now()
     connection.set_schema_to_public()
     queryset = DemoTenantSlot.objects.select_related("tenant").filter(
+        slot_code__in=demo_public_pool_schema_names(),
         status=DemoTenantSlot.Status.OCUPADO,
         lease_expires_at__lt=now,
     )
     if slot_code:
-        slot_code = ensure_demo_pool_schema(
+        slot_code = ensure_demo_public_pool_schema(
             slot_code,
             command_name="expirar_leases_demo",
             action="expirar lease demo",
@@ -415,7 +469,7 @@ def expire_due_demo_leases(
     results = []
     with transaction.atomic():
         for slot in queryset.select_for_update().order_by("slot_code"):
-            schema_name = _validate_demo_slot(slot)
+            schema_name = _validate_public_demo_slot(slot)
             cleanup = cleanup_demo_tenant_access(schema_name, username=username)
             slot.status = DemoTenantSlot.Status.EXPIRADO
             slot.exchange_token_digest = None
@@ -515,3 +569,15 @@ def _validate_demo_slot(slot):
     if domain is None or domain.tenant_id != slot.tenant_id:
         raise DemoPoolUnavailable("Domain tecnico do slot demo inconsistente.")
     return schema_name
+
+
+def _validate_public_demo_slot(slot):
+    schema_name = _validate_demo_slot(slot)
+    try:
+        return ensure_demo_public_pool_schema(
+            schema_name,
+            command_name="servico_demo_publica",
+            action="validar vaga temporaria",
+        )
+    except CommandError as exc:
+        raise DemoPoolUnavailable("Slot fora da pool publica.") from exc

@@ -14,7 +14,9 @@ enderecos IP completos ou dados pessoais de visitantes.
 - API de entrada: `https://api-demo-rh.taquiondev.com.br/api`;
 - schema de entrada legado/compativel: `rh_teste`;
 - metadata e autoridade de leases: schema `public`;
-- vagas isoladas: `demo1...demo10`;
+- tenant permanente: `demo1`, sem `DemoTenantSlot`, lease, expiracao ou reset
+  automatico;
+- vagas isoladas temporarias: `demo2...demo10`;
 - APIs das vagas: `https://demoN.api-demo-rh.taquiondev.com.br/api`;
 - autenticacao: token de troca de uso unico; somente o digest HMAC fica no
   banco; a sessao Django e criada pelo host `demoN`;
@@ -47,7 +49,8 @@ Antes de qualquer deploy:
 2. certificado valido para o apex e `*.api-demo-rh.taquiondev.com.br`, com
    renovacao automatica comprovada;
 3. Redis e PostgreSQL saudaveis;
-4. no minimo 10 vagas aprovadas no planejamento de capacidade;
+4. nove vagas temporarias (`demo2...demo10`) e o tenant permanente `demo1`
+   aprovados no planejamento de capacidade;
 5. migrations e testes relacionados verdes;
 6. `DEMO_PUBLIC_LEASE_ENABLED=False`;
 7. nenhuma vaga deve ser liberada manualmente sem reset comprovado.
@@ -97,7 +100,7 @@ servidor.
 1. Publicar backend com a entrada ainda desligada.
 2. Instalar dependencias no venv e executar checks.
 3. Aplicar migration compartilhada e migrations de todos os tenants.
-4. Provisionar/validar dez slots.
+4. Validar `demo1` permanente e provisionar nove slots (`demo2...demo10`).
 5. Instalar Gunicorn, Nginx e timer.
 6. Publicar o frontend.
 7. Fazer smoke test com entrada desligada.
@@ -128,12 +131,37 @@ Pool, primeiro em dry-run:
 ```bash
 /opt/rhsaas/venv/bin/python manage.py provisionar_pool_demo --slots=10 --dry-run
 /opt/rhsaas/venv/bin/python manage.py provisionar_pool_demo --slots=10
+/opt/rhsaas/venv/bin/python manage.py preparar_demo_permanente --dry-run
 /opt/rhsaas/venv/bin/python manage.py manter_pool_demo --dry-run
+/opt/rhsaas/venv/bin/python manage.py shell -c \
+  "from tenancy.models import DemoTenantSlot; print(list(DemoTenantSlot.objects.order_by('slot_code').values_list('slot_code', flat=True)))"
 ```
 
-O provisionamento cria somente tenants, domains e slots ausentes. O seed e
-recriado pelo reset e confirmado novamente na alocacao antes de ativar o
-usuario temporario.
+O provisionamento cria Tenant/Domain para `demo1...demo10`, mas cria
+`DemoTenantSlot` somente para `demo2...demo10`. A migration `tenancy.0004`
+remove apenas a linha de pool antiga de `demo1`, sem apagar schema, Domain,
+dados ou usuario. A ultima consulta deve listar exatamente `demo2` ate
+`demo10`, sem `demo1`.
+
+`preparar_demo_permanente` preserva a senha utilizavel do usuario existente,
+reaplica flags/grupo minimos e garante o seed idempotente. Se o dry-run
+informar `usuario_pronto=sim`, concluir com:
+
+```bash
+/opt/rhsaas/venv/bin/python manage.py preparar_demo_permanente
+```
+
+Se o dry-run informar `usuario_pronto=nao`, carregar a credencial a partir do
+secret manager em uma variavel de ambiente temporaria e concluir com:
+
+```bash
+/opt/rhsaas/venv/bin/python manage.py preparar_demo_permanente \
+  --password-env=DEMO_PERMANENT_PASSWORD
+unset DEMO_PERMANENT_PASSWORD
+```
+
+Nunca colocar o valor da senha na linha de comando, no Git, no historico do
+shell ou no runbook.
 
 ## systemd
 
@@ -231,10 +259,17 @@ O ciclo esperado e:
 6. arquivos tenant-scoped removidos;
 7. metadata anonima apagada e slot marcado `livre`.
 
+Todo o ciclo acima e restrito por configuracao a `demo2...demo10`. `demo1` nao
+possui slot, nao e varrido e `manter_pool_demo --slot=demo1` apenas informa que
+o tenant permanente foi ignorado.
+
 Falha em qualquer parte do reset deixa a vaga `bloqueado`. Nunca trocar esse
 estado diretamente para `livre`.
 
 ### Recuperacao de slot preso
+
+Esta rotina aceita somente vagas temporarias `demo2...demo10`; para `demo1`,
+usar `preparar_demo_permanente` e nunca os comandos de lease/reset da pool.
 
 ```bash
 sudo -u ubuntu /opt/rhsaas/venv/bin/python \
@@ -251,9 +286,11 @@ bloqueado e reduzir a capacidade anunciada.
 
 ### Pool cheia
 
-A API responde `503` com `code=pool_full`, sem lista de slots. Confirmar apenas
-contagens agregadas no shell administrativo e revisar se ha leases vencidos.
-Nao prolongar leases nem liberar vaga ocupada para mascarar capacidade.
+A API responde `503` com `code=pool_full`, sem lista de slots. O frontend passa
+a oferecer `Experimentar demo permanente`, que navega para `?tenant=demo1` sem
+novo lease. Confirmar apenas contagens agregadas da pool `demo2...demo10` no
+shell administrativo e revisar se ha leases vencidos. Nao prolongar leases nem
+liberar vaga ocupada para mascarar capacidade.
 
 ### Logs e health check
 
@@ -287,6 +324,11 @@ sudo systemctl show rhsaas-demo -p MemoryCurrent -p TasksCurrent
 6. somente reverter migration com plano especifico, backup e teste de restore;
 7. validar health, Nginx e a demo fixa antes de reabrir.
 
+Nao recriar `DemoTenantSlot` para `demo1` durante rollback. Um release antigo
+que volte a assumir `demo1...demo10` deve permanecer com a entrada publica
+desligada ate receber a mesma exclusao central ou ser substituido pelo release
+corrigido.
+
 O rollback de codigo nao autoriza apagar schemas nem restaurar toda a base
 sobre outros tenants.
 
@@ -294,6 +336,10 @@ sobre outros tenants.
 
 - [ ] `check --deploy` sem issues;
 - [ ] migrations aplicadas em `public`, `rh_teste` e `demo1...demo10`;
+- [ ] `tenancy.0004` removeu somente o `DemoTenantSlot` de `demo1`;
+- [ ] `demo1` preserva schema, Domain, dados, usuario e grupo minimo;
+- [ ] `demo1` nao aparece entre slots livres/ocupados/expirados;
+- [ ] pool publica contem somente `demo2...demo10`;
 - [ ] dez domains tecnicos respondendo por HTTPS;
 - [ ] cookie de visitante `Secure`, `HttpOnly`, `SameSite=Lax`;
 - [ ] cookies de sessao/CSRF host-only;
@@ -303,7 +349,8 @@ sobre outros tenants.
 - [ ] duas requisicoes concorrentes nao compartilham indevidamente um slot;
 - [ ] pool cheia retorna 503 generico;
 - [ ] lease expira, sessao para de funcionar e timer devolve vaga limpa;
-- [ ] dado criado em `demo1` nao aparece em `demo2`;
+- [ ] dado permanente de `demo1` nao aparece em `demo2` e vice-versa;
+- [ ] pool cheia oferece fallback `?tenant=demo1` sem chamar novo lease;
 - [ ] seed reaparece depois do reset;
 - [ ] timer executa duas vezes sem erro/idempotencia;
 - [ ] logs nao contem token, senha, hash, IP completo ou PII;

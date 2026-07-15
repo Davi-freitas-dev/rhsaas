@@ -1,5 +1,12 @@
 # Plano de wildcard para o pool demo
 
+> **Nota de escopo atual:** este documento preserva o historico de DNS,
+> wildcard e homologacao dos dez tenants. Para alocacao, expiracao e reset,
+> prevalece a decisao atual: `demo1` e permanente e `demo2...demo10` formam a
+> pool publica automatica. Consulte
+> `PLANO_LIBERACAO_DEMO_PUBLICA_AUTOMATICA.md` e
+> `deploy/demo-publica/README.md`.
+
 Este documento descreve o plano tecnico para expor os tenants do pool demo em
 subdominios proprios:
 

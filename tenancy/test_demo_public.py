@@ -1,6 +1,7 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from io import StringIO
 from unittest.mock import patch
 
 from axes.models import AccessAttempt
@@ -44,6 +45,8 @@ class DemoPublicFlowTests(MultiTenantTestCase):
         self._demo_settings = override_settings(
             DEMO_PUBLIC_LEASE_ENABLED=True,
             DEMO_PUBLIC_ENTRY_SCHEMA="demo1",
+            DEMO_PERMANENT_TENANT_SCHEMA="demo1",
+            DEMO_PUBLIC_POOL_SLOTS=("demo2",),
             DEMO_LEASE_DURATION_MINUTES=60,
             DEMO_EXCHANGE_TOKEN_TTL_SECONDS=300,
             DEMO_VISITOR_COOKIE_MAX_AGE=3600,
@@ -70,7 +73,7 @@ class DemoPublicFlowTests(MultiTenantTestCase):
             REMOTE_ADDR=remote_addr,
         )
 
-    def _tenant_client(self, slot_code="demo1"):
+    def _tenant_client(self, slot_code="demo2"):
         return Client(
             enforce_csrf_checks=True,
             HTTP_HOST=f"{slot_code}.api-demo-rh.taquiondev.com.br",
@@ -103,7 +106,7 @@ class DemoPublicFlowTests(MultiTenantTestCase):
         payload = lease_response.json()
         self.assertEqual(
             payload["apiBaseUrl"],
-            "https://demo1.api-demo-rh.taquiondev.com.br/api",
+            "https://demo2.api-demo-rh.taquiondev.com.br/api",
         )
         self.assertIn("exchangeToken", payload)
         self.assertNotIn("password", payload)
@@ -126,13 +129,18 @@ class DemoPublicFlowTests(MultiTenantTestCase):
         self.assertTrue(session_response.json()["authenticated"])
 
         connection.set_schema_to_public()
-        slot = DemoTenantSlot.objects.get(slot_code="demo1")
+        slot = DemoTenantSlot.objects.get(slot_code="demo2")
         self.assertEqual(slot.status, DemoTenantSlot.Status.OCUPADO)
         self.assertIsNone(slot.exchange_token_digest)
         self.assertIsNotNone(slot.exchange_token_consumed_at)
         self.assertNotIn(payload["exchangeToken"], str(slot.__dict__))
 
-        with schema_context("demo1"):
+        self.assertEqual(
+            DemoTenantSlot.objects.get(slot_code="demo1").status,
+            DemoTenantSlot.Status.LIVRE,
+        )
+
+        with schema_context("demo2"):
             user = get_user_model().objects.get(username="demo")
             self.assertFalse(user.has_usable_password())
             self.assertEqual(
@@ -146,13 +154,13 @@ class DemoPublicFlowTests(MultiTenantTestCase):
         _client, lease_response = self._lease()
         token = lease_response.json()["exchangeToken"]
 
-        wrong_tenant_response = self._exchange(self._tenant_client("demo2"), token)
+        wrong_tenant_response = self._exchange(self._tenant_client("demo1"), token)
         self.assertEqual(wrong_tenant_response.status_code, 401)
 
-        valid_response = self._exchange(self._tenant_client("demo1"), token)
+        valid_response = self._exchange(self._tenant_client("demo2"), token)
         self.assertEqual(valid_response.status_code, 200)
 
-        replay_response = self._exchange(self._tenant_client("demo1"), token)
+        replay_response = self._exchange(self._tenant_client("demo2"), token)
         self.assertEqual(replay_response.status_code, 401)
 
     def test_requisicao_repetida_reutiliza_slot_e_emite_nova_troca(self):
@@ -174,7 +182,7 @@ class DemoPublicFlowTests(MultiTenantTestCase):
     def test_pool_cheia_retorna_503_sem_expor_slots(self):
         now = timezone.now()
         connection.set_schema_to_public()
-        DemoTenantSlot.objects.update(
+        DemoTenantSlot.objects.filter(slot_code="demo2").update(
             status=DemoTenantSlot.Status.OCUPADO,
             visitor_key_hash="a" * 64,
             network_key_hash="b" * 64,
@@ -191,6 +199,48 @@ class DemoPublicFlowTests(MultiTenantTestCase):
         serialized = response.content.decode("utf-8")
         self.assertNotIn("demo1", serialized)
         self.assertNotIn("demo2", serialized)
+
+    def test_demo1_nao_expira_na_varredura_automatica(self):
+        now = timezone.now()
+        connection.set_schema_to_public()
+        demo1_slot = DemoTenantSlot.objects.get(slot_code="demo1")
+        demo1_slot.status = DemoTenantSlot.Status.OCUPADO
+        demo1_slot.lease_started_at = now - timedelta(hours=2)
+        demo1_slot.lease_expires_at = now - timedelta(hours=1)
+        demo1_slot.save(
+            update_fields=[
+                "status",
+                "lease_started_at",
+                "lease_expires_at",
+                "updated_at",
+            ]
+        )
+
+        self.assertEqual(expire_due_demo_leases(), [])
+        demo1_slot.refresh_from_db()
+        self.assertEqual(demo1_slot.status, DemoTenantSlot.Status.OCUPADO)
+
+    def test_manter_pool_demo_ignora_demo1_e_nao_reseta(self):
+        connection.set_schema_to_public()
+        demo1_slot = DemoTenantSlot.objects.get(slot_code="demo1")
+        demo1_slot.status = DemoTenantSlot.Status.EXPIRADO
+        demo1_slot.save(update_fields=["status", "updated_at"])
+        output = StringIO()
+
+        with patch(
+            "tenancy.management.commands.manter_pool_demo.call_command"
+        ) as reset_command:
+            call_command(
+                "manter_pool_demo",
+                slot="demo1",
+                stdout=output,
+                verbosity=0,
+            )
+
+        reset_command.assert_not_called()
+        demo1_slot.refresh_from_db()
+        self.assertEqual(demo1_slot.status, DemoTenantSlot.Status.EXPIRADO)
+        self.assertIn("tenant demo permanente", output.getvalue())
 
     def test_lease_rejeita_campos_e_nao_e_publicado_em_slot_demo(self):
         response = self._public_client().post(
@@ -252,23 +302,53 @@ class DemoPublicFlowTests(MultiTenantTestCase):
             network_identifier="203.0.113.30",
         )
 
-        with schema_context("demo1"):
+        with schema_context("demo2"):
             self.assertEqual(Cliente.objects.count(), 1)
             self.assertEqual(Servico.objects.count(), 2)
             self.assertEqual(Orcamento.objects.count(), 1)
             self.assertEqual(Evento.objects.count(), 1)
             self.assertTrue(Cliente.objects.get().email.endswith(".invalid"))
             self.assertTrue(Group.objects.filter(name="Demo Publica").exists())
-        with schema_context("demo2"):
+        with schema_context("demo1"):
             self.assertEqual(Cliente.objects.count(), 0)
+
+    def test_prepara_demo1_permanente_com_seed_e_usuario_minimo(self):
+        connection.set_schema_to_public()
+        DemoTenantSlot.objects.filter(slot_code="demo1").delete()
+
+        with patch.dict(
+            "os.environ",
+            {"DEMO_PERMANENT_PASSWORD": "senha-permanente-segura"},
+            clear=False,
+        ):
+            call_command(
+                "preparar_demo_permanente",
+                password_env="DEMO_PERMANENT_PASSWORD",
+                verbosity=0,
+            )
+
+        connection.set_schema_to_public()
+        self.assertFalse(DemoTenantSlot.objects.filter(slot_code="demo1").exists())
+        with schema_context("demo1"):
+            user = get_user_model().objects.get(username="demo")
+            self.assertTrue(user.is_active)
+            self.assertFalse(user.is_staff)
+            self.assertFalse(user.is_superuser)
+            self.assertTrue(user.check_password("senha-permanente-segura"))
+            self.assertEqual(
+                set(user.groups.values_list("name", flat=True)),
+                {"Demo Publica"},
+            )
+            self.assertEqual(Cliente.objects.count(), 1)
+            self.assertEqual(Servico.objects.count(), 2)
 
     def test_expiracao_remove_sessao_cache_token_e_desativa_usuario(self):
         _public_client, lease_response = self._lease()
         token = lease_response.json()["exchangeToken"]
-        tenant_client = self._tenant_client("demo1")
+        tenant_client = self._tenant_client("demo2")
         self.assertEqual(self._exchange(tenant_client, token).status_code, 200)
 
-        with schema_context("demo1"):
+        with schema_context("demo2"):
             cache.set("demo-expiration-marker", "secret", timeout=60)
             AccessAttempt.objects.create(
                 user_agent="test-agent",
@@ -283,11 +363,11 @@ class DemoPublicFlowTests(MultiTenantTestCase):
             )
             self.assertTrue(Session.objects.exists())
         connection.set_schema_to_public()
-        slot = DemoTenantSlot.objects.get(slot_code="demo1")
+        slot = DemoTenantSlot.objects.get(slot_code="demo2")
         slot.lease_expires_at = timezone.now() - timedelta(seconds=1)
         slot.save(update_fields=["lease_expires_at", "updated_at"])
 
-        results = expire_due_demo_leases(slot_code="demo1")
+        results = expire_due_demo_leases(slot_code="demo2")
 
         self.assertEqual(len(results), 1)
         self.assertGreaterEqual(results[0].axes_rows_removed, 1)
@@ -295,7 +375,7 @@ class DemoPublicFlowTests(MultiTenantTestCase):
         slot.refresh_from_db()
         self.assertEqual(slot.status, DemoTenantSlot.Status.EXPIRADO)
         self.assertIsNone(slot.exchange_token_digest)
-        with schema_context("demo1"):
+        with schema_context("demo2"):
             self.assertFalse(get_user_model().objects.get(username="demo").is_active)
             self.assertEqual(Session.objects.count(), 0)
             self.assertEqual(AccessAttempt.objects.count(), 0)
@@ -313,10 +393,10 @@ class DemoPublicFlowTests(MultiTenantTestCase):
                 )
 
         connection.set_schema_to_public()
-        slot = DemoTenantSlot.objects.get(slot_code="demo1")
+        slot = DemoTenantSlot.objects.get(slot_code="demo2")
         self.assertEqual(slot.status, DemoTenantSlot.Status.LIVRE)
         self.assertEqual(slot.visitor_key_hash, "")
-        with schema_context("demo1"):
+        with schema_context("demo2"):
             self.assertEqual(Cliente.objects.count(), 0)
 
 
@@ -326,6 +406,8 @@ class DemoPublicConcurrencyTests(TransactionTestCase):
     def setUp(self):
         self._demo_settings = override_settings(
             DEMO_PUBLIC_LEASE_ENABLED=True,
+            DEMO_PERMANENT_TENANT_SCHEMA="demo1",
+            DEMO_PUBLIC_POOL_SLOTS=("demo2",),
             DEMO_LEASE_DURATION_MINUTES=60,
             DEMO_EXCHANGE_TOKEN_TTL_SECONDS=300,
         )
@@ -371,7 +453,7 @@ class DemoPublicConcurrencyTests(TransactionTestCase):
         with ThreadPoolExecutor(max_workers=2) as executor:
             results = list(executor.map(lambda _index: self._allocate_in_thread(), range(2)))
 
-        self.assertEqual({slot_code for slot_code, _reused in results}, {"demo1"})
+        self.assertEqual({slot_code for slot_code, _reused in results}, {"demo2"})
         self.assertEqual(sorted(reused for _slot, reused in results), [False, True])
         connection.set_schema_to_public()
         self.assertEqual(

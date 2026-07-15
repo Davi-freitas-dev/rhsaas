@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.core.management.base import CommandError
 from django.db import connection
 from django_tenants.utils import get_public_schema_name
@@ -53,6 +54,7 @@ TENANT_ONLY_COMMANDS = frozenset(
 
 READ_ONLY_COMMANDS = frozenset(
     {
+        "auditar_snapshots_diaria_orcamentos",
         "inventariar_html_django_pm06",
         "validar_baseline_pm05",
         "validar_fechamento_pm03",
@@ -104,6 +106,52 @@ def ensure_tenant_schema(command_name, *, action="manipular dados operacionais")
 
 def is_demo_pool_schema(schema_name):
     return schema_name in DEMO_POOL_SCHEMA_NAMES
+
+
+def demo_public_pool_schema_names():
+    return frozenset(settings.DEMO_PUBLIC_POOL_SLOTS)
+
+
+def is_demo_public_pool_schema(schema_name):
+    return schema_name in demo_public_pool_schema_names()
+
+
+def ensure_demo_public_pool_schema(
+    schema_name,
+    *,
+    command_name="comando demo publico",
+    action="manipular vaga temporaria",
+):
+    schema_name = ensure_demo_pool_schema(
+        schema_name,
+        command_name=command_name,
+        action=action,
+    )
+    if not is_demo_public_pool_schema(schema_name):
+        allowed = ", ".join(sorted(demo_public_pool_schema_names()))
+        raise CommandError(
+            f"O comando '{command_name}' aceita somente slots temporarios da "
+            f"pool publica ({allowed}). O tenant {schema_name} e permanente."
+        )
+    return schema_name
+
+
+def ensure_demo_permanent_tenant_schema(
+    schema_name,
+    *,
+    command_name="preparar_demo_permanente",
+):
+    schema_name = ensure_demo_pool_schema(
+        schema_name,
+        command_name=command_name,
+        action="preparar tenant demo permanente",
+    )
+    if schema_name != settings.DEMO_PERMANENT_TENANT_SCHEMA:
+        raise CommandError(
+            f"O comando '{command_name}' aceita somente o tenant permanente "
+            f"{settings.DEMO_PERMANENT_TENANT_SCHEMA}."
+        )
+    return schema_name
 
 
 def ensure_demo_pool_schema(

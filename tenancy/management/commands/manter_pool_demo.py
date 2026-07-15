@@ -3,7 +3,10 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import connection
 from django_tenants.utils import get_public_schema_name
 
-from tenancy.command_guards import ensure_demo_pool_schema
+from tenancy.command_guards import (
+    ensure_demo_pool_schema,
+    is_demo_public_pool_schema,
+)
 from tenancy.models import DemoTenantSlot
 from tenancy.services_demo_pool import expire_due_demo_leases
 
@@ -14,7 +17,7 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument(
             "--slot",
-            help="Restringe a manutencao a um slot demo1...demo10.",
+            help="Restringe a manutencao a um slot temporario demo2...demo10.",
         )
         parser.add_argument(
             "--dry-run",
@@ -34,6 +37,13 @@ class Command(BaseCommand):
                 command_name="manter_pool_demo",
                 action="manter pool demo",
             )
+            if not is_demo_public_pool_schema(slot_code):
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"Slot ignorado: {slot_code} e o tenant demo permanente."
+                    )
+                )
+                return
 
         dry_run = options["dry_run"]
         if dry_run:

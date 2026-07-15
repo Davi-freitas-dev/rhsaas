@@ -173,6 +173,16 @@ DRF_THROTTLE_DEMO_EXCHANGE_RATE = env_runtime_str(
 )
 
 DEMO_PUBLIC_LEASE_ENABLED = env.bool("DEMO_PUBLIC_LEASE_ENABLED", default=False)
+DEMO_PERMANENT_TENANT_SCHEMA = env(
+    "DEMO_PERMANENT_TENANT_SCHEMA",
+    default="demo1",
+).strip()
+DEMO_PUBLIC_POOL_SLOTS = tuple(
+    env.list(
+        "DEMO_PUBLIC_POOL_SLOTS",
+        default=[f"demo{index}" for index in range(2, 11)],
+    )
+)
 DEMO_PUBLIC_ENTRY_SCHEMA = env(
     "DEMO_PUBLIC_ENTRY_SCHEMA",
     default="rh_teste",
@@ -188,9 +198,26 @@ DEMO_VISITOR_COOKIE_MAX_AGE = env.int(
 )
 if not DEMO_PUBLIC_ENTRY_SCHEMA:
     raise ImproperlyConfigured("DEMO_PUBLIC_ENTRY_SCHEMA nao pode ficar vazio.")
-if DEMO_PUBLIC_ENTRY_SCHEMA in {f"demo{index}" for index in range(1, 11)}:
+DEMO_TENANT_SCHEMA_NAMES = {f"demo{index}" for index in range(1, 11)}
+if DEMO_PUBLIC_ENTRY_SCHEMA in DEMO_TENANT_SCHEMA_NAMES:
     raise ImproperlyConfigured(
         "DEMO_PUBLIC_ENTRY_SCHEMA nao pode apontar para um slot demo."
+    )
+if DEMO_PERMANENT_TENANT_SCHEMA != "demo1":
+    raise ImproperlyConfigured(
+        "DEMO_PERMANENT_TENANT_SCHEMA deve ser demo1; esse tenant e reservado."
+    )
+if not DEMO_PUBLIC_POOL_SLOTS:
+    raise ImproperlyConfigured("DEMO_PUBLIC_POOL_SLOTS nao pode ficar vazio.")
+if len(DEMO_PUBLIC_POOL_SLOTS) != len(set(DEMO_PUBLIC_POOL_SLOTS)):
+    raise ImproperlyConfigured("DEMO_PUBLIC_POOL_SLOTS nao pode conter duplicatas.")
+if set(DEMO_PUBLIC_POOL_SLOTS) - DEMO_TENANT_SCHEMA_NAMES:
+    raise ImproperlyConfigured(
+        "DEMO_PUBLIC_POOL_SLOTS aceita somente demo1...demo10."
+    )
+if "demo1" in DEMO_PUBLIC_POOL_SLOTS:
+    raise ImproperlyConfigured(
+        "demo1 e permanente e nao pode participar de DEMO_PUBLIC_POOL_SLOTS."
     )
 if not 5 <= DEMO_LEASE_DURATION_MINUTES <= 1440:
     raise ImproperlyConfigured(

@@ -19,6 +19,7 @@ from caixa.tenant_files import artifacts_root_for_schema
 from tenancy.command_guards import (
     ensure_demo_pool_reset_confirmation,
     ensure_demo_pool_schema,
+    ensure_demo_public_pool_schema,
 )
 from tenancy.management.commands.provisionar_pool_demo import DEFAULT_DOMAIN_SUFFIX
 from tenancy.models import DemoTenantSlot, Domain
@@ -57,7 +58,7 @@ class Command(BaseCommand):
         parser.add_argument(
             "--slot",
             required=True,
-            help="Slot do pool demo a resetar, por exemplo demo1.",
+            help="Slot temporario a resetar, por exemplo demo2.",
         )
         parser.add_argument(
             "--confirm",
@@ -81,6 +82,11 @@ class Command(BaseCommand):
             options["slot"],
             options["confirm"],
             command_name="resetar_tenant_demo",
+        )
+        slot_code = ensure_demo_public_pool_schema(
+            slot_code,
+            command_name="resetar_tenant_demo",
+            action="resetar tenant demo",
         )
         dry_run = options["dry_run"]
 

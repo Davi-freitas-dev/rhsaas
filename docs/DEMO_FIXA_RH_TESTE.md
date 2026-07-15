@@ -1,5 +1,10 @@
 # Demo fixa com tenant rh_teste
 
+> **Documento historico:** este roteiro continua util apenas para a demo local
+> legada `rh_teste`. A liberacao publica atual reserva `demo1` como tenant
+> permanente e usa `demo2...demo10` na pool automatica; consulte
+> `PLANO_LIBERACAO_DEMO_PUBLICA_AUTOMATICA.md`.
+
 Este roteiro prepara a demo local simples antes do pool de tenants demo.
 O pool `demo1...demo10` fica para uma fase posterior.
 

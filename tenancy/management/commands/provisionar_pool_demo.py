@@ -4,7 +4,10 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import connection
 from django_tenants.utils import get_public_schema_name
 
-from tenancy.command_guards import ensure_demo_pool_schema
+from tenancy.command_guards import (
+    ensure_demo_pool_schema,
+    is_demo_public_pool_schema,
+)
 from tenancy.models import DEMO_SLOT_CODES, DemoTenantSlot, Domain, Tenant
 
 
@@ -15,6 +18,7 @@ MAX_SLOTS = len(DEMO_SLOT_CODES)
 @dataclass(frozen=True)
 class SlotPlan:
     slot_code: str
+    is_public_pool_slot: bool
     tenant: Tenant | None
     domain: Domain | None
     slot: DemoTenantSlot | None
@@ -31,8 +35,8 @@ class SlotPlan:
 
 class Command(BaseCommand):
     help = (
-        "Provisiona tenants demo1...demo10 de forma idempotente, criando "
-        "Tenant, Domain tecnico e DemoTenantSlot ausentes."
+        "Provisiona tenants demo1...demo10 de forma idempotente. Cria Tenant "
+        "e Domain para todos, mas DemoTenantSlot somente para a pool publica."
     )
 
     def add_arguments(self, parser):
@@ -72,6 +76,7 @@ class Command(BaseCommand):
 
         created = {"tenant": 0, "domain": 0, "slot": 0}
         existing = {"tenant": 0, "domain": 0, "slot": 0}
+        permanent = 0
 
         for plan in plans:
             tenant = plan.tenant
@@ -94,7 +99,12 @@ class Command(BaseCommand):
             else:
                 existing["domain"] += 1
 
-            if plan.slot is None:
+            if not plan.is_public_pool_slot:
+                permanent += 1
+                self.stdout.write(
+                    f"Tenant permanente preservado sem DemoTenantSlot: {plan.slot_code}"
+                )
+            elif plan.slot is None:
                 DemoTenantSlot.objects.create(
                     tenant=tenant,
                     slot_code=plan.slot_code,
@@ -111,7 +121,8 @@ class Command(BaseCommand):
                 "Pool demo provisionado. "
                 f"Tenants criados={created['tenant']} existentes={existing['tenant']}; "
                 f"Domains criados={created['domain']} existentes={existing['domain']}; "
-                f"Slots criados={created['slot']} existentes={existing['slot']}."
+                f"Slots criados={created['slot']} existentes={existing['slot']}; "
+                f"tenants_permanentes={permanent}."
             )
         )
 
@@ -130,6 +141,13 @@ class Command(BaseCommand):
             .filter(slot_code=slot_code)
             .first()
         )
+        is_public_pool_slot = is_demo_public_pool_schema(slot_code)
+
+        if not is_public_pool_slot and slot is not None:
+            raise CommandError(
+                f"O tenant permanente {slot_code} ainda possui DemoTenantSlot. "
+                "Aplique a migration que o remove da pool antes de provisionar."
+            )
 
         if domain is not None and domain.tenant.schema_name != slot_code:
             raise CommandError(
@@ -153,6 +171,7 @@ class Command(BaseCommand):
 
         return SlotPlan(
             slot_code=slot_code,
+            is_public_pool_slot=is_public_pool_slot,
             tenant=tenant,
             domain=domain,
             slot=slot,
@@ -162,5 +181,8 @@ class Command(BaseCommand):
         actions = []
         actions.append("tenant existente" if plan.tenant else "criaria tenant")
         actions.append("domain existente" if plan.domain else "criaria domain")
-        actions.append("slot existente" if plan.slot else "criaria slot")
+        if plan.is_public_pool_slot:
+            actions.append("slot existente" if plan.slot else "criaria slot")
+        else:
+            actions.append("tenant permanente; sem slot de pool")
         self.stdout.write(f"{plan.slot_code}: {', '.join(actions)}")

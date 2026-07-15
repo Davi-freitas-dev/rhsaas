@@ -15,10 +15,10 @@ Estados usados neste documento:
 
 ## 1. Objetivo
 
-Deixar a demo pronta para abertura publica com distribuicao automatica de uma
-vaga entre `demo1...demo10`, autenticacao sem credencial manual, isolamento por
-schema, acesso temporario, permissoes minimas e limpeza segura antes de devolver
-a vaga ao pool.
+Deixar a demo pronta para abertura publica com `demo1` como tenant permanente
+e distribuicao automatica somente entre `demo2...demo10`, autenticacao sem
+credencial manual, isolamento por schema, acesso temporario, permissoes minimas
+e limpeza segura antes de devolver a vaga ao pool.
 
 O escopo e uma demo de portfolio. Cobranca, planos, assinatura, trial comercial
 e cadastro empresarial permanecem fora de escopo.
@@ -119,23 +119,47 @@ servidor nesta execucao para confirmar metricas atuais.
 
 ### Estado atual apos a implementacao local
 
-- Backend e frontend continuam nas mesmas branches e commits iniciais; as
-  mudancas estao somente na arvore local, sem commit, push ou deploy.
+- No inicio da reserva de `demo1`, o backend estava em `8d3efe6`, branch
+  `feat/django-tenants-spike`, e o frontend em `3d910ca`, branch `main`; ambos
+  estavam um commit a frente do upstream. As mudancas desta solicitacao estao
+  somente nas arvores locais, sem commit, push ou deploy.
 - A flag `DEMO_PUBLIC_LEASE_ENABLED` permanece `False` por padrao.
-- O plano final de migrations locais, sem aplicacao, lista no schema `public`
-  `caixa.0040`, `caixa.0041` e `tenancy.0003`; nos dois tenants locais lista
-  `caixa.0041` e `tenancy.0003`.
-- Os testes relacionados do backend passaram: 13/13 na suite publica e 3/3
-  nos cenarios legados focados de ocupar, expirar e resetar.
+- A nova migration `tenancy.0004` remove somente o registro
+  `DemoTenantSlot(slot_code="demo1")`; ela nao foi aplicada ao banco de
+  desenvolvimento nem a producao nesta solicitacao.
+- Os testes relacionados do backend passaram: suite publica 16/16;
+  provisionamento 5/5; ocupacao com os nove cenarios validados; expiracao 7/7;
+  reset 10/10; guards novos e a classificacao corrigida aprovados.
 - `verify:frontend` passou por completo: lint, tipos, guardrails e build de
   producao com 22 rotas.
 - `verify:e2e` passou 17/17: cinco cenarios da entrada publica e doze de
   regressao dos filtros canonicos.
-- A suite completa `tenancy` continua sem resultado conclusivo porque a
-  tentativa inicial ultrapassou dez minutos; isso permanece como divida de
-  validacao ampliada, nao como falha dos testes relacionados.
+- A bateria agregada de cinco classes da pool ultrapassou quinze minutos e foi
+  dividida; todas as classes relacionadas produziram resultados deterministas.
+  A suite completa `tenancy` permanece como validacao ampliada de CI, nao como
+  falha dos cenarios relacionados.
 - A integracao real entre frontend e backend ainda precisa ser exercitada no
   ambiente de homologacao com os dez tenants provisionados.
+
+### Diagnostico da reserva de `demo1` em 2026-07-15
+
+- `allocate_demo_lease` selecionava qualquer `DemoTenantSlot` livre e, pela
+  ordenacao, preferia `demo1`.
+- `expire_due_demo_leases`, `ocupar_tenant_demo` e `expirar_leases_demo`
+  tambem assumiam `demo1...demo10` como uma unica pool.
+- `manter_pool_demo` processava o resultado da expiracao e podia resetar
+  `demo1`.
+- `provisionar_pool_demo` criava um `DemoTenantSlot` livre para `demo1`.
+- testes backend, concorrencia e E2E simulavam `demo1` como primeira vaga.
+- o frontend ja preservava `?tenant=demo1`, mas nao oferecia esse acesso como
+  fallback quando a pool temporaria estava cheia.
+- documentos historicos e operacionais ainda descreviam `demo1...demo10` como
+  pool temporaria.
+
+Decisao implementada: usar `DEMO_PUBLIC_POOL_SLOTS` como fonte central da pool
+automatica, com padrao `demo2...demo10`. A migration de dados pequena remove
+somente o registro `DemoTenantSlot` de `demo1`, preservando Tenant, Domain,
+schema, dados e usuario permanentes.
 
 ## 3. Decisoes arquiteturais
 
@@ -158,6 +182,20 @@ livre.
 Razao: o lock no banco e a autoridade final para impedir dupla alocacao entre
 workers. Cache ou Redis nao serao usados como autoridade do estado do slot.
 
+### Composicao da pool e tenant permanente
+
+Decisao: `demo1` e o tenant permanente e nao possui `DemoTenantSlot` de pool.
+A lista configuravel `DEMO_PUBLIC_POOL_SLOTS` contem, por padrao,
+`demo2...demo10` e sera aplicada em toda selecao automatica. Os guards gerais
+continuam reconhecendo `demo1...demo10` como tenants tecnicos validos para
+validacoes de infraestrutura, mas os comandos de ocupar, expirar e resetar a
+pool rejeitam `demo1`; a operacao manual permanente usa somente
+`preparar_demo_permanente`.
+
+Razao: separar a lista tecnica da lista automatica evita condicionais
+espalhadas, preserva `?tenant=demo1`, protege concorrencia/reinicio e elimina o
+estado ambiguo de uma demo permanente marcada como `livre`.
+
 ### Autenticacao
 
 Decisao: token aleatorio de troca, de uso unico e vida curta. O endpoint de
@@ -173,8 +211,9 @@ token de troca resolve a fronteira de host sem compartilhar cookies.
 Decisao: 60 minutos por padrao, configuravel por ambiente, com token de troca
 valido por poucos minutos.
 
-Razao: dez slots e uma VM pequena exigem rotacao conservadora. Tres dias, usados
-na fase manual, seriam inadequados para entrada publica anonima.
+Razao: nove slots temporarios e uma VM pequena exigem rotacao conservadora.
+Tres dias, usados na fase manual, seriam inadequados para entrada publica
+anonima.
 
 ### Controle de abuso
 
@@ -233,6 +272,7 @@ comprovadamente limpo.
 ## 4. Checklist por fase
 
 - [x] diagnostico;
+- [x] reserva permanente de `demo1` e pool publica `demo2...demo10`;
 - [~] estabilizacao dos testes existentes;
 - [x] servico de lease;
 - [x] endpoint publico;
@@ -261,6 +301,7 @@ comprovadamente limpo.
 | Diagnostico Git | dois repositorios | comandos Git obrigatorios | limpos e sincronizados | backend `e623d12`, frontend `752b9ed` | nenhum |
 | Diagnostico Django | `config/settings.py`, migrations | `check`, `check --deploy`, `makemigrations --check`, `migrate_schemas --plan` | check local passa com override; migrations pendentes identificadas | nao existe commit novo | ambiente local nao simula Redis de producao |
 | Diagnostico da pool | `tenancy/models.py`, commands, tests | leitura de codigo e `test tenancy` | gaps confirmados; suite expirou em 10 minutos | nao existe commit novo | baseline tenancy inconclusiva |
+| Diagnostico demo permanente | services, cinco commands, timer, testes, seed, docs e frontend | `rg` e leitura dirigida | todos os seletores automaticos e pressupostos `demo1...demo10` mapeados antes de editar | backend `8d3efe6`, frontend `3d910ca`; nenhum commit novo desta solicitacao | nenhuma limitacao de codigo; falta homologacao |
 | Producao read-only | URLs publicas | GETs sem autenticacao | frontend/API/demo1/demo2 200; demo10/health/lease 404 | producao nao alterada | sem acesso SSH para metricas atuais |
 | Documentacao | este arquivo | revisao de `GATE`, `WILDCARD`, `OPERACAO` e `PLANO_POOL` | documento novo escolhido; anteriores preservados como historico/runbook manual | nao existe commit novo | atualizar continuamente |
 | Lease e troca automatica | `tenancy/services_demo_pool.py`, `tenancy/views_demo_public.py`, `config/public_urls.py`, `config/tenant_urls.py`, `tenancy/models.py`, migration `0003` | `venv/Scripts/python.exe manage.py test tenancy.test_demo_public --keepdb` | 13/13 testes aprovados em PostgreSQL; lease 201, troca CSRF e sessao host-only | nao existe commit novo | flag permanece desligada por padrao |
@@ -272,7 +313,12 @@ comprovadamente limpo.
 | Frontend publico | `app/page.tsx`, `features/demo-public/`, `lib/config/api.ts`, `demo-api-runtime.ts`, auth/layout | `corepack pnpm verify:frontend` | lint, tipos, todos os guardrails e build passaram; 22 rotas geradas | nao existe commit novo | avisos Node de deteccao ESM sao nao bloqueantes |
 | E2E | `tests/e2e/public-demo.spec.ts`, `contract-filters.spec.ts`, `package.json` | `corepack pnpm verify:e2e` | 5/5 fluxo publico e 12/12 regressoes, total 17/17 | nao existe commit novo | API e navegador sao integrados por contratos mockados; repetir contra homologacao real |
 | Operacao | `docs/deploy/demo-publica/README.md`, env/Nginx/systemd | revisao do runbook e `git diff --check` | provisionamento, ativacao, kill switch, timer, recovery, health, logs e rollback documentados | nao existe commit novo | comandos de servidor nao executados |
-| Plano final de migrations | migration `tenancy.0003` e migrations existentes de `caixa` | `manage.py migrate_schemas --plan` | tres schemas inspecionados; nenhum SQL aplicado | nao existe commit novo | aplicar somente com backup/restore testado e na sequencia do runbook |
+| Plano final de migrations | migrations `tenancy.0003`, `tenancy.0004` e migrations existentes de `caixa` | `manage.py migrate_schemas --plan` | tres schemas inspecionados em 2026-07-15; `0004` aparece apos `0003`; nenhum SQL aplicado | nao existe commit novo | aplicar somente com backup/restore testado e na sequencia do runbook |
+| Checks finais backend | settings, migrations e Python alterado | `manage.py check`; `makemigrations --check --dry-run`; `compileall`; `migrate_schemas --plan` | todos retornaram codigo 0; nenhuma migration adicional detectada | nenhum commit novo desta solicitacao | plano somente leitura; banco nao alterado |
+| Reserva de `demo1` | `config/settings.py`, `command_guards.py`, `services_demo_pool.py`, cinco commands e migration `0004` | `manage.py test tenancy.test_demo_public --keepdb` | 16/16 na execucao final; endpoint, expiracao, manutencao e concorrencia ignoram `demo1`; primeira vaga e `demo2` | nenhum commit novo desta solicitacao | aplicar migration somente em deploy autorizado |
+| Commands da pool `demo2+` | provisionar, ocupar, expirar, resetar e guards | classes focadas separadas; repeticoes focadas finais | provisionar 5/5; ocupar 10 cenarios validados; expirar 8/8; reset 11 cenarios validados; guards relacionados aprovados; comandos de pool rejeitam `demo1` | nenhum commit novo desta solicitacao | bateria agregada excede 15 minutos; manter classes separadas no CI |
+| Demo permanente | `preparar_demo_permanente.py`, seed e usuario minimo | teste de preparacao permanente | `demo1` sem slot; seed presente; usuario ativo, com senha preservada/fornecida por env, sem staff/superuser e grupo unico | nenhum commit novo desta solicitacao | credencial real deve vir do secret manager no ambiente |
+| Fallback frontend | `public-demo-entry.tsx`, `demo-api-runtime.ts`, E2E | `corepack pnpm verify:frontend` e `verify:e2e` | frontend completo verde; E2E 17/17; pool cheia oferece `?tenant=demo1` sem segundo lease | nenhum commit novo desta solicitacao | validar login permanente real em homologacao |
 
 ### Tentativas, problemas e correcoes durante a implementacao
 
@@ -286,6 +332,10 @@ comprovadamente limpo.
 | primeira execucao de `verify:frontend` | guardrail financeiro continha 19 allowlists obsoletas e nao conhecia configuracoes financeiras existentes | atualizar somente o contrato estatico para os imports reais | `check:financial-canonical` e a suite completa passaram |
 | segunda execucao de `verify:frontend` | boundary proibia o `fetch` cross-host necessario ao handshake apex/tenant | criar excecao nominal somente para o service da demo publica | direct fetch continua proibido fora do HTTP client e desse service; suite completa passou |
 | E2E antigo abria `/` esperando dashboard | a raiz agora e corretamente a entrada publica | manter diagnostico manual explicito | testes de regressao usam `?tenant=demo1`, abortam chamadas externas e continuaram 12/12 |
+| bateria agregada de cinco classes backend | custo cumulativo de criacao/reset de schemas excedeu 15 minutos sem resumo | encerrar os dois processos filhos confirmados e dividir por classe | classes separadas produziram resultados deterministas; nenhuma disputa de banco permaneceu |
+| classe de ocupacao apos a divisao da pool | teste de slot inexistente provisionava `demo2` por engano | corrigir somente o fixture para `--slots=1` | oito cenarios ja aprovados e o cenario corrigido passou isoladamente |
+| classe completa de guards | comando anterior `auditar_snapshots_diaria_orcamentos` nao estava classificado | registrar seu comportamento real como somente leitura | falha focada e novo guard da pool passaram juntos 2/2 |
+| primeira verificacao frontend | lint exigiu `Link` para navegacao interna do fallback | usar `next/link` sem mudar o destino | `verify:frontend` completo passou na repeticao |
 
 ## 6. Riscos e bloqueadores
 
@@ -297,7 +347,7 @@ comprovadamente limpo.
 | Senha exposta no frontend | alta | credencial reutilizavel | token HMAC de uso unico | mitigado no codigo | token nao e persistido no browser e o digest e consumido uma vez |
 | Sessao/Axes/cache residual | alta | acesso ou dados do visitante anterior | limpeza schema-scoped antes do reset | mitigado localmente | sessao, Axes e cache cobertos no teste de expiracao |
 | Seed insuficiente | alta | nova vaga vazia/inutilizavel | seed idempotente ficticio | mitigado no codigo | cliente/servicos/orcamento/evento isolados em teste |
-| Pool incompleta | alta | capacidade menor e 404 | provisionar 10 em homologacao/producao | bloqueado para deploy | demo10 externo 404 |
+| Pool incompleta | alta | capacidade menor e 404 | preservar `demo1` e provisionar nove vagas `demo2...demo10` | bloqueado para deploy | demo10 externo 404 |
 | Migrations pendentes | alta | schemas divergentes | aplicar na sequencia de deploy aprovada | bloqueado para deploy | `migrate_schemas --plan` |
 | Config local `DEBUG=release` | media | comandos falham sem override | corrigir ambiente local, nao o codigo | aberto | `manage.py check` |
 | Timer inexistente | alta | leases nunca liberados sozinhos | `manter_pool_demo` + unit/timer systemd | mitigado no pacote | ciclo real testado localmente; ativacao do timer depende do deploy |
@@ -343,6 +393,29 @@ Decisao atual: implementar a automacao porque wildcard, guards, isolamento e
 reset manual ja possuem base validada; manter os documentos antigos como
 historico.
 
+### Composicao da pool automatica
+
+Decisao anterior: `demo1...demo10` eram todos slots temporarios e o primeiro
+livre era entregue pelo endpoint.
+
+Decisao final: `demo1` e permanente; somente `demo2...demo10` participam de
+lease, expiracao e reset automaticos.
+
+Motivo: manter um ambiente sempre acessivel para demonstracao e oferecer
+fallback seguro quando as nove vagas temporarias estiverem ocupadas.
+
+### Extensao de acesso de testadores
+
+Decisao considerada: tornar um usuario de uma vaga temporaria ilimitado.
+
+Decisao final: `demo1` e ilimitado por ser um tenant permanente, sem lease. Em
+`demo2...demo10`, qualquer extensao futura deve ser finita e atualizar o lease
+da vaga inteira, nao apenas o usuario. Necessidade realmente permanente deve
+receber tenant dedicado fora da pool.
+
+Motivo: uma sessao ilimitada dentro de slot temporario impediria reset seguro,
+reduziria a capacidade indefinidamente e poderia divergir do estado do lease.
+
 ## 8. Operacao
 
 O procedimento completo e os comandos de servidor estao em
@@ -350,6 +423,11 @@ O procedimento completo e os comandos de servidor estao em
 
 - provisionamento: validar migrations, executar
   `provisionar_pool_demo --slots=10 --dry-run` e somente depois sem `--dry-run`;
+  isso cria infraestrutura para dez tenants, mas slots apenas para
+  `demo2...demo10`;
+- demo permanente: executar `preparar_demo_permanente --dry-run`; depois
+  executar sem dry-run, preservando senha existente ou fornecendo senha apenas
+  por `--password-env` ligado a secret do ambiente;
 - ativacao publica: manter `DEMO_PUBLIC_LEASE_ENABLED=False` durante migrations,
   pool e smoke tests; mudar para `True` apenas depois da homologacao e reiniciar
   `rhsaas-demo`;
@@ -357,13 +435,15 @@ O procedimento completo e os comandos de servidor estao em
   interrompe novas reservas sem apagar slots existentes;
 - expiracao/limpeza/reset: timer de dois minutos chama `manter_pool_demo`, que
   desativa acesso, limpa sessao/Axes/cache, reseta, semeia e libera; validar
-  primeiro com `manter_pool_demo --dry-run`;
+  primeiro com `manter_pool_demo --dry-run`; toda a varredura e restrita a
+  `demo2...demo10`;
 - recuperacao de slot preso: inspecionar schema, domain, slot, logs e arquivos;
   usar `expirar_leases_demo --slot=demoN --dry-run` e
   `resetar_tenant_demo --slot=demoN --confirm="RESETAR demoN" --dry-run`; nunca
   trocar `bloqueado` diretamente para `livre`;
-- pool cheia: HTTP 503 com `code=pool_full`, sem lista de vagas; revisar apenas
-  contagens agregadas e leases vencidos;
+- pool cheia: HTTP 503 com `code=pool_full`, sem lista de vagas; frontend oferece
+  `?tenant=demo1` sem chamar o lease novamente; revisar apenas contagens
+  agregadas de `demo2...demo10` e leases vencidos;
 - falha parcial: rollback transacional antes do commit; falha de reset deixa
   slot bloqueado e reduz capacidade ate diagnostico;
 - rollback: desligar a flag, parar o timer se necessario, preservar logs/slots
@@ -403,3 +483,67 @@ Conclusao atual: o pacote de codigo esta pronto para deploy de homologacao com
 a flag inicialmente desligada. A abertura publica em producao nao esta pronta
 e nao sera marcada como concluida sem autorizacao explicita e evidencia dos
 pre-requisitos e do ambiente.
+
+## 10. Sequencia exata para homologacao e producao
+
+O runbook executavel, arquivos de systemd/Nginx e checklist detalhado estao em
+`docs/deploy/demo-publica/README.md`. A ordem abaixo nao autoriza deploy; ela
+deve ser executada primeiro em homologacao e somente depois, com as evidencias
+aprovadas, repetida em producao.
+
+### Homologacao
+
+1. Registrar commit/artefato candidato, manter
+   `DEMO_PUBLIC_LEASE_ENABLED=False`, configurar `demo1` permanente e
+   `demo2...demo10` na pool.
+2. Criar backup do banco de homologacao e comprovar restauracao em ambiente
+   separado.
+3. Publicar backend e frontend candidatos sem ativar a entrada publica.
+4. No diretorio do backend, executar, nesta ordem:
+
+```bash
+venv/bin/python manage.py check --deploy
+venv/bin/python manage.py makemigrations --check --dry-run
+venv/bin/python manage.py migrate_schemas --plan
+venv/bin/python manage.py migrate_schemas --shared
+venv/bin/python manage.py migrate_schemas
+venv/bin/python manage.py provisionar_pool_demo --slots=10 --dry-run
+venv/bin/python manage.py provisionar_pool_demo --slots=10
+venv/bin/python manage.py preparar_demo_permanente --dry-run
+venv/bin/python manage.py manter_pool_demo --dry-run
+```
+
+5. Se o dry-run informar `usuario_pronto=sim`, executar
+   `preparar_demo_permanente` sem senha. Se informar `nao`, carregar a senha
+   do secret manager em `DEMO_PERMANENT_PASSWORD`, executar com
+   `--password-env=DEMO_PERMANENT_PASSWORD` e remover a variavel.
+6. Instalar/recarregar as units e o Nginx conforme o runbook; validar timer,
+   health, DNS e TLS, ainda com a flag desligada.
+7. Homologar `?tenant=demo1`, login permanente, seed e permissoes minimas.
+8. Confirmar no schema `public` que nao existe slot `demo1` e que existem
+   exatamente nove slots `demo2...demo10`.
+9. Ativar a flag, reiniciar a API e executar o E2E real: alocacao em `demo2+`,
+   troca de token, isolamento, concorrencia, pool cheia/fallback e um ciclo
+   completo de expiracao/reset pelo timer.
+10. Desativar novamente a flag se qualquer gate falhar; nao liberar slot
+    manualmente para contornar falha.
+
+### Producao
+
+1. Exigir o artefato exato aprovado em homologacao e anexar as evidencias do
+   E2E real, backup/restore, capacidade, TLS e timer.
+2. Manter a flag desligada, fazer backup de producao e comprovar o ponto de
+   restauracao; registrar health e recursos antes da mudanca.
+3. Publicar o mesmo backend, executar os checks, plano, migrations,
+   provisionamento e preparacao de `demo1` na mesma ordem de homologacao.
+4. Confirmar preservacao de schema, Domain, dados e usuario de `demo1`; nunca
+   executar comandos de ocupar, expirar ou resetar contra ele.
+5. Publicar o mesmo frontend, validar health, `?tenant=demo1`, nove slots,
+   systemd, Nginx e TLS com a entrada ainda desligada.
+6. Ativar a flag, reiniciar `rhsaas-demo`, executar um smoke publico completo
+   e acompanhar logs/health/timer ate a vaga usada expirar, resetar e voltar
+   limpa para a pool.
+7. Em falha, desligar a flag e reiniciar a API; parar o timer apenas se ele for
+   a causa, preservar slots bloqueados/evidencias e seguir o rollback do
+   runbook. Nao reverter `0004` nem recriar slot para `demo1` sem plano de dados
+   especifico e restore testado.

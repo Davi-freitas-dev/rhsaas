@@ -1,5 +1,12 @@
 # Operacao manual do pool demo de tenants
 
+> **Documento historico:** este runbook descreve a fase manual anterior e nao
+> deve ser usado para operar a liberacao publica atual. A decisao vigente
+> reserva `demo1` como tenant permanente e limita a pool automatica a
+> `demo2...demo10`. Consulte
+> `PLANO_LIBERACAO_DEMO_PUBLICA_AUTOMATICA.md` e
+> `deploy/demo-publica/README.md` antes de qualquer operacao.
+
 Este runbook descreve como operar localmente o pool manual `demo1...demo10`
 do RH SaaS. Ele cobre provisionamento, ocupacao, expiracao, reset seguro e
 validacoes basicas de isolamento.

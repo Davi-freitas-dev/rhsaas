@@ -1,5 +1,11 @@
 # Gate operacional da demo publica
 
+> **Gate historico (2026-07-07):** as evidencias abaixo permanecem registradas,
+> mas este arquivo nao representa a arquitetura de liberacao atual. A decisao
+> vigente reserva `demo1` como tenant permanente e usa `demo2...demo10` na
+> pool automatica. O acompanhamento atual esta em
+> `PLANO_LIBERACAO_DEMO_PUBLICA_AUTOMATICA.md`.
+
 Registro operacional da validacao P0 da demo publica do RH SaaS.
 
 Data do gate: 2026-07-07
