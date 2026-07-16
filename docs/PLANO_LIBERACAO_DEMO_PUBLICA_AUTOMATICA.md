@@ -328,20 +328,26 @@ producao permanecem pendentes e intocadas.
 Diagnostico: o dashboard principal encerrava a sessao com
 `logoutFromBackend()` e, antes de o cabecalho redirecionar para `/`, chamava
 `refetch()`. A nova consulta ja sem autenticacao falhava e renderizava por
-instantes o aviso de dados desatualizados. As demais telas nao faziam esse
-refetch pos-logout.
+instantes o aviso de dados desatualizados. A auditoria global posterior das 16
+ocorrencias de `logoutFromBackend()` encontrou o mesmo padrao em backups, FCF,
+obrigacoes financeiras e FCI. Custos extras tambem fazia duas consultas
+posteriores ao logout: permissao e dados.
 
-Decisao: remover somente o `refetch()` posterior ao logout. A sessao, caches e
-lease local continuam sendo limpos pelo service de autenticacao, e o cabecalho
-continua responsavel pelo redirecionamento. Nao esconder o alerta global, pois
-ele permanece correto para falhas reais de atualizacao.
+Decisao: remover somente consultas executadas dentro dos handlers depois de
+`logoutFromBackend()`. A sessao, caches e lease local continuam sendo limpos
+pelo service de autenticacao, e o cabecalho continua responsavel pelo
+redirecionamento. Os demais `refetch()` de atualizacao, retry e mutacoes com
+sessao ativa permanecem intactos. Nao esconder alertas reais de atualizacao.
 
-Evidencia: o E2E passou a devolver 401 para qualquer consulta de dashboard
-posterior ao logout e exige zero requisicoes nesse intervalo, ausencia do aviso
-e retorno a `/`. Lint focado, typecheck e E2E publico 15/15 passaram.
+Evidencia: o E2E observa separadamente consultas posteriores ao
+logout no dashboard principal e em backups, aguarda a resposta do logout, a
+URL publica final e o estado de rede ociosa, sem espera fixa. Tambem exige
+ausencia de estado residual e reutilizacao do mesmo lease e expiracao. E2E
+publico passou 16/16. `verify:frontend` passou com lint, typecheck, guardrails
+oficiais e build de producao das 22 rotas; `git diff --check` passou.
 
-Estado da fase: `[x]` correcao e validacao local concluidas; producao nao foi
-alterada.
+Estado da fase: `[x]` correcao global e validacao local concluidas; producao nao
+foi alterada.
 
 ## 3. Decisoes arquiteturais
 
@@ -504,7 +510,7 @@ comprovadamente limpo.
 | Recuperacao pos-exchange | `public-demo-service.ts`, `public-demo-entry.tsx`, `public-demo.spec.ts` | `corepack pnpm verify:frontend`; `corepack pnpm run test:e2e:public-demo`; `corepack pnpm run test:e2e` | lint, tipos, guardrails oficiais e build aprovados; E2E publico 13/13; bateria completa 25 aprovados e 1 `rh_teste` ignorado por falta da senha opcional | nenhum commit novo desta solicitacao | repetir contra backend real em homologacao; producao nao foi alterada |
 | Reutilizacao e cota por rede | `config/settings.py`, `tenancy/services_demo_pool.py`, `tenancy/views_demo_public.py`, `tenancy/test_demo_public.py`, envs, runbook, `public-demo-service.ts`, `public-demo.spec.ts` | `manage.py check`; `makemigrations --check --dry-run`; classes `DemoPublicFlowTests` e `DemoPublicConcurrencyTests`; `corepack pnpm run verify:frontend`; E2E publico e completo | backend 19/19 + 3/3; sem migration nova; frontend completo verde; E2E publico 15/15; bateria completa 27 aprovados e 1 opcional ignorado; mesmo cookie reutiliza, dois cookies ficam isolados e o terceiro recebe `network_limit` sem ocupar slot | nenhum commit novo desta solicitacao | validar proxy/IP canonico, Redis/throttle e expiracao real em homologacao |
 | Retomada imediata apos logout | `caixa/throttling.py`, `config/settings.py`, `tenancy/demo_visitor.py`, `tenancy/services_demo_pool.py`, `tenancy/views_demo_public.py`, testes, envs e runbook | `manage.py check`; `makemigrations --check --dry-run`; `DemoPublicFlowTests`; `DemoPublicConcurrencyTests`; `corepack pnpm run verify:frontend`; `test:e2e:public-demo` | backend 21/21 + concorrencia 3/3; frontend completo verde; E2E 15/15; mesmo tenant e expiracao, novo exchange, sem segundo slot e sem 429 da cota de novas alocacoes | nenhum commit desta solicitacao | validar Redis e Nginx reais em homologacao; Nginx ainda pode limitar rajadas abusivas antes do Django |
-| Aviso transitorio no logout | `financial-dashboard-view.tsx`, `public-demo.spec.ts` | eslint focado; typecheck; `test:e2e:public-demo`; `verify:frontend` | logout sem refetch posterior, sem consulta 401 do dashboard e sem alerta antes do redirecionamento; E2E publico 15/15 | nenhum commit desta solicitacao | repetir smoke test visual depois do deploy frontend |
+| Aviso transitorio no logout | seis views financeiras com handler de logout, `public-demo.spec.ts` | auditoria global de `logoutFromBackend`; eslint focado; `test:e2e:public-demo`; `verify:frontend`; `git diff --check` | 16 ocorrencias revisadas; consultas posteriores removidas de dashboard, backups, FCF, obrigacoes, FCI e custos extras; demais refetches preservados; E2E publico 16/16 e frontend completo verde | nenhum commit desta solicitacao | repetir smoke test visual depois do deploy frontend |
 
 ### Tentativas, problemas e correcoes durante a implementacao
 
