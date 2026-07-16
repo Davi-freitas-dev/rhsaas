@@ -1439,3 +1439,153 @@ venv/bin/python manage.py manter_pool_demo --dry-run
    a causa, preservar slots bloqueados/evidencias e seguir o rollback do
    runbook. Nao reverter `0004` nem recriar slot para `demo1` sem plano de dados
    especifico e restore testado.
+
+## 11. Fase 2 - ampliacao operacional segura
+
+### Diagnostico inicial (2026-07-16)
+
+- backend: `240817c`, branch `feat/django-tenants-spike`, arvore limpa;
+- frontend: `5c61344`, branch `main`, arvore limpa;
+- a migration tenant-scoped `caixa.0042_demo_seed_keys` existe e a fundacao da
+  Fase 1 esta aplicada aos services de configuracao, cadastros, orcamentos,
+  custos, dividas, escrita canonica, obrigacoes e pagamentos;
+- `PERMISSION_PROFILES["Demo Publica"]` continua sendo a unica fonte canonica
+  e possui exatamente as 22 permissoes originais;
+- a sincronizacao pre-valida todos os codenames, usa `permissions.set(...)`,
+  remove permissoes diretas e mantem somente o grupo `Demo Publica` no usuario
+  provisionado;
+- existem contratos para configuracao, custos fixos/extras, alteracao de
+  receitas/despesas, FCI, FCF, credores, dividas, fluxo de caixa, ledger,
+  obrigacoes e liquidacoes nativas;
+- `add_evento` nao possui `POST` correspondente e sera mantida somente por
+  compatibilidade nesta fase; nao sera criado endpoint artificial;
+- nao existe contrato de edicao de movimentacao FCF. Por isso
+  `change_financiamentomovimentacao` nao sera concedida;
+- a edicao de investimento comum e requisito funcional da fase. Sera criada
+  somente a rota de detalhe `PUT /api/fci/<id>/`, com permissao explicita,
+  lock, transacao, policy antes da mutacao e sem metodo `DELETE`;
+- as seis permissoes condicionais permanecerao fora. Nenhum contrato novo sera
+  criado apenas para aumentar a contagem da allowlist.
+
+Contagem decidida: 22 atuais + 19 contratos liberados = 41 permissoes. A
+divergencia em relacao as 42 inicialmente esperadas e deliberada e decorre da
+ausencia de operacao segura/utilizavel para editar movimentacao FCF.
+
+### Checklist da Fase 2
+
+- [x] diagnostico dos commits, arvores, migration, policy, endpoints e telas;
+- [x] allowlist explicita e sincronizacao do usuario demo;
+- [x] policy nas novas entradas de escrita FCI/FCF/credor/divida;
+- [x] contrato estreito de alteracao de investimento;
+- [x] auditoria de lock, atomicidade, duplicidade e rollback de liquidacoes;
+- [x] capacidades de sessao e sidebar;
+- [x] testes backend dos 52 criterios aplicaveis;
+- [x] testes frontend e E2E publico;
+- [x] revisao de proibicoes, diff e documentacao operacional;
+- [ ] homologacao (fora desta execucao);
+- [ ] deploy e validacao pos-deploy (fora desta execucao).
+
+### Matriz inicial dos contratos liberados
+
+| Funcionalidade | Rota/metodo | Permissao de mutacao | Policy antes da escrita | Sucesso | Seed | Sem permissao |
+| --- | --- | --- | --- | --- | --- | --- |
+| configuracao | `POST /api/configuracoes-financeiras/`, `PUT /api/configuracoes-financeiras/<id>/` | `add/change_configuracaofinanceira` | existente | 201/200 | 403 | 403 |
+| custo fixo | `POST /api/custos-fixos/`, `PUT /api/custos-fixos/<id>/` | `add/change_custofixo` | existente | 201/200 | 403 | 403 |
+| custo extra | `POST /api/eventos/custos-extras/` | `add_eventocustoextra` | existente no service | 201 | 403 | 403 |
+| receita/despesa | `PUT /api/receitas/<id>/`, `PUT /api/despesas/<id>/` | `change_receitaoperacional` / `change_despesaoperacional` | existente | 200 | 403 | 403 |
+| FCI | `GET/POST /api/fci/`, `PUT /api/fci/<id>/` | `add/change_investimento` | aplicada ao investimento e ao evento associado antes do `save` | 200/201 | 403 | 403 |
+| FCF | `GET/POST /api/fcf/`, `POST /api/fcf/debts/` | `add_financiamentomovimentacao` / `add_dividafinanceira` | aplicada ao evento antes da escrita; criacoes compostas atomicas | 200/201 | 403 | 403 |
+| credor | `GET/POST /api/fcf/creditors/` | `add_credor` | prontidao fail-closed antes da criacao | 200/201 | n/a | 403 |
+| fluxo/ledger/obrigacoes | rotas `GET` dedicadas | somente leitura | n/a | 200 | leitura | 403 |
+| liquidacoes nativas | `POST /api/obrigacoes-financeiras/<origem>/<id>/liquidar/` | permissao explicita por origem | existente nos services | 200 | 403 | 403 |
+
+No schema errado, a resolucao tenant-scoped e os guards existentes devem
+impedir a operacao; isso sera novamente comprovado por teste. Nao ha e nao
+havera endpoint `DELETE` nesta fase.
+
+### Evidencias parciais da implementacao
+
+- allowlist final: 41 codenames exatos, sincronizados por replace-all. O teste
+  injeta permissao extra no grupo, permissao direta e o grupo `Financeiro`,
+  sincroniza novamente e comprova a remocao dos tres desvios;
+- FCI: criado apenas `PUT /api/fci/<id>/`, sem `DELETE`, usando a mesma
+  validacao estreita do `POST`, transacao e policy no investimento e no evento;
+- configuracao: a ativacao de uma configuracao comum nao pode mais desativar
+  implicitamente uma configuracao seed; todas as configuracoes ativas afetadas
+  sao bloqueadas e validadas antes do `update` em lote. Configuracao comum
+  inativa continua podendo ser criada e editada;
+- despesa derivada de seed: a policy agora e consultada antes do filtro que
+  restringe a edicao a despesas manuais, garantindo `403` deterministico em
+  vez de `404` quando o visitante possui `change_despesaoperacional`;
+- pagamentos: os cinco fluxos nativos auditados mantem `transaction.atomic`,
+  `select_for_update`, validacao de duplicidade/valor e policy antes da
+  mutacao. Um teste com falha posterior simulada comprova rollback do pagamento
+  e do total do custo extra;
+- frontend: sessao recebe `canChangeFinancialInvestment`; FCI permite editar
+  somente registro comum; obrigacoes e pagamentos ocultam a liquidacao para
+  itens `isReadOnly`; sidebar continua derivada de capacidades individuais;
+- `pnpm run verify:frontend`: aprovado (lint, typecheck, guardrails, snapshots,
+  contratos e build de producao);
+- `pnpm run test:e2e:public-demo`: 23 de 23 aprovados em um worker, incluindo
+  telas operacionais, seed somente leitura, registro comum editavel, backup
+  oculto, isolamento, Admin 404, logout e retomada;
+- `python manage.py test tenancy.test_demo_seed_protection.DemoSeedProtectionTests
+  tenancy.test_demo_public.DemoPublicFlowTests --verbosity 1`: 48 de 48
+  aprovados em runner unico;
+- repeticao final dos casos ampliados de configuracao e reset: 2 de 2
+  aprovados; o reset removeu evento e pagamento temporarios, recriou o seed e
+  liberou somente o slot correto;
+- testes focados dos pagamentos nativos: 6 de 6 aprovados para parcela, custo
+  de servico, custo extra, investimento, financiamento e escrita manual,
+  cobrindo idempotencia/duplicidade; o teste de falha posterior e rollback
+  tambem foi aprovado;
+- `python manage.py check`: nenhum problema; `python manage.py makemigrations
+  --check --dry-run`: nenhuma alteracao detectada;
+
+Cobertura dos criterios obrigatorios:
+
+- 1-12: allowlist exata, quantidade, proibicoes, perfil minimo, idempotencia e
+  remocao de desvios na sincronizacao;
+- 13-22: configuracao/custos/receitas/despesas comuns e bloqueio dos roots ou
+  derivados seed, com verificacao de HTTP e banco;
+- 23-32: leitura e escrita FCI/FCF, credor, divida, movimento, fluxo, ledger e
+  obrigacoes;
+- 33-40: liquidacoes nativas comuns, bloqueio seed, duplicidade e rollback;
+- 41-44: escopo tenant, schema publico fail-closed, backup sem permissao e
+  Admin indisponivel;
+- 45-49: capacidades/sidebar, backup oculto, UI seed somente leitura, registro
+  comum utilizavel e API direta protegida;
+- 50-52: logout/retomada preserva os dados durante o lease; manutencao remove
+  registro e pagamento temporarios; reset recria e valida o seed canonico.
+
+### Tentativas e correcoes registradas
+
+1. A primeira suite detectou que a nova permissao de alterar despesas fazia
+   uma despesa automatica seed responder `404` antes da policy. A selecao foi
+   reorganizada para identificar o objeto e responder `403` sem mutacao.
+2. O primeiro guardrail do frontend recusou o novo hook de atualizacao FCI. A
+   allowlist do guardrail foi ampliada somente para esse import canonico; a
+   verificacao completa passou na repeticao.
+3. O primeiro fixture de rollback foi rejeitado corretamente pela validacao de
+   saldo antes de escrever. Foi adicionada receita comum realizada ao fixture
+   para alcancar a falha posterior simulada; o teste passou e comprovou rollback
+   integral.
+4. `next-env.d.ts` foi alterado automaticamente pelo servidor de desenvolvimento
+   e nao pertence a esta fase; deve permanecer igual ao conteudo versionado.
+
+### Riscos e limites restantes da Fase 2
+
+| Risco/limite | Severidade | Mitigacao/estado | Evidencia |
+| --- | --- | --- | --- |
+| `add_evento` continua sem `POST` utilizavel | baixa | aceito por compatibilidade; nao criar endpoint artificial | diagnostico de rotas |
+| edicao de movimentacao FCF nao possui contrato | baixa | `change_financiamentomovimentacao` ficou fora | allowlist exata e teste |
+| configuracao comum nao pode ser ativada enquanto isso desativaria seed | media | comportamento fail-closed; criar/editar inativa e permitido | teste de mutacao indireta |
+| contratos foram validados localmente com APIs mockadas no E2E | media | repetir backend e frontend reais em homologacao | deploy permanece pendente |
+| abertura publica ainda depende dos gates operacionais anteriores | alta | manter flag desligada ate homologacao, backup, TLS, pool e timer | secoes 8 a 10 |
+
+### Conclusao da Fase 2
+
+O patch local esta aprovado para homologacao. Nao ha migration nova, permissao
+de exclusao, permissao administrativa, backup, acesso cross-tenant ou contrato
+de escrita no schema `public`. Homologacao, deploy e validacao pos-deploy
+permanecem deliberadamente pendentes e nao foram executados nesta fase.

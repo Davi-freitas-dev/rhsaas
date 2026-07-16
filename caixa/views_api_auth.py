@@ -30,6 +30,7 @@ from .permissions import (
     ADD_FINANCIAL_CONFIGURATION_PERMISSION,
     ADD_FINANCIAL_FINANCING_MOVEMENT_PERMISSION,
     ADD_FINANCIAL_INVESTMENT_PERMISSION,
+    CHANGE_FINANCIAL_INVESTMENT_PERMISSION,
     ADD_FIXED_COST_PERMISSION,
     ADD_SERVICE_PERMISSION,
     CHANGE_BUDGET_PERMISSION,
@@ -164,6 +165,9 @@ def _user_payload(user):
         ),
         "canAddFinancialInvestment": user.has_perm(
             ADD_FINANCIAL_INVESTMENT_PERMISSION
+        ),
+        "canChangeFinancialInvestment": user.has_perm(
+            CHANGE_FINANCIAL_INVESTMENT_PERMISSION
         ),
         "canAddFinancialFinancingMovement": user.has_perm(
             ADD_FINANCIAL_FINANCING_MOVEMENT_PERMISSION

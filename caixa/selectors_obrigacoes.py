@@ -4,6 +4,7 @@ from decimal import Decimal
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
 
+from .demo_policy import is_demo_seed_object
 from .constants_financeiros import (
     STATUS_REALIZADO,
     TIPO_CUSTO_ALIMENTACAO,
@@ -933,6 +934,7 @@ def _montar_item(
     pending_amount = max(quantizar_moeda(pending_amount), ZERO)
     over_realized_amount = _calcular_excedente_realizado(planned_amount, realized_amount)
     dimensao = _montar_dimensao(dimension_source)
+    is_seed = is_demo_seed_object(dimension_source)
     settlement_status = _status_liquidacao(status, realized_amount, pending_amount, due_date)
     today = timezone.localdate()
     is_overdue = bool(due_date and due_date < today and pending_amount > ZERO)
@@ -962,6 +964,8 @@ def _montar_item(
         "is_overdue": is_overdue,
         "days_overdue": (today - due_date).days if is_overdue else 0,
         "navigation_filters": navigation_filters or {},
+        "is_seed": is_seed,
+        "is_read_only": is_seed,
         **dimensao,
     }
 

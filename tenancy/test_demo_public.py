@@ -1,6 +1,7 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import date, timedelta
+from decimal import Decimal
 from io import StringIO
 from unittest.mock import patch
 
@@ -15,7 +16,11 @@ from django.test import Client, TransactionTestCase, override_settings
 from django.utils import timezone
 from django_tenants.utils import schema_context
 
+from caixa.demo_seed import DEMO_SEED_SPEC
 from caixa.models import Cliente, Evento, Orcamento, Servico
+from caixa.models_custos_extras import EventoCustoExtra
+from caixa.models_fci import Investimento
+from caixa.models_pagamentos import PagamentoEventoCustoExtra
 from caixa.throttling import (
     DemoLeaseRateThrottle,
     DemoLeaseResumeRateThrottle,
@@ -918,6 +923,42 @@ class DemoPublicConcurrencyTests(TransactionTestCase):
             visitor_identifier="visitante-manutencao",
             network_identifier="198.51.100.78",
         )
+        with schema_context(grant.slot_code):
+            seed_client = Cliente.objects.get(demo_seed_key__isnull=False)
+            visitor_event = Evento.objects.create(
+                cliente=seed_client,
+                numero="VISITOR-RESET-001",
+                nome_evento="Evento temporario do visitante",
+                data_inicio=date(2026, 8, 20),
+                data_fim=date(2026, 8, 20),
+            )
+            Investimento.objects.create(
+                descricao="Entrada temporaria para pagamento",
+                categoria="outros",
+                tipo_fluxo="entrada",
+                valor_previsto=Decimal("100.00"),
+                valor_realizado=Decimal("100.00"),
+                data_prevista=date(2026, 8, 19),
+                data_realizacao=date(2026, 8, 19),
+            )
+            visitor_cost = EventoCustoExtra.objects.create(
+                evento=visitor_event,
+                categoria="outros",
+                descricao="Custo temporario do visitante",
+                valor_previsto=Decimal("25.00"),
+                data_vencimento=date(2026, 8, 20),
+            )
+            PagamentoEventoCustoExtra.objects.create(
+                custo_extra=visitor_cost,
+                descricao="Pagamento temporario do visitante",
+                valor_pagamento=Decimal("25.00"),
+                data_pagamento=date(2026, 8, 20),
+            )
+            self.assertTrue(
+                PagamentoEventoCustoExtra.objects.filter(
+                    descricao="Pagamento temporario do visitante"
+                ).exists()
+            )
         connection.set_schema_to_public()
         slot = DemoTenantSlot.objects.get(slot_code=grant.slot_code)
         expired_at = timezone.now() - timedelta(seconds=1)
@@ -945,3 +986,18 @@ class DemoPublicConcurrencyTests(TransactionTestCase):
             self.assertEqual(Cliente.objects.count(), 1)
             self.assertEqual(Servico.objects.count(), 2)
             self.assertEqual(Orcamento.objects.count(), 1)
+            self.assertFalse(
+                Evento.objects.filter(numero="VISITOR-RESET-001").exists()
+            )
+            self.assertFalse(
+                PagamentoEventoCustoExtra.objects.filter(
+                    descricao="Pagamento temporario do visitante"
+                ).exists()
+            )
+            self.assertEqual(
+                set(
+                    Cliente.objects.exclude(demo_seed_key__isnull=True)
+                    .values_list("demo_seed_key", flat=True)
+                ),
+                {DEMO_SEED_SPEC["client"]["key"]},
+            )

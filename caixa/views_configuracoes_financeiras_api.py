@@ -254,12 +254,29 @@ def _configuracoes_response(request):
     )
 
 
-def _salvar_configuracao_response(configuracao, *, status=200, success_message):
+def _salvar_configuracao_response(
+    configuracao,
+    *,
+    user,
+    status=200,
+    success_message,
+):
     try:
         with transaction.atomic():
             if configuracao.ativa:
-                ConfiguracaoFinanceira.objects.filter(ativa=True).exclude(
-                    pk=configuracao.pk
+                active_configurations = list(
+                    ConfiguracaoFinanceira.objects.select_for_update()
+                    .filter(ativa=True)
+                    .exclude(pk=configuracao.pk)
+                )
+                for active_configuration in active_configurations:
+                    assert_demo_write_allowed(
+                        user,
+                        active_configuration,
+                        operation="deactivate_financial_configuration",
+                    )
+                ConfiguracaoFinanceira.objects.filter(
+                    pk__in=[item.pk for item in active_configurations]
                 ).update(ativa=False)
 
             configuracao.full_clean()
@@ -321,6 +338,7 @@ def _criar_configuracao_response(request):
 
     return _salvar_configuracao_response(
         configuracao,
+        user=request.user,
         status=201,
         success_message="Configuracao financeira cadastrada com sucesso.",
     )
@@ -371,6 +389,7 @@ def _atualizar_configuracao_response(request, configuracao):
 
     return _salvar_configuracao_response(
         configuracao,
+        user=request.user,
         success_message="Configuracao financeira atualizada com sucesso.",
     )
 

@@ -59,6 +59,7 @@ FINANCIAL_LEDGER_PERMISSION = "caixa.view_lancamentofinanceiro"
 FINANCIAL_OBLIGATIONS_PERMISSION = FINANCIAL_LEDGER_PERMISSION
 ADD_FINANCIAL_CREDITOR_PERMISSION = "caixa.add_credor"
 ADD_FINANCIAL_INVESTMENT_PERMISSION = "caixa.add_investimento"
+CHANGE_FINANCIAL_INVESTMENT_PERMISSION = "caixa.change_investimento"
 ADD_FINANCIAL_FINANCING_MOVEMENT_PERMISSION = "caixa.add_financiamentomovimentacao"
 ADD_FINANCIAL_DEBT_PERMISSION = "caixa.add_dividafinanceira"
 PAY_DEBT_INSTALLMENT_PERMISSION = "caixa.add_pagamentoparceladivida"
@@ -154,6 +155,8 @@ PERMISSION_PROFILES = {
         "add_servico",
         "change_servico",
         "view_configuracaofinanceira",
+        "add_configuracaofinanceira",
+        "change_configuracaofinanceira",
         "view_orcamento",
         "add_orcamento",
         "change_orcamento",
@@ -165,10 +168,27 @@ PERMISSION_PROFILES = {
         "add_evento",
         "change_evento",
         "view_receitaoperacional",
+        "change_receitaoperacional",
         "view_despesaoperacional",
+        "change_despesaoperacional",
         "view_custofixo",
+        "add_custofixo",
+        "change_custofixo",
         "view_eventocustoservico",
         "view_eventocustoextra",
+        "add_eventocustoextra",
+        "view_investimento",
+        "add_investimento",
+        "change_investimento",
+        "add_financiamentomovimentacao",
+        "view_credor",
+        "add_credor",
+        "add_dividafinanceira",
+        "view_parceladivida",
+        "add_pagamentoparceladivida",
+        "add_pagamentoeventocustoservico",
+        "add_pagamentoeventocustoextra",
+        "view_lancamentofinanceiro",
     ],
 }
 

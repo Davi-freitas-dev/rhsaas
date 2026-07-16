@@ -1,3 +1,4 @@
+from .demo_policy import demo_object_flags
 from .selectors_investimentos import montar_contexto_investimentos
 from .serializers_dimensoes_operacionais import (
     serializar_dimensao_operacional,
@@ -169,6 +170,9 @@ def serializar_investimento(investimento):
         "status_display": investimento.get_status_display(),
         "baixado_manualmente": investimento.baixado_manualmente,
         "manuallySettled": investimento.baixado_manualmente,
+        "notes": investimento.observacao,
+        "observacao": investimento.observacao,
+        **demo_object_flags(investimento),
         **serializar_dimensao_operacional(investimento),
     }
 

@@ -1,3 +1,4 @@
+from .demo_policy import demo_object_flags, is_demo_seed_object
 from .selectors_financiamentos import montar_contexto_financiamentos
 from .serializers_dimensoes_operacionais import (
     serializar_opcoes_entidades_operacionais,
@@ -300,6 +301,7 @@ def serializar_divida_financiamento(divida):
         "contractedAmount": valor_contratado,
         "quantidade_parcelas": divida.quantidade_parcelas,
         "installmentsCount": divida.quantidade_parcelas,
+        **demo_object_flags(divida),
         **serializar_dimensao_operacional(divida),
     }
 
@@ -367,13 +369,18 @@ def serializar_parcela_financiamento(parcela, *, pode_pagar_parcela=False):
             parcela,
             pode_pagar_parcela=pode_pagar_parcela,
         ),
+        **demo_object_flags(parcela),
         **serializar_dimensao_operacional(divida),
     }
 
 
 def serializar_action_hints_parcela_financiamento(parcela, *, pode_pagar_parcela=False):
     acao_pagamento = None
-    if parcela.disponivel_para_pagamento and pode_pagar_parcela:
+    if (
+        parcela.disponivel_para_pagamento
+        and pode_pagar_parcela
+        and not is_demo_seed_object(parcela)
+    ):
         acao_pagamento = montar_action_hint_financiamento(
             "legacyPayment",
             "Pagar parcela FCF",
@@ -478,6 +485,7 @@ def serializar_movimentacao_financiamento(movimentacao):
         "descricao_divida": divida_origem.descricao if divida_origem else "",
         "dias_atraso": dias_atraso,
         "overdueDays": dias_atraso,
+        **demo_object_flags(movimentacao),
         **serializar_dimensao_operacional(movimentacao),
     }
 

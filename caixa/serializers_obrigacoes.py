@@ -57,6 +57,7 @@ PAYMENT_QUEUE_BLOCK_REASON_LABELS = {
     "no_pending_amount": "Sem pendencia",
     "settled": "Pago",
     "cancelled": "Cancelado",
+    "demo_seed_read_only": "Dado de exemplo somente leitura",
 }
 PAYMENT_QUEUE_CAPABILITY_FIELDS = (
     ("supportsPaymentMethod", "Aceita forma de pagamento"),
@@ -988,6 +989,8 @@ def serializar_obrigacao_financeira(item, *, permissoes_action_hints=None):
         "evento_nome": item["event_name"],
         "evento_numero": item["event_number"],
         "evento_label": item.get("event_label", item["event_name"]),
+        "isSeed": bool(item.get("is_seed")),
+        "isReadOnly": bool(item.get("is_read_only")),
         "actionHints": serializar_action_hints_obrigacao(
             item,
             permissoes_action_hints=permissoes_action_hints,
@@ -1163,6 +1166,9 @@ def pode_publicar_action_hint_pagamento(origem, permissoes_action_hints):
 
 
 def pode_publicar_action_hint_pagamento_item(item, permissoes_action_hints):
+    if item.get("is_read_only"):
+        return False
+
     if not pode_publicar_action_hint_pagamento(
         item["source"],
         permissoes_action_hints,
@@ -1645,7 +1651,9 @@ def avaliar_prontidao_payment_queue(item, source_capability, pending_amount):
     settlement_status = item.get("settlement_status") or ""
 
     blocked_reason = ""
-    if not supports_native_settlement or not can_use_native_settlement:
+    if item.get("is_read_only"):
+        blocked_reason = "demo_seed_read_only"
+    elif not supports_native_settlement or not can_use_native_settlement:
         blocked_reason = "native_settlement_unavailable"
     elif not supports_obligation_type:
         blocked_reason = "unsupported_obligation_type"

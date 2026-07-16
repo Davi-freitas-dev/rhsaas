@@ -4,16 +4,20 @@ from decimal import Decimal, InvalidOperation
 from functools import wraps
 
 from django.core.exceptions import ValidationError
+from django.db import transaction
+from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import OpenApiTypes, extend_schema
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from .frontend_bridge import legacy_frontend_redirect_required_response
+from .demo_policy import assert_demo_write_allowed
 from .models import Evento
 from .models_fci import Investimento
 from .permissions import (
     ADD_FINANCIAL_INVESTMENT_PERMISSION,
+    CHANGE_FINANCIAL_INVESTMENT_PERMISSION,
     FINANCIAL_INVESTMENTS_PERMISSION,
     api_no_store_json_response,
     api_permission_denied_response,
@@ -146,7 +150,7 @@ def _drf_response_from_json_response(response):
     return drf_response
 
 
-def _investment_from_payload(payload, user):
+def _investment_from_payload(payload, user, *, investment=None):
     errors = {}
     planned_amount = _decimal_payload_value(
         payload,
@@ -185,19 +189,31 @@ def _investment_from_payload(payload, user):
     if errors:
         raise ValidationError(errors)
 
-    investment = Investimento(
-        descricao=_text_payload_value(payload, "description", "descricao"),
-        categoria=_text_payload_value(payload, "category", "categoria"),
-        tipo_fluxo=_text_payload_value(payload, "flowType", "tipo_fluxo"),
-        valor_previsto=planned_amount,
-        valor_realizado=realized_amount,
-        data_prevista=planned_date,
-        data_realizacao=realized_date,
-        evento=event,
-        observacao=_text_payload_value(payload, "notes", "observacao") or "",
-        criado_por=user,
-        atualizado_por=user,
+    assert_demo_write_allowed(
+        user,
+        investment,
+        operation=("change_investment" if investment else "create_investment"),
     )
+    if event is not None:
+        assert_demo_write_allowed(
+            user,
+            event,
+            operation="associate_investment_with_event",
+        )
+
+    if investment is None:
+        investment = Investimento(criado_por=user)
+
+    investment.descricao = _text_payload_value(payload, "description", "descricao")
+    investment.categoria = _text_payload_value(payload, "category", "categoria")
+    investment.tipo_fluxo = _text_payload_value(payload, "flowType", "tipo_fluxo")
+    investment.valor_previsto = planned_amount
+    investment.valor_realizado = realized_amount
+    investment.data_prevista = planned_date
+    investment.data_realizacao = realized_date
+    investment.evento = event
+    investment.observacao = _text_payload_value(payload, "notes", "observacao") or ""
+    investment.atualizado_por = user
     investment.save()
     return investment
 
@@ -220,7 +236,8 @@ def _api_criar_investimento(request):
         )
 
     try:
-        investment = _investment_from_payload(payload, request.user)
+        with transaction.atomic():
+            investment = _investment_from_payload(payload, request.user)
     except ValidationError as error:
         return api_no_store_json_response(
             {"errors": _errors_from_validation_error(error)},
@@ -275,5 +292,74 @@ def api_investimentos(request):
     )
     payload["permissions"] = {
         "canCreate": django_request.user.has_perm(ADD_FINANCIAL_INVESTMENT_PERMISSION),
+        "canUpdate": django_request.user.has_perm(
+            CHANGE_FINANCIAL_INVESTMENT_PERMISSION
+        ),
     }
     return Response(payload)
+
+
+@csrf_protect_drf_view
+@require_api_permission(CHANGE_FINANCIAL_INVESTMENT_PERMISSION)
+@extend_schema(
+    methods=["PUT"],
+    operation_id="fci_investment_update",
+    request=OpenApiTypes.OBJECT,
+    responses={200: OpenApiTypes.OBJECT},
+    auth=[{"cookieAuth": []}],
+)
+@api_view(["PUT"])
+@permission_classes([AllowAny])
+def api_investimento_detalhe(request, pk):
+    django_request = getattr(request, "_request", request)
+    if not _is_json_request(django_request):
+        return _drf_response_from_json_response(
+            api_no_store_json_response(
+                {"detail": "Content-Type deve ser application/json."},
+                status=415,
+            )
+        )
+
+    payload = _payload_json(django_request)
+    if payload is None:
+        return _drf_response_from_json_response(
+            api_no_store_json_response({"detail": "JSON invalido."}, status=400)
+        )
+
+    try:
+        with transaction.atomic():
+            investment = get_object_or_404(
+                Investimento.objects.select_for_update(),
+                pk=pk,
+            )
+            investment = _investment_from_payload(
+                payload,
+                django_request.user,
+                investment=investment,
+            )
+    except ValidationError as error:
+        return _drf_response_from_json_response(
+            api_no_store_json_response(
+                {"errors": _errors_from_validation_error(error)},
+                status=400,
+                json_dumps_params={"ensure_ascii": False},
+            )
+        )
+
+    investment = Investimento.objects.select_related(
+        "evento",
+        "evento__cliente",
+        "evento__orcamento",
+    ).get(pk=investment.pk)
+    return _drf_response_from_json_response(
+        api_no_store_json_response(
+            {
+                "data": {
+                    "investment": serializar_investimento(investment),
+                    "message": "Investimento atualizado com sucesso.",
+                }
+            },
+            status=200,
+            json_dumps_params={"ensure_ascii": False},
+        )
+    )

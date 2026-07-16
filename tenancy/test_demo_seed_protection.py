@@ -4,7 +4,7 @@ from decimal import Decimal
 from io import StringIO
 from unittest.mock import patch
 
-from django.contrib.auth.models import Group
+from django.contrib.auth.models import Group, Permission
 from django.core.exceptions import ImproperlyConfigured, PermissionDenied
 from django.core.management import call_command
 from django.core.management.base import CommandError
@@ -35,10 +35,18 @@ from caixa.models import (
     Servico,
 )
 from caixa.models_servico import EventoCustoServico
-from caixa.models_pagamentos import PagamentoEventoCustoServico
+from caixa.models_custos_extras import EventoCustoExtra
+from caixa.models_pagamentos import (
+    PagamentoEventoCustoExtra,
+    PagamentoEventoCustoServico,
+)
+from caixa.models_dividas import Credor, DividaFinanceira
+from caixa.models_fcf import FinanciamentoMovimentacao
+from caixa.models_fci import Investimento
 from caixa.permissions import PERMISSION_PROFILES, sincronizar_grupos_permissoes
 from caixa.services_cadastros import aprovar_orcamento
 from caixa.services_obrigacoes import liquidar_custo_servico_evento
+from caixa.services_obrigacoes import liquidar_custo_extra_evento
 from caixa.views_orcamentos_api import _salvar_orcamento_from_payload
 from tenancy.models import DemoTenantSlot
 from tenancy.services_demo_pool import (
@@ -590,11 +598,38 @@ class DemoSeedProtectionTests(MultiTenantTestCase):
             expected = set(PERMISSION_PROFILES["Demo Publica"])
             actual = set(group.permissions.values_list("codename", flat=True))
             self.assertEqual(actual, expected)
-            self.assertEqual(len(actual), 22)
+            self.assertEqual(len(actual), 41)
             self.assertFalse(any(name.startswith("delete_") for name in actual))
+            forbidden = {
+                "add_receitaoperacional",
+                "add_despesaoperacional",
+                "change_eventocustoservico",
+                "change_eventocustoextra",
+                "view_financiamentomovimentacao",
+                "view_dividafinanceira",
+                "change_financiamentomovimentacao",
+            }
+            self.assertTrue(forbidden.isdisjoint(actual))
             self.assertFalse(self.demo_user.user_permissions.exists())
             self.assertFalse(self.demo_user.is_staff)
             self.assertFalse(self.demo_user.is_superuser)
+
+            extra_permission = Permission.objects.get(codename="change_credor")
+            group.permissions.add(extra_permission)
+            self.demo_user.user_permissions.add(extra_permission)
+            self.demo_user.groups.add(Group.objects.get(name="Financeiro"))
+            self.demo_user = sync_demo_public_user("demo2")
+            self.demo_user.refresh_from_db()
+            group.refresh_from_db()
+            self.assertEqual(
+                set(group.permissions.values_list("codename", flat=True)),
+                expected,
+            )
+            self.assertEqual(
+                list(self.demo_user.groups.values_list("name", flat=True)),
+                ["Demo Publica"],
+            )
+            self.assertFalse(self.demo_user.user_permissions.exists())
 
             broken_profile = [*PERMISSION_PROFILES["Demo Publica"], "missing_demo_perm"]
             with patch.dict(
@@ -603,3 +638,280 @@ class DemoSeedProtectionTests(MultiTenantTestCase):
             ):
                 with self.assertRaises(ImproperlyConfigured):
                     sincronizar_grupos_permissoes()
+
+    def test_phase2_fci_create_update_and_seed_policy(self):
+        create_payload = {
+            "description": "Investimento comum da demo",
+            "category": "software",
+            "flowType": "entrada",
+            "plannedAmount": "300.00",
+            "realizedAmount": "0.00",
+            "plannedDate": "2026-08-20",
+            "notes": "Criado na Fase 2",
+        }
+        response = self.tenant_client.post(
+            reverse("caixa:api_investimentos"),
+            data=json.dumps(create_payload),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        investment_id = response.json()["data"]["investment"]["id"]
+        self.assertFalse(response.json()["data"]["investment"]["isReadOnly"])
+
+        update_payload = {
+            **create_payload,
+            "description": "Investimento comum atualizado",
+            "plannedAmount": "350.00",
+        }
+        update_response = self.tenant_client.put(
+            reverse("caixa:api_investimento_detalhe", args=[investment_id]),
+            data=json.dumps(update_payload),
+            content_type="application/json",
+        )
+        self.assertEqual(update_response.status_code, 200, update_response.content)
+        with schema_context("demo2"):
+            investment = Investimento.objects.get(pk=investment_id)
+            self.assertEqual(investment.descricao, "Investimento comum atualizado")
+            seed_event = Orcamento.objects.get(demo_seed_key__isnull=False).evento
+            seed_investment = Investimento.objects.create(
+                evento=seed_event,
+                descricao="Investimento derivado seed legado",
+                categoria="software",
+                tipo_fluxo="entrada",
+                valor_previsto=Decimal("10.00"),
+                data_prevista=date(2026, 8, 21),
+            )
+            count_before = Investimento.objects.count()
+
+        seed_update = self.tenant_client.put(
+            reverse("caixa:api_investimento_detalhe", args=[seed_investment.pk]),
+            data=json.dumps({**create_payload, "description": "Nao alterar"}),
+            content_type="application/json",
+        )
+        seed_create = self.tenant_client.post(
+            reverse("caixa:api_investimentos"),
+            data=json.dumps({**create_payload, "eventId": seed_event.pk}),
+            content_type="application/json",
+        )
+        self.assertEqual(seed_update.status_code, 403, seed_update.content)
+        self.assertEqual(seed_create.status_code, 403, seed_create.content)
+        with schema_context("demo2"):
+            seed_investment.refresh_from_db()
+            self.assertEqual(seed_investment.descricao, "Investimento derivado seed legado")
+            self.assertEqual(Investimento.objects.count(), count_before)
+
+    def test_phase2_fcf_and_financial_read_contracts(self):
+        creditor_response = self.tenant_client.post(
+            reverse("caixa:api_credores_financiamentos"),
+            data=json.dumps(
+                {
+                    "name": "Credor comum da demo",
+                    "document": "",
+                    "notes": "Fase 2",
+                    "isActive": True,
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(creditor_response.status_code, 201, creditor_response.content)
+        creditor_id = creditor_response.json()["data"]["creditor"]["creditorId"]
+
+        debt_response = self.tenant_client.post(
+            reverse("caixa:api_criar_divida_financeira"),
+            data=json.dumps(
+                {
+                    "creditorId": creditor_id,
+                    "description": "Divida comum da demo",
+                    "type": "financiamento",
+                    "contractedDate": "2026-08-01",
+                    "contractedAmount": "120.00",
+                    "monthlyInterestRate": "0.0000",
+                    "installmentsCount": 2,
+                    "dueDay": 15,
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(debt_response.status_code, 201, debt_response.content)
+
+        movement_response = self.tenant_client.post(
+            reverse("caixa:api_financiamentos"),
+            data=json.dumps(
+                {
+                    "description": "Movimentacao comum da demo",
+                    "category": "aporte_socio",
+                    "flowType": "entrada",
+                    "plannedAmount": "200.00",
+                    "realizedAmount": "0.00",
+                    "plannedDate": "2026-08-20",
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(movement_response.status_code, 201, movement_response.content)
+
+        for route_name in (
+            "api_investimentos",
+            "api_financiamentos",
+            "api_credores_financiamentos",
+            "api_mes_financeiro",
+            "api_lancamentos_financeiros",
+            "api_obrigacoes_financeiras",
+        ):
+            response = self.tenant_client.get(reverse(f"caixa:{route_name}"))
+            self.assertEqual(response.status_code, 200, (route_name, response.content))
+
+        session_response = self.tenant_client.get(reverse("caixa:api_auth_session"))
+        self.assertEqual(session_response.status_code, 200, session_response.content)
+        session_user = session_response.json()["user"]
+        for capability in (
+            "canViewFinancialConfigurations",
+            "canAddFinancialConfiguration",
+            "canChangeFinancialConfiguration",
+            "canViewFixedCosts",
+            "canAddFixedCost",
+            "canChangeFixedCost",
+            "canViewFinancialMonth",
+            "canViewFinancialDebtInstallments",
+            "canViewFinancialCreditors",
+            "canAddFinancialCreditor",
+            "canViewFinancialInvestments",
+            "canAddFinancialInvestment",
+            "canChangeFinancialInvestment",
+            "canAddFinancialFinancingMovement",
+            "canViewFinancialLedger",
+            "canViewFinancialObligations",
+            "canUsePayments",
+        ):
+            self.assertTrue(session_user[capability], capability)
+
+        with schema_context("demo2"):
+            self.assertTrue(Credor.objects.filter(pk=creditor_id).exists())
+            self.assertTrue(DividaFinanceira.objects.exists())
+            self.assertTrue(FinanciamentoMovimentacao.objects.exists())
+
+    def test_phase2_active_configuration_cannot_mutate_seed_indirectly(self):
+        with schema_context("demo2"):
+            seed_configuration = ConfiguracaoFinanceira.objects.get(
+                demo_seed_key__isnull=False
+            )
+            self.assertTrue(seed_configuration.ativa)
+            count_before = ConfiguracaoFinanceira.objects.count()
+
+        response = self.tenant_client.post(
+            reverse("caixa:api_configuracoes_financeiras"),
+            data=json.dumps(
+                {
+                    "name": "Configuracao comum ativa",
+                    "mealAmount": "30.00",
+                    "transportAmount": "20.00",
+                    "profitMargin": "0.30",
+                    "taxRate": "0.06",
+                    "effectiveDate": "2026-08-01",
+                    "isActive": True,
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 403, response.content)
+        with schema_context("demo2"):
+            seed_configuration.refresh_from_db()
+            self.assertTrue(seed_configuration.ativa)
+            self.assertEqual(ConfiguracaoFinanceira.objects.count(), count_before)
+
+        inactive_response = self.tenant_client.post(
+            reverse("caixa:api_configuracoes_financeiras"),
+            data=json.dumps(
+                {
+                    "name": "Configuracao comum inativa",
+                    "mealAmount": "30.00",
+                    "transportAmount": "20.00",
+                    "profitMargin": "0.30",
+                    "taxRate": "0.06",
+                    "effectiveDate": "2026-08-01",
+                    "isActive": False,
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(inactive_response.status_code, 201, inactive_response.content)
+        common_configuration_id = inactive_response.json()["data"]["configuration"]["id"]
+
+        update_response = self.tenant_client.put(
+            reverse(
+                "caixa:api_configuracao_financeira_detalhe",
+                args=[common_configuration_id],
+            ),
+            data=json.dumps(
+                {
+                    "name": "Configuracao comum atualizada",
+                    "mealAmount": "31.00",
+                    "transportAmount": "21.00",
+                    "profitMargin": "0.31",
+                    "taxRate": "0.07",
+                    "effectiveDate": "2026-08-02",
+                    "isActive": False,
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(update_response.status_code, 200, update_response.content)
+        with schema_context("demo2"):
+            common_configuration = ConfiguracaoFinanceira.objects.get(
+                pk=common_configuration_id
+            )
+            self.assertEqual(
+                common_configuration.nome,
+                "Configuracao comum atualizada",
+            )
+            self.assertFalse(common_configuration.ativa)
+
+    def test_phase2_payment_failure_rolls_back_without_partial_write(self):
+        with schema_context("demo2"):
+            seed_client = Cliente.objects.get(demo_seed_key__isnull=False)
+            event = Evento.objects.create(
+                cliente=seed_client,
+                numero="COMMON-ROLLBACK-001",
+                nome_evento="Evento comum para rollback",
+                data_inicio=date(2026, 8, 20),
+                data_fim=date(2026, 8, 20),
+            )
+            ReceitaOperacional.objects.create(
+                evento=event,
+                cliente=seed_client,
+                descricao="Entrada comum para teste de rollback",
+                valor_previsto=Decimal("100.00"),
+                valor_recebido=Decimal("100.00"),
+                data_vencimento=date(2026, 8, 19),
+                data_recebimento=date(2026, 8, 19),
+            )
+            extra_cost = EventoCustoExtra.objects.create(
+                evento=event,
+                categoria="outros",
+                descricao="Custo comum para rollback",
+                valor_previsto=Decimal("100.00"),
+                data_vencimento=date(2026, 8, 20),
+            )
+            original_paid = extra_cost.total_pago
+            payment_count = PagamentoEventoCustoExtra.objects.count()
+
+            with patch(
+                "caixa.signals.sincronizar_obrigacao_custo_extra_canonica",
+                side_effect=RuntimeError("falha posterior simulada"),
+            ):
+                with self.assertRaisesMessage(RuntimeError, "falha posterior simulada"):
+                    liquidar_custo_extra_evento(
+                        extra_cost.pk,
+                        {
+                            "realizedAmount": "25.00",
+                            "paymentDate": "2026-08-20",
+                        },
+                        self.demo_user,
+                    )
+
+            extra_cost.refresh_from_db()
+            self.assertEqual(extra_cost.total_pago, original_paid)
+            self.assertEqual(
+                PagamentoEventoCustoExtra.objects.count(),
+                payment_count,
+            )

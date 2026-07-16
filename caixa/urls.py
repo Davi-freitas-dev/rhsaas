@@ -44,7 +44,11 @@ from .views_obrigacoes import (
     api_liquidar_obrigacao_financeira,
     api_obrigacoes_financeiras,
 )
-from .views_investimentos import api_investimentos, lista_investimentos
+from .views_investimentos import (
+    api_investimento_detalhe,
+    api_investimentos,
+    lista_investimentos,
+)
 from .views_custos_extras_api import api_criar_custo_extra_evento
 from .views_clientes_api import api_cliente_detalhe, api_clientes
 from .views_configuracoes_financeiras_api import (
@@ -164,6 +168,11 @@ urlpatterns = [
     path("custos-fixos/", custos_fixos_lista, name="custos_fixos_lista"),
     path("fci/", lista_investimentos, name="lista_investimentos"),
     path("api/fci/", api_investimentos, name="api_investimentos"),
+    path(
+        "api/fci/<int:pk>/",
+        api_investimento_detalhe,
+        name="api_investimento_detalhe",
+    ),
     path("pagamentos/", pagamentos, name="pagamentos"),
     path("fcf/", lista_financiamentos, name="lista_financiamentos"),
     path("api/fcf/", api_financiamentos, name="api_financiamentos"),

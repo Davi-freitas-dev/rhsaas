@@ -365,9 +365,25 @@ def api_despesa_detalhe(request, pk):
         return drf_response_from_json_response(api_permission_denied_response())
 
     try:
-        despesa = get_object_or_404(_despesas_queryset(), pk=pk)
+        candidate = get_object_or_404(
+            DespesaOperacional.objects.select_related(
+                "evento",
+                "evento__cliente",
+                "evento__orcamento",
+            ),
+            pk=pk,
+        )
     except Http404 as error:
         return django_not_found_response(error)
+
+    assert_demo_write_allowed(
+        django_request.user,
+        candidate,
+        operation="change_expense",
+    )
+    if candidate.origem != DespesaOperacional.ORIGEM_MANUAL:
+        return django_not_found_response(Http404())
+    despesa = candidate
 
     return drf_response_from_json_response(
         _atualizar_despesa_response(django_request, despesa)

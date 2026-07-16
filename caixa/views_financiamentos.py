@@ -15,6 +15,7 @@ from rest_framework.decorators import (
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
+from .demo_policy import assert_demo_write_allowed
 from .frontend_bridge import legacy_frontend_redirect_required_response
 from .models import Evento
 from .models_dividas import Credor, DividaFinanceira
@@ -192,6 +193,10 @@ def _credores_queryset_para_request(request):
 
 
 def _credor_from_payload(payload, user):
+    assert_demo_write_allowed(
+        user,
+        operation="create_financial_creditor",
+    )
     credor = Credor(
         nome=_text_payload_value(payload, "name", "nome"),
         documento=_text_payload_value(payload, "document", "documento") or "",
@@ -340,6 +345,11 @@ def _financial_debt_from_payload(payload, user):
     if errors:
         raise ValidationError(errors)
 
+    assert_demo_write_allowed(
+        user,
+        event,
+        operation="create_financial_debt",
+    )
     debt = DividaFinanceira(
         descricao=_text_payload_value(payload, "description", "descricao"),
         credor_cadastro=creditor,
@@ -481,6 +491,11 @@ def _financing_movement_from_payload(payload, user):
     if errors:
         raise ValidationError(errors)
 
+    assert_demo_write_allowed(
+        user,
+        event,
+        operation="create_financing_movement",
+    )
     movement = FinanciamentoMovimentacao(
         descricao=_text_payload_value(payload, "description", "descricao"),
         categoria=_text_payload_value(payload, "category", "categoria"),
@@ -516,7 +531,8 @@ def _api_criar_movimentacao_financiamento(request):
         )
 
     try:
-        movement = _financing_movement_from_payload(payload, request.user)
+        with transaction.atomic():
+            movement = _financing_movement_from_payload(payload, request.user)
     except ValidationError as error:
         return api_no_store_json_response(
             {"errors": _errors_from_validation_error(error)},

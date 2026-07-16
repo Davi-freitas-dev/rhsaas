@@ -9111,6 +9111,8 @@ class FiltrosHtmlTests(TenantScopedTestCase):
                 "contractedAmount",
                 "quantidade_parcelas",
                 "installmentsCount",
+                "isSeed",
+                "isReadOnly",
                 "contractCode",
                 "contractName",
                 "contractLabel",
@@ -9199,6 +9201,8 @@ class FiltrosHtmlTests(TenantScopedTestCase):
                 "baixado_manualmente",
                 "manuallySettled",
                 "actionHints",
+                "isSeed",
+                "isReadOnly",
                 "contractCode",
                 "contractName",
                 "contractLabel",
@@ -9285,7 +9289,7 @@ class FiltrosHtmlTests(TenantScopedTestCase):
         self.assertEqual(payload["totals"], payload["totais"])
         self.assertEqual(payload["investments"], payload["investimentos"])
         self.assertEqual(payload["categoryGroups"], payload["grupos_categoria"])
-        self.assertEqual(set(payload["permissions"]), {"canCreate"})
+        self.assertEqual(set(payload["permissions"]), {"canCreate", "canUpdate"})
         self.assertEqual(
             set(payload["dateBasis"]),
             {"filters", "projected", "realized"},
@@ -9557,6 +9561,10 @@ class FiltrosHtmlTests(TenantScopedTestCase):
                 "status_display",
                 "baixado_manualmente",
                 "manuallySettled",
+                "notes",
+                "observacao",
+                "isSeed",
+                "isReadOnly",
                 "contractCode",
                 "contractName",
                 "contractLabel",
@@ -9648,6 +9656,8 @@ class FiltrosHtmlTests(TenantScopedTestCase):
                 "descricao_divida",
                 "dias_atraso",
                 "overdueDays",
+                "isSeed",
+                "isReadOnly",
                 "contractCode",
                 "contractName",
                 "contractLabel",
@@ -10237,6 +10247,8 @@ class FiltrosHtmlTests(TenantScopedTestCase):
                 "evento_nome",
                 "evento_numero",
                 "evento_label",
+                "isSeed",
+                "isReadOnly",
                 "actionHints",
                 "readModelSource",
                 "dataSource",
