@@ -84,6 +84,17 @@ Isso impede que uma sessao de `demo1` seja enviada a `demo2`. A origem do
 frontend deve ser a unica origem CORS permitida. O wildcard e necessario em
 `CSRF_TRUSTED_ORIGINS` porque a troca ocorre no host alocado.
 
+Manter a cota anonima por rede explicita:
+
+```env
+DEMO_MAX_ACTIVE_LEASES_PER_NETWORK=2
+```
+
+O cookie assinado reutiliza o lease no mesmo navegador. Visitantes distintos
+da mesma rede recebem tenants distintos ate a cota; o terceiro recebe
+`code=network_limit`. O banco armazena somente HMAC de visitante/rede, nunca IP
+puro. O hash deixa de contar assim que o lease expira e e removido no reset.
+
 Na Vercel:
 
 ```env
@@ -292,6 +303,14 @@ novo lease. Confirmar apenas contagens agregadas da pool `demo2...demo10` no
 shell administrativo e revisar se ha leases vencidos. Nao prolongar leases nem
 liberar vaga ocupada para mascarar capacidade.
 
+### Limite de rede
+
+A API responde `429` com `code=network_limit` quando a rede ja possui a
+quantidade configurada de leases ativos. Isso e diferente de pool cheia: nao
+resetar nem liberar slots. Orientar o visitante a reutilizar o navegador
+original ou aguardar a expiracao. Para diagnostico, consultar somente contagens
+agregadas por `network_key_hash`; nao imprimir hash, IP, cookie ou token.
+
 ### Logs e health check
 
 ```bash
@@ -302,7 +321,8 @@ sudo journalctl -u rhsaas-demo-pool-maintenance.service \
   --since "24 hours ago" --no-pager
 ```
 
-Eventos esperados: `demo_lease`, `demo_exchange`, expiracao e reset. O codigo
+Eventos esperados: `demo_lease` (`granted`, `network_limit` ou `pool_full`),
+`demo_exchange`, expiracao e reset. O codigo
 nao registra token de troca, senha, hash anonimo ou IP no fluxo publico.
 
 Monitorar na VM pequena:
@@ -347,6 +367,8 @@ sobre outros tenants.
 - [ ] clique aloca e autentica automaticamente;
 - [ ] usuario nao e staff/superuser e nao acessa backups/admin/exclusoes;
 - [ ] duas requisicoes concorrentes nao compartilham indevidamente um slot;
+- [ ] mesmo cookie reutiliza o slot; dois cookies da mesma rede ficam isolados;
+- [ ] terceiro visitante da mesma rede recebe 429 `network_limit` sem novo slot;
 - [ ] pool cheia retorna 503 generico;
 - [ ] lease expira, sessao para de funcionar e timer devolve vaga limpa;
 - [ ] dado permanente de `demo1` nao aparece em `demo2` e vice-versa;

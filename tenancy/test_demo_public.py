@@ -20,8 +20,10 @@ from caixa.throttling import DemoLeaseRateThrottle
 from tenancy.command_guards import DEMO_POOL_SCHEMA_NAMES
 from tenancy.models import DemoTenantSlot, Domain, Tenant
 from tenancy.services_demo_pool import (
+    DemoNetworkLimitExceeded,
     allocate_demo_lease,
     expire_due_demo_leases,
+    hash_demo_identifier,
 )
 from tenancy.test_helpers import MultiTenantTestCase
 
@@ -40,6 +42,16 @@ class DemoPublicFlowTests(MultiTenantTestCase):
             name="Demo 2",
             domain="demo2.api-demo-rh.taquiondev.com.br",
         )
+        cls.demo3, _domain = cls.create_tenant(
+            schema_name="demo3",
+            name="Demo 3",
+            domain="demo3.api-demo-rh.taquiondev.com.br",
+        )
+        cls.demo4, _domain = cls.create_tenant(
+            schema_name="demo4",
+            name="Demo 4",
+            domain="demo4.api-demo-rh.taquiondev.com.br",
+        )
 
     def setUp(self):
         self._demo_settings = override_settings(
@@ -50,6 +62,7 @@ class DemoPublicFlowTests(MultiTenantTestCase):
             DEMO_LEASE_DURATION_MINUTES=60,
             DEMO_EXCHANGE_TOKEN_TTL_SECONDS=300,
             DEMO_VISITOR_COOKIE_MAX_AGE=3600,
+            DEMO_MAX_ACTIVE_LEASES_PER_NETWORK=2,
             SESSION_COOKIE_SECURE=False,
         )
         self._demo_settings.enable()
@@ -98,6 +111,11 @@ class DemoPublicFlowTests(MultiTenantTestCase):
             content_type="application/json",
             HTTP_X_CSRFTOKEN=csrf_response.json()["csrfToken"],
         )
+
+    def _add_network_limit_slots(self):
+        connection.set_schema_to_public()
+        DemoTenantSlot.objects.create(tenant=self.demo3, slot_code="demo3")
+        DemoTenantSlot.objects.create(tenant=self.demo4, slot_code="demo4")
 
     def test_fluxo_publico_aloca_e_autentica_sem_senha(self):
         public_client, lease_response = self._lease()
@@ -178,6 +196,140 @@ class DemoPublicFlowTests(MultiTenantTestCase):
             DemoTenantSlot.objects.filter(status=DemoTenantSlot.Status.OCUPADO).count(),
             1,
         )
+
+    def test_logout_e_nova_entrada_reutilizam_o_mesmo_lease(self):
+        public_client, first_response = self._lease()
+        first_payload = first_response.json()
+        tenant_client = self._tenant_client()
+        self.assertEqual(
+            self._exchange(tenant_client, first_payload["exchangeToken"]).status_code,
+            200,
+        )
+        csrf_response = tenant_client.get("/api/auth/csrf/")
+
+        logout_response = tenant_client.post(
+            "/api/auth/logout/",
+            HTTP_X_CSRFTOKEN=csrf_response.json()["csrfToken"],
+        )
+        _client, second_response = self._lease(public_client)
+
+        self.assertEqual(logout_response.status_code, 200)
+        self.assertFalse(logout_response.json()["authenticated"])
+        self.assertEqual(second_response.status_code, 201)
+        self.assertTrue(second_response.json()["reused"])
+        self.assertEqual(
+            second_response.json()["apiBaseUrl"],
+            first_payload["apiBaseUrl"],
+        )
+        connection.set_schema_to_public()
+        self.assertEqual(
+            DemoTenantSlot.objects.filter(status=DemoTenantSlot.Status.OCUPADO).count(),
+            1,
+        )
+
+    @override_settings(
+        DEMO_PUBLIC_POOL_SLOTS=("demo2", "demo3", "demo4"),
+        DEMO_MAX_ACTIVE_LEASES_PER_NETWORK=2,
+    )
+    def test_dois_visitantes_da_mesma_rede_recebem_slots_isolados(self):
+        self._add_network_limit_slots()
+        first_client = self._public_client(remote_addr="203.0.113.50")
+        second_client = self._public_client(remote_addr="203.0.113.50")
+
+        _client, first_response = self._lease(first_client)
+        _client, second_response = self._lease(second_client)
+
+        self.assertEqual(first_response.status_code, 201)
+        self.assertEqual(second_response.status_code, 201)
+        self.assertEqual(
+            {
+                first_response.json()["apiBaseUrl"],
+                second_response.json()["apiBaseUrl"],
+            },
+            {
+                "https://demo2.api-demo-rh.taquiondev.com.br/api",
+                "https://demo3.api-demo-rh.taquiondev.com.br/api",
+            },
+        )
+        self.assertFalse(first_response.json()["reused"])
+        self.assertFalse(second_response.json()["reused"])
+
+    @override_settings(
+        DEMO_PUBLIC_POOL_SLOTS=("demo2", "demo3", "demo4"),
+        DEMO_MAX_ACTIVE_LEASES_PER_NETWORK=2,
+    )
+    def test_tres_clientes_sem_cookie_na_mesma_rede_respeitam_network_limit(self):
+        self._add_network_limit_slots()
+        responses = [
+            self._lease(self._public_client(remote_addr="203.0.113.51"))[1]
+            for _index in range(3)
+        ]
+
+        self.assertEqual([response.status_code for response in responses], [201, 201, 429])
+        self.assertEqual(responses[2].json()["code"], "network_limit")
+        self.assertNotIn("exchangeToken", responses[2].json())
+        connection.set_schema_to_public()
+        self.assertEqual(
+            DemoTenantSlot.objects.filter(status=DemoTenantSlot.Status.OCUPADO).count(),
+            2,
+        )
+        self.assertEqual(
+            DemoTenantSlot.objects.get(slot_code="demo4").status,
+            DemoTenantSlot.Status.LIVRE,
+        )
+
+    @override_settings(
+        DEMO_PUBLIC_POOL_SLOTS=("demo2", "demo3", "demo4"),
+        DEMO_MAX_ACTIVE_LEASES_PER_NETWORK=2,
+    )
+    def test_lease_expirado_e_demo1_nao_contam_no_limite_de_rede(self):
+        self._add_network_limit_slots()
+        network_identifier = "203.0.113.52"
+        first_grant = allocate_demo_lease(
+            visitor_identifier="visitante-rede-1",
+            network_identifier=network_identifier,
+        )
+        allocate_demo_lease(
+            visitor_identifier="visitante-rede-2",
+            network_identifier=network_identifier,
+        )
+        connection.set_schema_to_public()
+        DemoTenantSlot.objects.filter(slot_code=first_grant.slot_code).update(
+            lease_expires_at=timezone.now() - timedelta(seconds=1),
+        )
+        demo1 = DemoTenantSlot.objects.get(slot_code="demo1")
+        demo1.status = DemoTenantSlot.Status.OCUPADO
+        demo1.network_key_hash = hash_demo_identifier("network", network_identifier)
+        demo1.lease_started_at = timezone.now()
+        demo1.lease_expires_at = timezone.now() + timedelta(hours=1)
+        demo1.save()
+
+        third_grant = allocate_demo_lease(
+            visitor_identifier="visitante-rede-3",
+            network_identifier=network_identifier,
+        )
+
+        self.assertEqual(third_grant.slot_code, "demo4")
+        self.assertFalse(third_grant.reused)
+
+    def test_identificadores_persistidos_sao_hmac_e_mudam_com_o_segredo(self):
+        network_identifier = "203.0.113.53"
+        grant = allocate_demo_lease(
+            visitor_identifier="visitante-hash",
+            network_identifier=network_identifier,
+        )
+        connection.set_schema_to_public()
+        slot = DemoTenantSlot.objects.get(slot_code=grant.slot_code)
+        current_hash = hash_demo_identifier("network", network_identifier)
+
+        self.assertEqual(slot.network_key_hash, current_hash)
+        self.assertNotEqual(slot.network_key_hash, network_identifier)
+        self.assertNotIn(network_identifier, str(slot.__dict__))
+        with override_settings(SECRET_KEY="outro-segredo-de-teste"):
+            self.assertNotEqual(
+                hash_demo_identifier("network", network_identifier),
+                current_hash,
+            )
 
     def test_pool_cheia_retorna_503_sem_expor_slots(self):
         now = timezone.now()
@@ -407,14 +559,15 @@ class DemoPublicConcurrencyTests(TransactionTestCase):
         self._demo_settings = override_settings(
             DEMO_PUBLIC_LEASE_ENABLED=True,
             DEMO_PERMANENT_TENANT_SCHEMA="demo1",
-            DEMO_PUBLIC_POOL_SLOTS=("demo2",),
+            DEMO_PUBLIC_POOL_SLOTS=("demo2", "demo3", "demo4"),
             DEMO_LEASE_DURATION_MINUTES=60,
             DEMO_EXCHANGE_TOKEN_TTL_SECONDS=300,
+            DEMO_MAX_ACTIVE_LEASES_PER_NETWORK=2,
         )
         self._demo_settings.enable()
         super().setUp()
         self._cleanup_demo_pool()
-        call_command("provisionar_pool_demo", slots=2, verbosity=0)
+        call_command("provisionar_pool_demo", slots=4, verbosity=0)
 
     def tearDown(self):
         try:
@@ -449,6 +602,22 @@ class DemoPublicConcurrencyTests(TransactionTestCase):
         finally:
             close_old_connections()
 
+    @staticmethod
+    def _allocate_network_in_thread(index):
+        close_old_connections()
+        try:
+            connection.set_schema_to_public()
+            try:
+                grant = allocate_demo_lease(
+                    visitor_identifier=f"visitante-rede-concorrente-{index}",
+                    network_identifier="198.51.100.79",
+                )
+                return "granted", grant.slot_code
+            except DemoNetworkLimitExceeded:
+                return "network_limit", None
+        finally:
+            close_old_connections()
+
     def test_mesmo_visitante_concorrente_recebe_um_unico_slot(self):
         with ThreadPoolExecutor(max_workers=2) as executor:
             results = list(executor.map(lambda _index: self._allocate_in_thread(), range(2)))
@@ -459,6 +628,26 @@ class DemoPublicConcurrencyTests(TransactionTestCase):
         self.assertEqual(
             DemoTenantSlot.objects.filter(status=DemoTenantSlot.Status.OCUPADO).count(),
             1,
+        )
+
+    def test_tres_visitantes_concorrentes_da_mesma_rede_ocupam_no_maximo_dois_slots(self):
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            results = list(
+                executor.map(self._allocate_network_in_thread, range(3))
+            )
+
+        self.assertEqual(
+            sorted(outcome for outcome, _slot_code in results),
+            ["granted", "granted", "network_limit"],
+        )
+        self.assertEqual(
+            {slot_code for outcome, slot_code in results if outcome == "granted"},
+            {"demo2", "demo3"},
+        )
+        connection.set_schema_to_public()
+        self.assertEqual(
+            DemoTenantSlot.objects.filter(status=DemoTenantSlot.Status.OCUPADO).count(),
+            2,
         )
 
     def test_manutencao_expira_reseta_semeia_e_libera_slot(self):

@@ -14,7 +14,6 @@ from django.core.cache import cache
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import CommandError
 from django.db import connection, transaction
-from django.db.models import Q
 from django.utils import timezone
 from django_tenants.utils import get_public_schema_name, schema_context
 
@@ -45,6 +44,10 @@ class DemoPoolUnavailable(Exception):
 
 
 class DemoPoolFull(Exception):
+    pass
+
+
+class DemoNetworkLimitExceeded(Exception):
     pass
 
 
@@ -294,7 +297,7 @@ def allocate_demo_lease(*, visitor_identifier, network_identifier, now=None):
             DemoTenantSlot.objects.select_for_update()
             .select_related("tenant")
             .filter(
-                Q(visitor_key_hash=visitor_hash) | Q(network_key_hash=network_hash),
+                visitor_key_hash=visitor_hash,
                 slot_code__in=demo_public_pool_schema_names(),
                 status=DemoTenantSlot.Status.OCUPADO,
                 lease_expires_at__gt=now,
@@ -305,6 +308,17 @@ def allocate_demo_lease(*, visitor_identifier, network_identifier, now=None):
         reused = slot is not None
 
         if slot is None:
+            active_network_leases = DemoTenantSlot.objects.filter(
+                network_key_hash=network_hash,
+                slot_code__in=demo_public_pool_schema_names(),
+                status=DemoTenantSlot.Status.OCUPADO,
+                lease_expires_at__gt=now,
+            ).count()
+            if active_network_leases >= settings.DEMO_MAX_ACTIVE_LEASES_PER_NETWORK:
+                raise DemoNetworkLimitExceeded(
+                    "Limite de leases ativos para a rede atingido."
+                )
+
             slot = (
                 DemoTenantSlot.objects.select_for_update(skip_locked=True)
                 .select_related("tenant")

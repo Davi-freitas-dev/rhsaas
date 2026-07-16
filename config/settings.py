@@ -196,6 +196,10 @@ DEMO_VISITOR_COOKIE_MAX_AGE = env.int(
     "DEMO_VISITOR_COOKIE_MAX_AGE",
     default=86400,
 )
+DEMO_MAX_ACTIVE_LEASES_PER_NETWORK = env.int(
+    "DEMO_MAX_ACTIVE_LEASES_PER_NETWORK",
+    default=2,
+)
 if not DEMO_PUBLIC_ENTRY_SCHEMA:
     raise ImproperlyConfigured("DEMO_PUBLIC_ENTRY_SCHEMA nao pode ficar vazio.")
 DEMO_TENANT_SCHEMA_NAMES = {f"demo{index}" for index in range(1, 11)}
@@ -218,6 +222,11 @@ if set(DEMO_PUBLIC_POOL_SLOTS) - DEMO_TENANT_SCHEMA_NAMES:
 if "demo1" in DEMO_PUBLIC_POOL_SLOTS:
     raise ImproperlyConfigured(
         "demo1 e permanente e nao pode participar de DEMO_PUBLIC_POOL_SLOTS."
+    )
+if not 1 <= DEMO_MAX_ACTIVE_LEASES_PER_NETWORK <= len(DEMO_PUBLIC_POOL_SLOTS):
+    raise ImproperlyConfigured(
+        "DEMO_MAX_ACTIVE_LEASES_PER_NETWORK deve ficar entre 1 e o total de "
+        "slots configurados em DEMO_PUBLIC_POOL_SLOTS."
     )
 if not 5 <= DEMO_LEASE_DURATION_MINUTES <= 1440:
     raise ImproperlyConfigured(

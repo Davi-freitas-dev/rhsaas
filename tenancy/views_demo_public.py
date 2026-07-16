@@ -33,6 +33,7 @@ from config.client_ip import get_axes_client_ip
 
 from .services_demo_pool import (
     DemoAccessTokenInvalid,
+    DemoNetworkLimitExceeded,
     DemoPoolFull,
     DemoPoolUnavailable,
     allocate_demo_lease,
@@ -124,6 +125,15 @@ def api_demo_lease(request):
         grant = allocate_demo_lease(
             visitor_identifier=visitor_identifier,
             network_identifier=network_identifier,
+        )
+    except DemoNetworkLimitExceeded:
+        logger.info("demo_lease outcome=network_limit")
+        return Response(
+            {
+                "code": "network_limit",
+                "detail": "Esta rede já possui acessos temporários ativos.",
+            },
+            status=429,
         )
     except DemoPoolFull:
         logger.info("demo_lease outcome=pool_full")
