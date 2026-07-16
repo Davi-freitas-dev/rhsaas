@@ -270,6 +270,59 @@ opcional `rh_teste` ignorado por falta de configuracao.
 Estado da fase: `[x]` implementacao e validacao local concluidas. Homologacao e
 producao permanecem intocadas.
 
+### Diagnostico de retomada imediata apos logout em 2026-07-15
+
+Estado inicial desta fase: backend `f053f3f`, branch
+`feat/django-tenants-spike`, e frontend `433a939`, branch `main`, ambos limpos.
+Nenhuma consulta ou alteracao de producao foi realizada.
+
+Diagnostico read-only:
+
+- o logout encerra a sessao do tenant, limpa caches financeiros e remove do
+  `localStorage` o tenant, a URL da API e a expiracao;
+- o cookie assinado e `HttpOnly` `rhsaas_demo_visitor` pertence ao host publico
+  de entrada, nao e apagado pelo logout e continua identificando o visitante;
+- ao voltar para `/`, o frontend deve continuar exibindo a entrada publica e,
+  no novo clique, chama `POST /api/demo/lease/`;
+- o backend ja consegue reutilizar o lease pelo cookie e preservar tenant e
+  `lease_expires_at`, emitindo somente um novo token de exchange para recriar a
+  sessao encerrada;
+- entretanto, o `DemoLeaseRateThrottle` do DRF roda antes da view e antes de
+  `allocate_demo_lease`; assim, a requisicao pode receber 429 antes de o lease
+  existente ser reconhecido;
+- a mensagem `Pedido foi suprimido... disponivel em 90 segundos` e o formato do
+  throttle do DRF. O Nginx tambem protege `/api/demo/lease/` com `3r/m` e burst
+  2, mas nao gera esse detalhe e deixou a requisicao observada chegar ao DRF;
+- preservar apenas o lease local nao basta, pois o token de exchange e de uso
+  unico e a sessao foi encerrada; criar `/api/demo/resume/` duplicaria contrato
+  sem necessidade.
+
+Decisao: opcao B. O throttle reconhece cookie valido com lease ativo e usa a
+cota `demo_lease_resume`, padrao `10/hour` por HMAC do visitante, enquanto
+visitante sem lease continua em `demo_lease`, padrao `3/hour` por IP canonico.
+A requisicao liberada por retomada e marcada como `resume_only`, impedindo nova
+alocacao se o lease expirar antes da transacao. Nginx, limite de rede, exchange
+throttle e pool cheia permanecem inalterados.
+
+Implementacao e evidencias:
+
+- leitura/geracao do cookie foi centralizada em `tenancy/demo_visitor.py`;
+- `has_active_demo_lease` consulta somente HMAC, slot publico ocupado e
+  expiracao futura, restaurando o schema original apos a consulta;
+- a retomada preserva `apiBaseUrl`, `lease_started_at` e `expiresAt`, cria
+  somente novo token de exchange e reabre a sessao no mesmo tenant;
+- visitante novo continua recebendo 429 quando a cota de nova alocacao esta
+  esgotada; repeticoes abusivas de retomada tambem recebem 429 pela cota propria;
+- observacao adicional de producao mostrou `Retry-After` saltando de 90 para
+  1876 segundos, comportamento de janela deslizante/historico de throttle, nao
+  renovacao do lease; producao nao foi acessada nem alterada nesta execucao;
+- `DemoPublicFlowTests` passou 21/21 e concorrencia 3/3; `check`,
+  `makemigrations --check --dry-run`, frontend completo e E2E publico 15/15
+  passaram. Nenhuma migration ou endpoint novo foi criado.
+
+Estado da fase: `[x]` implementacao e validacao local concluidas. Homologacao e
+producao permanecem pendentes e intocadas.
+
 ## 3. Decisoes arquiteturais
 
 ### Fluxo publico de entrada
@@ -430,6 +483,7 @@ comprovadamente limpo.
 | Fallback frontend | `public-demo-entry.tsx`, `demo-api-runtime.ts`, E2E | `corepack pnpm verify:frontend` e `verify:e2e` | frontend completo verde; E2E 17/17; pool cheia oferece `?tenant=demo1` sem segundo lease | nenhum commit novo desta solicitacao | validar login permanente real em homologacao |
 | Recuperacao pos-exchange | `public-demo-service.ts`, `public-demo-entry.tsx`, `public-demo.spec.ts` | `corepack pnpm verify:frontend`; `corepack pnpm run test:e2e:public-demo`; `corepack pnpm run test:e2e` | lint, tipos, guardrails oficiais e build aprovados; E2E publico 13/13; bateria completa 25 aprovados e 1 `rh_teste` ignorado por falta da senha opcional | nenhum commit novo desta solicitacao | repetir contra backend real em homologacao; producao nao foi alterada |
 | Reutilizacao e cota por rede | `config/settings.py`, `tenancy/services_demo_pool.py`, `tenancy/views_demo_public.py`, `tenancy/test_demo_public.py`, envs, runbook, `public-demo-service.ts`, `public-demo.spec.ts` | `manage.py check`; `makemigrations --check --dry-run`; classes `DemoPublicFlowTests` e `DemoPublicConcurrencyTests`; `corepack pnpm run verify:frontend`; E2E publico e completo | backend 19/19 + 3/3; sem migration nova; frontend completo verde; E2E publico 15/15; bateria completa 27 aprovados e 1 opcional ignorado; mesmo cookie reutiliza, dois cookies ficam isolados e o terceiro recebe `network_limit` sem ocupar slot | nenhum commit novo desta solicitacao | validar proxy/IP canonico, Redis/throttle e expiracao real em homologacao |
+| Retomada imediata apos logout | `caixa/throttling.py`, `config/settings.py`, `tenancy/demo_visitor.py`, `tenancy/services_demo_pool.py`, `tenancy/views_demo_public.py`, testes, envs e runbook | `manage.py check`; `makemigrations --check --dry-run`; `DemoPublicFlowTests`; `DemoPublicConcurrencyTests`; `corepack pnpm run verify:frontend`; `test:e2e:public-demo` | backend 21/21 + concorrencia 3/3; frontend completo verde; E2E 15/15; mesmo tenant e expiracao, novo exchange, sem segundo slot e sem 429 da cota de novas alocacoes | nenhum commit desta solicitacao | validar Redis e Nginx reais em homologacao; Nginx ainda pode limitar rajadas abusivas antes do Django |
 
 ### Tentativas, problemas e correcoes durante a implementacao
 
@@ -451,6 +505,7 @@ comprovadamente limpo.
 | `check:financial-cache-guardrails` adicional | executor Node direto nao resolve o alias TypeScript `@/lib` antes de iniciar as assercoes | nao alterar codigo financeiro fora do escopo nem confundir com os guardrails oficiais | `verify:frontend`, que inclui os guardrails oficiais, passou integralmente; incompatibilidade antiga do script adicional permanece documentada |
 | primeiro `manage.py check` desta fase | o ambiente local continha `DEBUG=release`, valor invalido para booleano, e o Django parou antes de carregar o projeto | nao mascarar nem alterar configuracao persistente fora do escopo | repetir somente no processo com `DEBUG=True`; `check` e `makemigrations --check --dry-run` passaram |
 | primeiras chamadas de `verify:frontend` e E2E completo | a janela curta do executor encerrou o launcher antes de produzir resultado | nao classificar timeout da ferramenta como falha do projeto | repetir os mesmos comandos com janela adequada; ambos terminaram com codigo 0 |
+| primeira chamada da suite de retomada com janela curta | o launcher encerrou, mas deixou um runner filho migrando o banco `--keepdb`; a repeticao concorrente encontrou a coluna `origem` ja criada | encerrar somente os PIDs da suite e descartar o banco de teste parcialmente migrado | execucao unica com `--noinput` recriou apenas `test_rhsaas_dev` e passou 21/21; desenvolvimento e producao nao foram tocados |
 
 ## 6. Riscos e bloqueadores
 
@@ -475,6 +530,7 @@ comprovadamente limpo.
 | Terceiro visitante legitimo na mesma rede compartilhada | media | escolas, escritorios ou CGNAT podem atingir a cota mesmo com pessoas distintas | cota configuravel, mensagem especifica, reutilizacao do navegador original e liberacao por expiracao | risco aceito para abertura controlada | testes confirmam dois tenants isolados e terceiro sem slot; valor inicial 2 |
 | Troca de IP, VPN ou multiplas redes | media | agente abusivo pode contornar a cota e consumir outras vagas | throttle existente, pool finita, leases curtos, logs agregados e monitoramento de `network_limit`/`pool_full` | residual, monitorar | nao ha fingerprint nem coleta adicional de PII por decisao de privacidade |
 | Rotacao de `SECRET_KEY` durante leases ativos | baixa | o mesmo IP passa a produzir outro HMAC ate os leases anteriores expirarem | nao rotacionar durante janela ativa sem esvaziar a pool; expiracao/reset remove hashes antigos | residual operacional | identificadores persistidos sao apenas HMAC e nao sao reversiveis sem o segredo |
+| Nginx limita antes da aplicacao | baixa | uma rajada de varias retomadas ainda pode receber 429 HTML antes de o DRF reconhecer o lease | manter burst atual, orientar fluxo normal e validar uma retomada imediata real em homologacao; nao remover protecao de borda | residual deliberado contra abuso | caso observado chegou ao DRF; configuracao versionada usa `3r/m` com burst 2 |
 
 ## 7. Mudancas de escopo e decisoes substituidas
 

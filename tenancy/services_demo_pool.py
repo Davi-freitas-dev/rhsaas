@@ -51,6 +51,10 @@ class DemoNetworkLimitExceeded(Exception):
     pass
 
 
+class DemoLeaseResumeUnavailable(Exception):
+    pass
+
+
 class DemoAccessTokenInvalid(Exception):
     pass
 
@@ -84,6 +88,21 @@ def hash_demo_identifier(purpose, value):
         message,
         hashlib.sha256,
     ).hexdigest()
+
+
+def has_active_demo_lease(*, visitor_identifier, now=None):
+    if not settings.DEMO_PUBLIC_LEASE_ENABLED:
+        return False
+
+    now = now or timezone.now()
+    visitor_hash = hash_demo_identifier("visitor", visitor_identifier)
+    with schema_context(get_public_schema_name()):
+        return DemoTenantSlot.objects.filter(
+            visitor_key_hash=visitor_hash,
+            slot_code__in=demo_public_pool_schema_names(),
+            status=DemoTenantSlot.Status.OCUPADO,
+            lease_expires_at__gt=now,
+        ).exists()
 
 
 def demo_api_base_url(slot_code):
@@ -282,7 +301,13 @@ def seed_demo_tenant(schema_name):
         }
 
 
-def allocate_demo_lease(*, visitor_identifier, network_identifier, now=None):
+def allocate_demo_lease(
+    *,
+    visitor_identifier,
+    network_identifier,
+    now=None,
+    resume_only=False,
+):
     if not settings.DEMO_PUBLIC_LEASE_ENABLED:
         raise DemoPoolUnavailable("Entrada publica da demo desativada.")
 
@@ -308,6 +333,11 @@ def allocate_demo_lease(*, visitor_identifier, network_identifier, now=None):
         reused = slot is not None
 
         if slot is None:
+            if resume_only:
+                raise DemoLeaseResumeUnavailable(
+                    "O lease ativo nao esta mais disponivel para retomada."
+                )
+
             active_network_leases = DemoTenantSlot.objects.filter(
                 network_key_hash=network_hash,
                 slot_code__in=demo_public_pool_schema_names(),

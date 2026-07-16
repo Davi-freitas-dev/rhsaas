@@ -6,6 +6,10 @@ from django_tenants.utils import get_public_schema_name
 from rest_framework.throttling import AnonRateThrottle, SimpleRateThrottle, UserRateThrottle
 
 from config.client_ip import get_axes_client_ip
+from tenancy.demo_visitor import (
+    mark_demo_lease_resume_only,
+    read_demo_visitor_identifier,
+)
 
 
 def current_schema_name():
@@ -79,11 +83,52 @@ class DemoTrustedClientIpThrottleMixin:
         return get_axes_client_ip(django_request) or super().get_ident(request)
 
 
+class DemoLeaseResumeRateThrottle(SimpleRateThrottle):
+    scope = "demo_lease_resume"
+
+    def get_cache_key(self, request, view):
+        django_request = getattr(request, "_request", request)
+        visitor_identifier = read_demo_visitor_identifier(django_request)
+        if not visitor_identifier:
+            return None
+
+        from tenancy.services_demo_pool import hash_demo_identifier
+
+        visitor_hash = hash_demo_identifier("visitor", visitor_identifier)
+        return self.cache_format % {
+            "scope": self.scope,
+            "ident": f"visitor:{visitor_hash}",
+        }
+
+
 class DemoLeaseRateThrottle(
     DemoTrustedClientIpThrottleMixin,
     TenantScopedOperationRateThrottle,
 ):
     scope = "demo_lease"
+
+    def allow_request(self, request, view):
+        self._resume_throttle = None
+        django_request = getattr(request, "_request", request)
+        visitor_identifier = read_demo_visitor_identifier(django_request)
+
+        if visitor_identifier:
+            from tenancy.services_demo_pool import has_active_demo_lease
+
+            if has_active_demo_lease(visitor_identifier=visitor_identifier):
+                resume_throttle = DemoLeaseResumeRateThrottle()
+                self._resume_throttle = resume_throttle
+                allowed = resume_throttle.allow_request(request, view)
+                if allowed:
+                    mark_demo_lease_resume_only(django_request)
+                return allowed
+
+        return super().allow_request(request, view)
+
+    def wait(self):
+        if self._resume_throttle is not None:
+            return self._resume_throttle.wait()
+        return super().wait()
 
 
 class DemoExchangeRateThrottle(

@@ -88,12 +88,16 @@ Manter a cota anonima por rede explicita:
 
 ```env
 DEMO_MAX_ACTIVE_LEASES_PER_NETWORK=2
+DRF_THROTTLE_DEMO_LEASE_RATE=3/hour
+DRF_THROTTLE_DEMO_LEASE_RESUME_RATE=10/hour
 ```
 
 O cookie assinado reutiliza o lease no mesmo navegador. Visitantes distintos
 da mesma rede recebem tenants distintos ate a cota; o terceiro recebe
 `code=network_limit`. O banco armazena somente HMAC de visitante/rede, nunca IP
 puro. O hash deixa de contar assim que o lease expira e e removido no reset.
+Novas alocacoes usam a cota por IP/rede; retomadas reconhecidas pelo cookie e
+por um lease ainda ativo usam a cota separada por HMAC do visitante.
 
 Na Vercel:
 
@@ -303,6 +307,20 @@ novo lease. Confirmar apenas contagens agregadas da pool `demo2...demo10` no
 shell administrativo e revisar se ha leases vencidos. Nao prolongar leases nem
 liberar vaga ocupada para mascarar capacidade.
 
+### Retomada depois do logout
+
+O logout encerra a sessao do tenant e remove o lease do armazenamento local,
+mas nao libera a vaga nem apaga o cookie `HttpOnly` do host publico. Um novo
+clique em `Acessar demo` chama o mesmo endpoint e deve retornar `reused=true`,
+o mesmo `apiBaseUrl` e o mesmo `expiresAt`, emitindo somente outro token de
+exchange para recriar a sessao.
+
+O DRF separa a cota de nova alocacao (`demo_lease`) da cota de retomada
+(`demo_lease_resume`). Nao limpar Redis, prolongar o lease ou aumentar o limite
+global para corrigir uma retomada. Se o detalhe 429 contiver tempo de espera,
+confirmar a configuracao implantada e distinguir o `Retry-After` do DRF de um
+429 HTML do Nginx. O Nginx continua protegendo a rota antes da aplicacao.
+
 ### Limite de rede
 
 A API responde `429` com `code=network_limit` quando a rede ja possui a
@@ -321,7 +339,8 @@ sudo journalctl -u rhsaas-demo-pool-maintenance.service \
   --since "24 hours ago" --no-pager
 ```
 
-Eventos esperados: `demo_lease` (`granted`, `network_limit` ou `pool_full`),
+Eventos esperados: `demo_lease` (`granted` com `reused=true/false`,
+`resume_unavailable`, `network_limit` ou `pool_full`),
 `demo_exchange`, expiracao e reset. O codigo
 nao registra token de troca, senha, hash anonimo ou IP no fluxo publico.
 
@@ -368,6 +387,9 @@ sobre outros tenants.
 - [ ] usuario nao e staff/superuser e nao acessa backups/admin/exclusoes;
 - [ ] duas requisicoes concorrentes nao compartilham indevidamente um slot;
 - [ ] mesmo cookie reutiliza o slot; dois cookies da mesma rede ficam isolados;
+- [ ] logout seguido de entrada imediata retorna o mesmo tenant e `expiresAt`;
+- [ ] retomada imediata nao e bloqueada pela cota de novas alocacoes;
+- [ ] visitante novo continua sujeito a `demo_lease` e retomadas abusivas a `demo_lease_resume`;
 - [ ] terceiro visitante da mesma rede recebe 429 `network_limit` sem novo slot;
 - [ ] pool cheia retorna 503 generico;
 - [ ] lease expira, sessao para de funcionar e timer devolve vaga limpa;

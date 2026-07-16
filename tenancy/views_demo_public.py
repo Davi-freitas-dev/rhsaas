@@ -1,10 +1,8 @@
 import logging
-import secrets
 
 from django.conf import settings
 from django.contrib.auth import login
 from django.core.exceptions import ImproperlyConfigured
-from django.core.signing import BadSignature
 from django.db import connection
 from django.middleware.csrf import get_token
 from django.utils import timezone
@@ -31,8 +29,16 @@ from caixa.views_api_auth import (
 )
 from config.client_ip import get_axes_client_ip
 
+from .demo_visitor import (
+    DEMO_VISITOR_COOKIE_NAME,
+    DEMO_VISITOR_COOKIE_SALT,
+    get_or_create_demo_visitor_identifier,
+    is_demo_lease_resume_only,
+)
+
 from .services_demo_pool import (
     DemoAccessTokenInvalid,
+    DemoLeaseResumeUnavailable,
     DemoNetworkLimitExceeded,
     DemoPoolFull,
     DemoPoolUnavailable,
@@ -40,9 +46,6 @@ from .services_demo_pool import (
     consume_demo_exchange_token,
 )
 
-
-DEMO_VISITOR_COOKIE_NAME = "rhsaas_demo_visitor"
-DEMO_VISITOR_COOKIE_SALT = "rhsaas.demo.public.visitor.v1"
 
 logger = logging.getLogger(__name__)
 
@@ -68,15 +71,7 @@ def _json_request_payload(request):
 
 
 def _visitor_identifier(request):
-    try:
-        visitor_identifier = request.get_signed_cookie(
-            DEMO_VISITOR_COOKIE_NAME,
-            salt=DEMO_VISITOR_COOKIE_SALT,
-            max_age=settings.DEMO_VISITOR_COOKIE_MAX_AGE,
-        )
-    except (BadSignature, KeyError):
-        visitor_identifier = secrets.token_urlsafe(24)
-    return visitor_identifier
+    return get_or_create_demo_visitor_identifier(request)
 
 
 def _network_identifier(request, visitor_identifier):
@@ -125,6 +120,16 @@ def api_demo_lease(request):
         grant = allocate_demo_lease(
             visitor_identifier=visitor_identifier,
             network_identifier=network_identifier,
+            resume_only=is_demo_lease_resume_only(django_request),
+        )
+    except DemoLeaseResumeUnavailable:
+        logger.info("demo_lease outcome=resume_unavailable")
+        return Response(
+            {
+                "code": "resume_unavailable",
+                "detail": "O acesso temporario expirou. Solicite uma nova vaga.",
+            },
+            status=409,
         )
     except DemoNetworkLimitExceeded:
         logger.info("demo_lease outcome=network_limit")

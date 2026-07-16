@@ -16,10 +16,11 @@ from django.utils import timezone
 from django_tenants.utils import schema_context
 
 from caixa.models import Cliente, Evento, Orcamento, Servico
-from caixa.throttling import DemoLeaseRateThrottle
+from caixa.throttling import DemoLeaseRateThrottle, DemoLeaseResumeRateThrottle
 from tenancy.command_guards import DEMO_POOL_SCHEMA_NAMES
 from tenancy.models import DemoTenantSlot, Domain, Tenant
 from tenancy.services_demo_pool import (
+    DemoLeaseResumeUnavailable,
     DemoNetworkLimitExceeded,
     allocate_demo_lease,
     expire_due_demo_leases,
@@ -198,20 +199,32 @@ class DemoPublicFlowTests(MultiTenantTestCase):
         )
 
     def test_logout_e_nova_entrada_reutilizam_o_mesmo_lease(self):
-        public_client, first_response = self._lease()
-        first_payload = first_response.json()
-        tenant_client = self._tenant_client()
-        self.assertEqual(
-            self._exchange(tenant_client, first_payload["exchangeToken"]).status_code,
-            200,
-        )
-        csrf_response = tenant_client.get("/api/auth/csrf/")
+        with (
+            patch.object(DemoLeaseRateThrottle, "rate", "1/hour", create=True),
+            patch.object(
+                DemoLeaseResumeRateThrottle,
+                "rate",
+                "10/hour",
+                create=True,
+            ),
+        ):
+            public_client, first_response = self._lease()
+            first_payload = first_response.json()
+            tenant_client = self._tenant_client()
+            self.assertEqual(
+                self._exchange(
+                    tenant_client,
+                    first_payload["exchangeToken"],
+                ).status_code,
+                200,
+            )
+            csrf_response = tenant_client.get("/api/auth/csrf/")
 
-        logout_response = tenant_client.post(
-            "/api/auth/logout/",
-            HTTP_X_CSRFTOKEN=csrf_response.json()["csrfToken"],
-        )
-        _client, second_response = self._lease(public_client)
+            logout_response = tenant_client.post(
+                "/api/auth/logout/",
+                HTTP_X_CSRFTOKEN=csrf_response.json()["csrfToken"],
+            )
+            _client, second_response = self._lease(public_client)
 
         self.assertEqual(logout_response.status_code, 200)
         self.assertFalse(logout_response.json()["authenticated"])
@@ -221,10 +234,71 @@ class DemoPublicFlowTests(MultiTenantTestCase):
             second_response.json()["apiBaseUrl"],
             first_payload["apiBaseUrl"],
         )
+        self.assertEqual(
+            second_response.json()["expiresAt"],
+            first_payload["expiresAt"],
+        )
+        self.assertEqual(
+            self._exchange(
+                tenant_client,
+                second_response.json()["exchangeToken"],
+            ).status_code,
+            200,
+        )
+        resumed_session = tenant_client.get("/api/auth/session/")
+        self.assertTrue(resumed_session.json()["authenticated"])
         connection.set_schema_to_public()
         self.assertEqual(
             DemoTenantSlot.objects.filter(status=DemoTenantSlot.Status.OCUPADO).count(),
             1,
+        )
+
+    def test_retomada_continua_protegida_por_throttle_proprio(self):
+        with (
+            patch.object(DemoLeaseRateThrottle, "rate", "1/hour", create=True),
+            patch.object(
+                DemoLeaseResumeRateThrottle,
+                "rate",
+                "1/hour",
+                create=True,
+            ),
+        ):
+            client, first_response = self._lease()
+            _client, second_response = self._lease(client)
+            _client, third_response = self._lease(client)
+
+        self.assertEqual(first_response.status_code, 201)
+        self.assertEqual(second_response.status_code, 201)
+        self.assertTrue(second_response.json()["reused"])
+        self.assertEqual(third_response.status_code, 429)
+        connection.set_schema_to_public()
+        self.assertEqual(
+            DemoTenantSlot.objects.filter(status=DemoTenantSlot.Status.OCUPADO).count(),
+            1,
+        )
+
+    @override_settings(DEMO_PUBLIC_POOL_SLOTS=("demo2", "demo3"))
+    def test_resume_only_nao_aloca_novo_slot_se_o_lease_expirar(self):
+        connection.set_schema_to_public()
+        DemoTenantSlot.objects.create(tenant=self.demo3, slot_code="demo3")
+        first_grant = allocate_demo_lease(
+            visitor_identifier="visitante-retomada-expirada",
+            network_identifier="203.0.113.54",
+        )
+        DemoTenantSlot.objects.filter(slot_code=first_grant.slot_code).update(
+            lease_expires_at=timezone.now() - timedelta(seconds=1),
+        )
+
+        with self.assertRaises(DemoLeaseResumeUnavailable):
+            allocate_demo_lease(
+                visitor_identifier="visitante-retomada-expirada",
+                network_identifier="203.0.113.54",
+                resume_only=True,
+            )
+
+        self.assertEqual(
+            DemoTenantSlot.objects.get(slot_code="demo3").status,
+            DemoTenantSlot.Status.LIVRE,
         )
 
     @override_settings(
@@ -419,12 +493,13 @@ class DemoPublicFlowTests(MultiTenantTestCase):
         self.assertNotIn("demo1", serialized)
 
     def test_throttle_retorna_429_sem_metadata_da_pool(self):
-        client = self._public_client(remote_addr="203.0.113.40")
+        first_client = self._public_client(remote_addr="203.0.113.40")
+        second_client = self._public_client(remote_addr="203.0.113.40")
         with patch.object(DemoLeaseRateThrottle, "rate", "1/hour", create=True):
-            client.defaults["HTTP_X_FORWARDED_FOR"] = "192.0.2.1"
-            _client, first_response = self._lease(client)
-            client.defaults["HTTP_X_FORWARDED_FOR"] = "192.0.2.250"
-            _client, second_response = self._lease(client)
+            first_client.defaults["HTTP_X_FORWARDED_FOR"] = "192.0.2.1"
+            _client, first_response = self._lease(first_client)
+            second_client.defaults["HTTP_X_FORWARDED_FOR"] = "192.0.2.250"
+            _client, second_response = self._lease(second_client)
 
         self.assertEqual(first_response.status_code, 201)
         self.assertEqual(second_response.status_code, 429)
