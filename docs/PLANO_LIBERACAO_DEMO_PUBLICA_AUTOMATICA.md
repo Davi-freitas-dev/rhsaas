@@ -212,6 +212,64 @@ reload sem novo lease, `demo1`, tenant temporario sem lease e logout.
 Estado da fase: `[x]` implementacao e validacao local concluidas. Nenhuma
 alteracao de backend, pool, Nginx, timer, producao, commit ou push foi realizada.
 
+### Diagnostico de reutilizacao entre navegadores em 2026-07-15
+
+Estado inicial desta fase: backend `d42721f`, branch
+`feat/django-tenants-spike`, e frontend `6fef5f3`, branch `main`; arvores
+limpas. A pool conhecida em producao possui `demo1` permanente e
+`demo2...demo4` temporarios. Nenhum POST ou alteracao de producao foi realizado.
+
+Diagnostico read-only:
+
+- o cookie assinado e `HttpOnly` `rhsaas_demo_visitor` contem identificador
+  aleatorio, vale 24 horas por padrao e e convertido em HMAC-SHA256 antes de
+  chegar ao banco;
+- o IP canonico vindo apenas do proxy confiavel tambem e convertido em HMAC;
+  IP puro, user-agent e fingerprint nao sao persistidos;
+- `localStorage` contem somente tenant, URL da API e expiracao, sem participar
+  da identidade anonima;
+- logout remove sessao e lease local, mas preserva corretamente o cookie
+  anonimo do host de entrada;
+- advisory locks de visitante e rede, transacao e `select_for_update` protegem
+  a concorrencia do endpoint;
+- a selecao atual usa `visitor_hash OR network_hash`: mesmo navegador reutiliza
+  o slot, mas navegadores distintos da mesma rede compartilham o mesmo tenant;
+- o throttle atual limita chamadas por IP, mas nao representa uma cota clara de
+  leases ativos por rede;
+- mudar IP/rede permite ocupar outros slots, portanto o modelo atual e ao mesmo
+  tempo restritivo para redes compartilhadas e contornavel por troca de rede.
+
+Alternativas avaliadas: cookie isolado nao limita multiplos perfis; rede isolada
+mistura usuarios; cookie + cota de rede preserva isolamento com baixo impacto;
+link de retomada fica como evolucao futura. Decisao: reutilizar apenas pelo
+cookie e permitir, por padrao, dois leases ativos distintos por hash de rede.
+O terceiro recebe `network_limit`, sem consumir slot. O throttle existente
+permanece como cooldown. Nao e necessaria migration, nova tabela, fingerprint,
+mudanca de Nginx ou timer.
+
+Implementacao concluida:
+
+- a retomada de lease ativo passou a usar somente o hash do visitante, evitando
+  que dois navegadores da mesma rede compartilhem dados no mesmo tenant;
+- antes de ocupar nova vaga, o servico conta leases ativos do hash de rede sob
+  o advisory lock ja existente e aplica a cota configuravel
+  `DEMO_MAX_ACTIVE_LEASES_PER_NETWORK=2`;
+- o terceiro navegador recebe HTTP 429 com codigo `network_limit`; `pool_full`
+  e `unavailable` continuam respostas distintas;
+- leases expirados e `demo1` nao entram na cota; a expiracao/reset remove os
+  hashes conforme o ciclo ja existente;
+- nenhuma migration, tabela, fingerprint, mudanca de Nginx, timer ou producao
+  foi necessaria.
+
+Validacao final: `DemoPublicFlowTests` 19/19 e
+`DemoPublicConcurrencyTests` 3/3 passaram em PostgreSQL; `check`,
+`makemigrations --check --dry-run`, lint, tipos, guardrails e build passaram;
+E2E publico 15/15 e bateria completa 27 aprovados, com apenas o cenario
+opcional `rh_teste` ignorado por falta de configuracao.
+
+Estado da fase: `[x]` implementacao e validacao local concluidas. Homologacao e
+producao permanecem intocadas.
+
 ## 3. Decisoes arquiteturais
 
 ### Fluxo publico de entrada
@@ -371,6 +429,7 @@ comprovadamente limpo.
 | Demo permanente | `preparar_demo_permanente.py`, seed e usuario minimo | teste de preparacao permanente | `demo1` sem slot; seed presente; usuario ativo, com senha preservada/fornecida por env, sem staff/superuser e grupo unico | nenhum commit novo desta solicitacao | credencial real deve vir do secret manager no ambiente |
 | Fallback frontend | `public-demo-entry.tsx`, `demo-api-runtime.ts`, E2E | `corepack pnpm verify:frontend` e `verify:e2e` | frontend completo verde; E2E 17/17; pool cheia oferece `?tenant=demo1` sem segundo lease | nenhum commit novo desta solicitacao | validar login permanente real em homologacao |
 | Recuperacao pos-exchange | `public-demo-service.ts`, `public-demo-entry.tsx`, `public-demo.spec.ts` | `corepack pnpm verify:frontend`; `corepack pnpm run test:e2e:public-demo`; `corepack pnpm run test:e2e` | lint, tipos, guardrails oficiais e build aprovados; E2E publico 13/13; bateria completa 25 aprovados e 1 `rh_teste` ignorado por falta da senha opcional | nenhum commit novo desta solicitacao | repetir contra backend real em homologacao; producao nao foi alterada |
+| Reutilizacao e cota por rede | `config/settings.py`, `tenancy/services_demo_pool.py`, `tenancy/views_demo_public.py`, `tenancy/test_demo_public.py`, envs, runbook, `public-demo-service.ts`, `public-demo.spec.ts` | `manage.py check`; `makemigrations --check --dry-run`; classes `DemoPublicFlowTests` e `DemoPublicConcurrencyTests`; `corepack pnpm run verify:frontend`; E2E publico e completo | backend 19/19 + 3/3; sem migration nova; frontend completo verde; E2E publico 15/15; bateria completa 27 aprovados e 1 opcional ignorado; mesmo cookie reutiliza, dois cookies ficam isolados e o terceiro recebe `network_limit` sem ocupar slot | nenhum commit novo desta solicitacao | validar proxy/IP canonico, Redis/throttle e expiracao real em homologacao |
 
 ### Tentativas, problemas e correcoes durante a implementacao
 
@@ -390,6 +449,8 @@ comprovadamente limpo.
 | primeira verificacao frontend | lint exigiu `Link` para navegacao interna do fallback | usar `next/link` sem mudar o destino | `verify:frontend` completo passou na repeticao |
 | E2E pos-exchange na porta `3111` | mocks existentes devolvem CORS apenas para a origem contratual `127.0.0.1:3100`, causando `TypeError: Failed to fetch` | tratar como falso negativo de configuracao, sem mudar o produto | repeticao oficial em `3100` passou 13/13; bateria completa passou 25 testes e ignorou somente o E2E opcional sem senha |
 | `check:financial-cache-guardrails` adicional | executor Node direto nao resolve o alias TypeScript `@/lib` antes de iniciar as assercoes | nao alterar codigo financeiro fora do escopo nem confundir com os guardrails oficiais | `verify:frontend`, que inclui os guardrails oficiais, passou integralmente; incompatibilidade antiga do script adicional permanece documentada |
+| primeiro `manage.py check` desta fase | o ambiente local continha `DEBUG=release`, valor invalido para booleano, e o Django parou antes de carregar o projeto | nao mascarar nem alterar configuracao persistente fora do escopo | repetir somente no processo com `DEBUG=True`; `check` e `makemigrations --check --dry-run` passaram |
+| primeiras chamadas de `verify:frontend` e E2E completo | a janela curta do executor encerrou o launcher antes de produzir resultado | nao classificar timeout da ferramenta como falha do projeto | repetir os mesmos comandos com janela adequada; ambos terminaram com codigo 0 |
 
 ## 6. Riscos e bloqueadores
 
@@ -411,6 +472,9 @@ comprovadamente limpo.
 | Guardrail financial-canonical | media | gate frontend global falha | alinhar allowlists aos imports reais | encerrado | `verify:frontend` completo aprovado |
 | Integracao em ambiente real | alta | CORS, CSRF, cookies, TLS ou proxy podem divergir do teste | deploy de homologacao com flag inicialmente desligada e checklist | pendente | E2E local 17/17; homologacao nao executada |
 | Suite completa de tenancy longa | media | regressao fora dos cenarios focados pode passar despercebida | executar em CI/ambiente com janela maior e medir testes lentos | aberto, nao bloqueia homologacao tecnica | tentativa inicial excedeu 10 minutos sem resumo; relacionados 16/16 |
+| Terceiro visitante legitimo na mesma rede compartilhada | media | escolas, escritorios ou CGNAT podem atingir a cota mesmo com pessoas distintas | cota configuravel, mensagem especifica, reutilizacao do navegador original e liberacao por expiracao | risco aceito para abertura controlada | testes confirmam dois tenants isolados e terceiro sem slot; valor inicial 2 |
+| Troca de IP, VPN ou multiplas redes | media | agente abusivo pode contornar a cota e consumir outras vagas | throttle existente, pool finita, leases curtos, logs agregados e monitoramento de `network_limit`/`pool_full` | residual, monitorar | nao ha fingerprint nem coleta adicional de PII por decisao de privacidade |
+| Rotacao de `SECRET_KEY` durante leases ativos | baixa | o mesmo IP passa a produzir outro HMAC ate os leases anteriores expirarem | nao rotacionar durante janela ativa sem esvaziar a pool; expiracao/reset remove hashes antigos | residual operacional | identificadores persistidos sao apenas HMAC e nao sao reversiveis sem o segredo |
 
 ## 7. Mudancas de escopo e decisoes substituidas
 
