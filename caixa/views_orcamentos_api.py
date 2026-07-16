@@ -22,10 +22,12 @@ from rest_framework.response import Response
 
 from .models import Cliente, ConfiguracaoFinanceira, Orcamento, OrcamentoItem, Servico
 from .models_custos_extras import EventoCustoExtra, OrcamentoCustoExtra
+from .demo_policy import assert_demo_write_allowed, demo_object_flags
 from .permissions import (
     ADD_BUDGET_ITEM_PERMISSION,
     ADD_BUDGET_PERMISSION,
     CHANGE_BUDGET_PERMISSION,
+    CHANGE_BUDGET_ITEM_PERMISSION,
     VIEW_BUDGET_PERMISSION,
     api_authentication_required_response,
     api_no_store_json_response,
@@ -376,6 +378,7 @@ def _serialize_orcamento_item(item):
         "taxAmount": _money(item.valor_imposto),
         "profitAmount": _money(item.lucro),
         "saleAmount": _money(item.preco_venda),
+        **demo_object_flags(item),
     }
 
 
@@ -389,6 +392,7 @@ def _serialize_custo_extra(custo_extra):
         "dueDate": _date_or_empty(custo_extra.data_vencimento),
         "notes": custo_extra.observacao,
         "eventExtraCostId": custo_extra.evento_custo_extra_id,
+        **demo_object_flags(custo_extra),
     }
 
 
@@ -403,6 +407,7 @@ def _serialize_orcamento(orcamento):
     custos_extras = relacoes_multiplas_carregadas(orcamento, "custos_extras")
     dimensao = serializar_dimensao_operacional(orcamento)
 
+    flags = demo_object_flags(orcamento)
     return {
         "id": orcamento.id,
         "number": orcamento.numero,
@@ -432,10 +437,14 @@ def _serialize_orcamento(orcamento):
             _serialize_custo_extra(custo_extra)
             for custo_extra in custos_extras
         ],
-        "isEditable": orcamento.status in EDITABLE_BUDGET_STATUSES,
+        "isEditable": (
+            orcamento.status in EDITABLE_BUDGET_STATUSES
+            and not flags["isReadOnly"]
+        ),
         "approvedEventId": _event_id_or_empty(orcamento),
         "createdAt": _datetime_or_empty(orcamento.criado_em),
         "updatedAt": _datetime_or_empty(orcamento.atualizado_em),
+        **flags,
     }
 
 
@@ -979,7 +988,12 @@ def _save_prepared_budget_item(orcamento, prepared_item):
     return item
 
 
-def _salvar_orcamento_from_payload(payload, *, orcamento=None):
+def _salvar_orcamento_from_payload(payload, *, orcamento=None, user=None):
+    assert_demo_write_allowed(
+        user,
+        orcamento,
+        operation="change_budget" if orcamento is not None else "create_budget",
+    )
     orcamento_data = _orcamento_data_from_payload(payload)
     itens_data = _itens_from_payload(payload)
     custos_extras_data = _custos_extras_from_payload(payload)
@@ -1038,7 +1052,7 @@ def _criar_orcamento_response(request):
         return payload
 
     try:
-        orcamento = _salvar_orcamento_from_payload(payload)
+        orcamento = _salvar_orcamento_from_payload(payload, user=request.user)
     except ValidationError as error:
         return api_no_store_json_response(
             {"errors": _errors_from_validation_error(error)},
@@ -1069,8 +1083,17 @@ def _atualizar_orcamento_response(request, orcamento):
     if not isinstance(payload, dict):
         return payload
 
+    if _payload_has_any(payload, "items", "itens") and not request.user.has_perm(
+        CHANGE_BUDGET_ITEM_PERMISSION
+    ):
+        return api_permission_denied_response()
+
     try:
-        orcamento = _salvar_orcamento_from_payload(payload, orcamento=orcamento)
+        orcamento = _salvar_orcamento_from_payload(
+            payload,
+            orcamento=orcamento,
+            user=request.user,
+        )
     except ValidationError as error:
         return api_no_store_json_response(
             {"errors": _errors_from_validation_error(error)},

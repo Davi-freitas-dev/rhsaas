@@ -6,7 +6,7 @@ from django.contrib.auth.decorators import (
     user_passes_test,
 )
 from django.contrib.auth.models import Group, Permission
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import ImproperlyConfigured, PermissionDenied
 from django.db import connection
 from django.http import JsonResponse
 from django.utils.cache import add_never_cache_headers
@@ -45,6 +45,7 @@ CHANGE_EVENT_EXTRA_COST_PERMISSION = "caixa.change_eventocustoextra"
 VIEW_BUDGET_PERMISSION = "caixa.view_orcamento"
 ADD_BUDGET_PERMISSION = "caixa.add_orcamento"
 ADD_BUDGET_ITEM_PERMISSION = "caixa.add_orcamentoitem"
+CHANGE_BUDGET_ITEM_PERMISSION = "caixa.change_orcamentoitem"
 CHANGE_BUDGET_PERMISSION = "caixa.change_orcamento"
 APPROVE_BUDGET_PERMISSION = "caixa.approve_orcamento"
 FINANCIAL_MONTH_PERMISSIONS = (
@@ -174,6 +175,24 @@ PERMISSION_PROFILES = {
 
 def sincronizar_grupos_permissoes():
     permissoes_caixa = Permission.objects.filter(content_type__app_label="caixa")
+
+    available_codenames = set(
+        permissoes_caixa.values_list("codename", flat=True)
+    )
+    missing_by_profile = {
+        profile_name: sorted(set(codenames) - available_codenames)
+        for profile_name, codenames in PERMISSION_PROFILES.items()
+        if codenames != "__all__"
+        and set(codenames) - available_codenames
+    }
+    if missing_by_profile:
+        details = "; ".join(
+            f"{profile}: {', '.join(codenames)}"
+            for profile, codenames in sorted(missing_by_profile.items())
+        )
+        raise ImproperlyConfigured(
+            f"Permissoes declaradas nao existem no app caixa: {details}."
+        )
 
     for nome_grupo, codenames in PERMISSION_PROFILES.items():
         grupo, _ = Group.objects.get_or_create(name=nome_grupo)

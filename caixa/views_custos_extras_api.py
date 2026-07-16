@@ -13,6 +13,7 @@ from rest_framework.response import Response
 
 from .forms_custos_extras import EventoCustoExtraForm
 from .models_custos_extras import EventoCustoExtra
+from .demo_policy import demo_object_flags
 from .permissions import (
     ADD_EVENT_EXTRA_COST_PERMISSION,
     api_authentication_required_response,
@@ -116,6 +117,7 @@ def _serialize_event_extra_cost(custo_extra):
         "notes": custo_extra.observacao,
         "createdAt": _datetime_or_empty(custo_extra.criado_em),
         "updatedAt": _datetime_or_empty(custo_extra.atualizado_em),
+        **demo_object_flags(custo_extra),
     }
 
 

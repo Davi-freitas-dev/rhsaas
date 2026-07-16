@@ -20,6 +20,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from .models import DespesaOperacional
+from .demo_policy import assert_demo_write_allowed, demo_object_flags
 from .permissions import (
     CHANGE_EXPENSE_PERMISSION,
     VIEW_EXPENSE_PERMISSION,
@@ -185,6 +186,7 @@ def _serialize_despesa(despesa):
         "contractLabel": dimensao["contractLabel"],
         "createdAt": _datetime_or_empty(despesa.criado_em),
         "updatedAt": _datetime_or_empty(despesa.atualizado_em),
+        **demo_object_flags(despesa),
     }
 
 
@@ -271,6 +273,11 @@ def _despesa_detalhe_response(request, despesa):
 
 
 def _atualizar_despesa_response(request, despesa):
+    assert_demo_write_allowed(
+        request.user,
+        despesa,
+        operation="change_expense",
+    )
     payload = _json_required_response(request)
     if not isinstance(payload, dict):
         return payload

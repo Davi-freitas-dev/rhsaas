@@ -13,7 +13,8 @@ from tenancy.command_guards import (
 )
 from tenancy.management.commands.provisionar_pool_demo import DEFAULT_DOMAIN_SUFFIX
 from tenancy.models import DemoTenantSlot, Domain
-from tenancy.services_demo_pool import sync_demo_public_user
+from tenancy.services_demo_pool import mark_demo_slot_blocked, sync_demo_public_user
+from caixa.demo_seed import validate_demo_seed_readiness
 
 
 DEFAULT_LEASE_DAYS = 3
@@ -82,48 +83,63 @@ class Command(BaseCommand):
 
         password = self._password_from_env(options.get("password_env"))
 
+        readiness_error = None
         with transaction.atomic():
             slot = self._select_slot(options.get("slot"))
             schema_name = self._validate_slot(slot)
-            user_result = self._create_or_activate_user(
-                schema_name,
-                username=username,
-                email=tester_email,
-                name=tester_name,
-                password=password,
-            )
-            now = timezone.now()
+            try:
+                validate_demo_seed_readiness(schema_name=schema_name)
+            except Exception as exc:
+                readiness_error = exc
+                mark_demo_slot_blocked(
+                    slot,
+                    "Ocupacao encontrou seed inconsistente; reset ou backfill obrigatorio.",
+                )
+            else:
+                user_result = self._create_or_activate_user(
+                    schema_name,
+                    username=username,
+                    email=tester_email,
+                    name=tester_name,
+                    password=password,
+                )
+                now = timezone.now()
 
-            slot.assigned_name = tester_name
-            slot.assigned_email = tester_email
-            slot.assigned_phone = tester_phone
-            slot.visitor_key_hash = ""
-            slot.network_key_hash = ""
-            slot.exchange_token_digest = None
-            slot.exchange_token_expires_at = None
-            slot.exchange_token_consumed_at = None
-            slot.lease_started_at = now
-            slot.lease_expires_at = now + timedelta(days=duration_days)
-            slot.last_assigned_at = now
-            slot.status = DemoTenantSlot.Status.OCUPADO
-            slot.full_clean()
-            slot.save(
-                update_fields=[
-                    "assigned_name",
-                    "assigned_email",
-                    "assigned_phone",
-                    "visitor_key_hash",
-                    "network_key_hash",
-                    "exchange_token_digest",
-                    "exchange_token_expires_at",
-                    "exchange_token_consumed_at",
-                    "lease_started_at",
-                    "lease_expires_at",
-                    "last_assigned_at",
-                    "status",
-                    "updated_at",
-                ]
-            )
+                slot.assigned_name = tester_name
+                slot.assigned_email = tester_email
+                slot.assigned_phone = tester_phone
+                slot.visitor_key_hash = ""
+                slot.network_key_hash = ""
+                slot.exchange_token_digest = None
+                slot.exchange_token_expires_at = None
+                slot.exchange_token_consumed_at = None
+                slot.lease_started_at = now
+                slot.lease_expires_at = now + timedelta(days=duration_days)
+                slot.last_assigned_at = now
+                slot.status = DemoTenantSlot.Status.OCUPADO
+                slot.full_clean()
+                slot.save(
+                    update_fields=[
+                        "assigned_name",
+                        "assigned_email",
+                        "assigned_phone",
+                        "visitor_key_hash",
+                        "network_key_hash",
+                        "exchange_token_digest",
+                        "exchange_token_expires_at",
+                        "exchange_token_consumed_at",
+                        "lease_started_at",
+                        "lease_expires_at",
+                        "last_assigned_at",
+                        "status",
+                        "updated_at",
+                    ]
+                )
+
+        if readiness_error is not None:
+            raise CommandError(
+                f"Seed do slot {slot.slot_code} esta inconsistente; slot bloqueado."
+            ) from readiness_error
 
         self.stdout.write(
             self.style.SUCCESS(

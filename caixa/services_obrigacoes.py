@@ -6,6 +6,7 @@ from django.conf import settings
 from django.db import connection, transaction
 
 from .constants_dividas import STATUS_PARCELA_CANCELADA, STATUS_PARCELA_PAGA
+from .demo_policy import assert_demo_write_allowed
 from .constants_financeiros import (
     STATUS_CANCELADO,
     TIPO_FLUXO_SAIDA,
@@ -204,6 +205,12 @@ def liquidar_despesa_operacional_manual(source_id, payload, usuario):
                 {"sourceId": "Obrigação financeira não encontrada."}
             ) from exc
 
+        assert_demo_write_allowed(
+            usuario,
+            despesa,
+            operation="settle_operational_expense",
+        )
+
         validar_despesa_operacional_manual_para_baixa(
             despesa,
             valor_realizado,
@@ -262,6 +269,12 @@ def liquidar_custo_fixo(source_id, payload, usuario):
             raise ObrigacaoFinanceiraNaoEncontrada(
                 {"sourceId": "Obrigação financeira não encontrada."}
             ) from exc
+
+        assert_demo_write_allowed(
+            usuario,
+            custo_fixo,
+            operation="settle_fixed_cost",
+        )
 
         validar_custo_fixo_para_baixa(
             custo_fixo,
@@ -330,6 +343,12 @@ def liquidar_investimento_fci(source_id, payload, usuario):
                 {"sourceId": "Obrigação financeira não encontrada."}
             ) from exc
 
+        assert_demo_write_allowed(
+            usuario,
+            investimento,
+            operation="settle_investment",
+        )
+
         validar_investimento_fci_para_baixa(
             investimento,
             valor_realizado,
@@ -396,6 +415,12 @@ def liquidar_financiamento_fcf(source_id, payload, usuario):
                 {"sourceId": "Obrigação financeira não encontrada."}
             ) from exc
 
+        assert_demo_write_allowed(
+            usuario,
+            financiamento,
+            operation="settle_financing",
+        )
+
         validar_financiamento_fcf_para_baixa(
             financiamento,
             valor_realizado,
@@ -453,6 +478,12 @@ def liquidar_custo_extra_evento(source_id, payload, usuario):
             raise ObrigacaoFinanceiraNaoEncontrada(
                 {"sourceId": "Obrigação financeira não encontrada."}
             ) from exc
+
+        assert_demo_write_allowed(
+            usuario,
+            custo_extra,
+            operation="settle_event_extra_cost",
+        )
 
         total_atual = quantizar_moeda(custo_extra.total_pago)
         validar_custo_extra_evento_para_baixa(
@@ -528,6 +559,12 @@ def liquidar_custo_servico_evento(source_id, tipo, payload, usuario):
                 {"sourceId": "Obrigação financeira não encontrada."}
             ) from exc
 
+        assert_demo_write_allowed(
+            usuario,
+            custo_servico,
+            operation="settle_event_service_cost",
+        )
+
         total_atual = quantizar_moeda(getattr(custo_servico, config_tipo["pago"]))
         validar_custo_servico_evento_para_baixa(
             custo_servico,
@@ -601,6 +638,12 @@ def liquidar_parcela_divida_fcf(source_id, payload, usuario):
             raise ObrigacaoFinanceiraNaoEncontrada(
                 {"sourceId": "Obrigação financeira não encontrada."}
             ) from exc
+
+        assert_demo_write_allowed(
+            usuario,
+            parcela,
+            operation="settle_debt_installment",
+        )
 
         aplicar_ajustes_parcela_divida(parcela, payload, usuario)
         total_atual = quantizar_moeda(parcela.valor_pago)

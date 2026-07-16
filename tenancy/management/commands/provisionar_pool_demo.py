@@ -9,6 +9,8 @@ from tenancy.command_guards import (
     is_demo_public_pool_schema,
 )
 from tenancy.models import DEMO_SLOT_CODES, DemoTenantSlot, Domain, Tenant
+from tenancy.services_demo_pool import seed_demo_tenant
+from caixa.demo_seed import validate_demo_seed_readiness
 
 
 DEFAULT_DOMAIN_SUFFIX = "api-demo-rh.taquiondev.com.br"
@@ -104,7 +106,25 @@ class Command(BaseCommand):
                 self.stdout.write(
                     f"Tenant permanente preservado sem DemoTenantSlot: {plan.slot_code}"
                 )
-            elif plan.slot is None:
+            else:
+                try:
+                    seed_demo_tenant(plan.slot_code)
+                    validate_demo_seed_readiness(schema_name=plan.slot_code)
+                except Exception as exc:
+                    if plan.slot is not None:
+                        DemoTenantSlot.objects.filter(pk=plan.slot.pk).update(
+                            status=DemoTenantSlot.Status.BLOQUEADO,
+                            notes=(
+                                "Provisionamento encontrou seed inconsistente; "
+                                "reset ou backfill obrigatorio."
+                            ),
+                        )
+                    raise CommandError(
+                        f"Seed do slot {plan.slot_code} nao esta pronto; "
+                        "slot nao foi liberado."
+                    ) from exc
+
+            if plan.is_public_pool_slot and plan.slot is None:
                 DemoTenantSlot.objects.create(
                     tenant=tenant,
                     slot_code=plan.slot_code,
@@ -113,7 +133,7 @@ class Command(BaseCommand):
                 )
                 created["slot"] += 1
                 self.stdout.write(f"DemoTenantSlot criado: {plan.slot_code}")
-            else:
+            elif plan.is_public_pool_slot:
                 existing["slot"] += 1
 
         self.stdout.write(

@@ -8,6 +8,7 @@ from .constants_financeiros import (
     TIPO_FLUXO_ENTRADA,
     TIPO_FLUXO_SAIDA,
 )
+from .demo_policy import assert_demo_write_allowed
 from .contracts_obrigacoes import (
     CANONICAL_FIRST_DIRECT_SETTLEMENT_SOURCES,
     CANONICAL_SETTLEMENT_ADAPTERS,
@@ -54,6 +55,14 @@ def liquidar_obrigacao_canonica_primeiro(source, source_id, payload, usuario):
     simulacao = simular_baixa_canonica_primeiro(source, source_id, payload)
 
     with transaction.atomic():
+        obligation = ObrigacaoFinanceira.objects.select_for_update().get(
+            pk=simulacao["obligationId"]
+        )
+        assert_demo_write_allowed(
+            usuario,
+            obligation,
+            operation="canonical_settlement",
+        )
         baixa_pre_sincronizada = salvar_baixa_canonica_primeiro(
             simulacao,
             payload or {},

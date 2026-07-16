@@ -21,6 +21,7 @@ from rest_framework.response import Response
 
 from .constants_financeiros import STATUS_CANCELADO, STATUS_PAGO, STATUS_PENDENTE
 from .models_custo_fixo import CustoFixo
+from .demo_policy import assert_demo_write_allowed, demo_object_flags
 from .permissions import (
     ADD_FIXED_COST_PERMISSION,
     CHANGE_FIXED_COST_PERMISSION,
@@ -174,6 +175,7 @@ def _serialize_custo_fixo(custo_fixo):
         "isOverdue": _is_overdue(custo_fixo),
         "createdAt": _datetime_or_empty(custo_fixo.criado_em),
         "updatedAt": _datetime_or_empty(custo_fixo.atualizado_em),
+        **demo_object_flags(custo_fixo),
     }
 
 
@@ -411,6 +413,7 @@ def _custo_fixo_detalhe_response(request, custo_fixo):
 
 
 def _criar_custo_fixo_response(request):
+    assert_demo_write_allowed(request.user, operation="create_fixed_cost")
     if not _is_json_request(request):
         return api_no_store_json_response(
             {"detail": "Content-Type deve ser application/json."},
@@ -454,6 +457,11 @@ def _criar_custo_fixo_response(request):
 
 
 def _atualizar_custo_fixo_response(request, custo_fixo):
+    assert_demo_write_allowed(
+        request.user,
+        custo_fixo,
+        operation="change_fixed_cost",
+    )
     if not _is_json_request(request):
         return api_no_store_json_response(
             {"detail": "Content-Type deve ser application/json."},

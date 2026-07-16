@@ -4,6 +4,8 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import F, Sum
 
+from .demo_policy import assert_demo_write_allowed
+
 from .forms_dividas import PagamentoParcelaDividaForm
 from .models_dividas import Credor, DividaFinanceira, ParcelaDivida
 from .selectors_pagamentos import queryset_parcelas_fcf_pagaveis
@@ -224,6 +226,12 @@ def registrar_pagamento_parcela_com_lock(form, usuario):
         with transaction.atomic():
             parcela = ParcelaDivida.objects.select_for_update().select_related("divida").get(
                 pk=form.parcela.pk,
+            )
+
+            assert_demo_write_allowed(
+                usuario,
+                parcela,
+                operation="pay_debt_installment",
             )
 
             form = PagamentoParcelaDividaForm(form.data, parcela=parcela)

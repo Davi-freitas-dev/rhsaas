@@ -19,6 +19,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from .models import Cliente
+from .demo_policy import assert_demo_write_allowed, demo_object_flags
 from .permissions import (
     ADD_CLIENT_PERMISSION,
     CHANGE_CLIENT_PERMISSION,
@@ -118,6 +119,7 @@ def _serialize_cliente(cliente):
         "displayName": str(cliente),
         "createdAt": _datetime_or_empty(cliente.criado_em),
         "updatedAt": _datetime_or_empty(cliente.atualizado_em),
+        **demo_object_flags(cliente),
     }
 
 
@@ -197,6 +199,7 @@ def _criar_cliente_response(request):
             status=415,
         )
 
+    assert_demo_write_allowed(request.user, operation="create_client")
     payload = _payload_json(request)
     if payload is None:
         return api_no_store_json_response({"detail": "JSON invalido."}, status=400)
@@ -253,6 +256,11 @@ def _atualizar_cliente_response(request, cliente):
             status=415,
         )
 
+    assert_demo_write_allowed(
+        request.user,
+        cliente,
+        operation="change_client",
+    )
     payload = _payload_json(request)
     if payload is None:
         return api_no_store_json_response({"detail": "JSON invalido."}, status=400)

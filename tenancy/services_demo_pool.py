@@ -1,9 +1,9 @@
 import hashlib
 import hmac
 import secrets
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
-from decimal import Decimal
 
 from axes.models import AccessAttempt, AccessFailureLog, AccessLog
 from django.conf import settings
@@ -23,6 +23,13 @@ from caixa.models import (
     Orcamento,
     OrcamentoItem,
     Servico,
+)
+from caixa.demo_seed import (
+    DemoSeedIntegrityError,
+    demo_seed_create_defaults,
+    demo_seed_entry,
+    inspect_demo_seed_readiness,
+    validate_demo_seed_readiness,
 )
 from caixa.permissions import PERMISSION_PROFILES, sincronizar_grupos_permissoes
 from tenancy.command_guards import (
@@ -247,7 +254,7 @@ def seed_demo_tenant(schema_name):
         action="recriar dados ficticios da demo",
     )
 
-    with schema_context(schema_name):
+    with schema_context(schema_name), transaction.atomic():
         sincronizar_grupos_permissoes()
         missing_groups = set(PERMISSION_PROFILES) - set(
             Group.objects.filter(name__in=PERMISSION_PROFILES).values_list(
@@ -260,96 +267,96 @@ def seed_demo_tenant(schema_name):
                 f"Grupos obrigatorios ausentes no seed de {schema_name}."
             )
 
-        configuration = ConfiguracaoFinanceira.objects.filter(ativa=True).first()
-        if configuration is None:
-            configuration = ConfiguracaoFinanceira.objects.create(
-                nome="Configuracao Demo",
-                valor_alimentacao=Decimal("20.00"),
-                valor_transporte=Decimal("15.00"),
-                margem_lucro=Decimal("0.30"),
-                aliquota_imposto=Decimal("0.06"),
-                ativa=True,
-                data_inicio_vigencia=timezone.localdate(),
-                observacao="Dados ficticios da demonstracao publica.",
+        readiness = inspect_demo_seed_readiness()
+        if readiness.ready:
+            return _seed_result_from_readiness(readiness)
+
+        keyed_root_exists = any(
+            model.objects.exclude(demo_seed_key__isnull=True).exists()
+            for model in (ConfiguracaoFinanceira, Cliente, Servico, Orcamento)
+        )
+        if keyed_root_exists:
+            readiness.require_ready()
+
+        legacy_or_common_roots_exist = any(
+            model.objects.exists()
+            for model in (ConfiguracaoFinanceira, Cliente, Servico, Orcamento)
+        )
+        if legacy_or_common_roots_exist:
+            raise DemoSeedIntegrityError(
+                "Schema demo contem dados sem chaves seed; use o backfill "
+                "controlado ou execute reset completo."
             )
 
-        client, _created = Cliente.objects.update_or_create(
-            cpf_cnpj="00.000.000/0001-91",
-            defaults={
-                "nome_razao_social": "Empresa Exemplo Demonstracao Ltda",
-                "nome_fantasia": "Empresa Exemplo",
-                "tipo_pessoa": "PJ",
-                "email": "contato@example.invalid",
-                "responsavel": "Pessoa Ficticia",
-                "observacoes": "Registro exclusivamente demonstrativo.",
-                "ativo": True,
-            },
+        today = timezone.localdate()
+        configuration = ConfiguracaoFinanceira.objects.create(
+            demo_seed_key=demo_seed_entry("configuration")["key"],
+            **demo_seed_create_defaults("configuration", today=today),
         )
+        client = Cliente.objects.create(
+            demo_seed_key=demo_seed_entry("client")["key"],
+            **demo_seed_create_defaults("client", today=today),
+        )
+        daily_service = Servico.objects.create(
+            demo_seed_key=demo_seed_entry("daily_service")["key"],
+            **demo_seed_create_defaults("daily_service", today=today),
+        )
+        hourly_service = Servico.objects.create(
+            demo_seed_key=demo_seed_entry("hourly_service")["key"],
+            **demo_seed_create_defaults("hourly_service", today=today),
+        )
+        budget = Orcamento.objects.create(
+            demo_seed_key=demo_seed_entry("budget")["key"],
+            cliente=client,
+            configuracao_financeira=configuration,
+            **demo_seed_create_defaults("budget", today=today),
+        )
+        OrcamentoItem.objects.create(
+            orcamento=budget,
+            servico=daily_service,
+            horas_por_dia="8.00",
+            quantidade_dias=1,
+            quantidade_pessoas=2,
+        )
+        OrcamentoItem.objects.create(
+            orcamento=budget,
+            servico=hourly_service,
+            horas_por_dia="2.00",
+            quantidade_dias=2,
+            quantidade_pessoas=2,
+        )
+        budget.aprovar_e_gerar_evento()
 
-        daily_service, _created = Servico.objects.update_or_create(
-            codigo="recepcao-demo-diaria",
-            defaults={
-                "nome": "Recepcao para evento - diaria",
-                "unidade_cobranca": Servico.UNIDADE_COBRANCA_DIARIA,
-                "valor_unitario": Decimal("240.00"),
-                "diaria_padrao": Decimal("240.00"),
-                "horas_base_diaria": 8,
-                "percentual_hora_extra": Decimal("1.50"),
-                "usa_regra_especial": False,
-                "ativo": True,
-            },
-        )
-        hourly_service, _created = Servico.objects.update_or_create(
-            codigo="apoio-demo-hora",
-            defaults={
-                "nome": "Apoio operacional - hora",
-                "unidade_cobranca": Servico.UNIDADE_COBRANCA_HORA,
-                "valor_unitario": Decimal("100.00"),
-                "diaria_padrao": Decimal("800.00"),
-                "horas_base_diaria": 8,
-                "percentual_hora_extra": Decimal("1.50"),
-                "usa_regra_especial": False,
-                "ativo": True,
-            },
-        )
+        readiness = validate_demo_seed_readiness()
+        return _seed_result_from_readiness(readiness)
 
-        budget, budget_created = Orcamento.objects.get_or_create(
-            numero="DEMO-EXEMPLO-001",
-            defaults={
-                "cliente": client,
-                "configuracao_financeira": configuration,
-                "nome_evento": "Evento Corporativo Ficticio",
-                "data_evento": timezone.localdate() + timedelta(days=30),
-                "local": "Centro de Convencoes - ambiente ficticio",
-                "validade": timezone.localdate() + timedelta(days=7),
-                "status": "rascunho",
-                "observacoes": "Orcamento criado pelo seed da demo publica.",
-            },
-        )
-        if budget_created:
-            OrcamentoItem.objects.create(
-                orcamento=budget,
-                servico=daily_service,
-                horas_por_dia=Decimal("8.00"),
-                quantidade_dias=1,
-                quantidade_pessoas=2,
-            )
-            OrcamentoItem.objects.create(
-                orcamento=budget,
-                servico=hourly_service,
-                horas_por_dia=Decimal("2.00"),
-                quantidade_dias=2,
-                quantidade_pessoas=2,
-            )
-            budget.aprovar_e_gerar_evento()
 
-        return {
-            "configuration_id": configuration.pk,
-            "client_id": client.pk,
-            "daily_service_id": daily_service.pk,
-            "hourly_service_id": hourly_service.pk,
-            "budget_id": budget.pk,
-        }
+def _seed_result_from_readiness(readiness):
+    return {
+        "configuration_id": readiness.objects[
+            demo_seed_entry("configuration")["key"]
+        ].pk,
+        "client_id": readiness.objects[demo_seed_entry("client")["key"]].pk,
+        "daily_service_id": readiness.objects[
+            demo_seed_entry("daily_service")["key"]
+        ].pk,
+        "hourly_service_id": readiness.objects[
+            demo_seed_entry("hourly_service")["key"]
+        ].pk,
+        "budget_id": readiness.objects[demo_seed_entry("budget")["key"]].pk,
+    }
+
+
+@contextmanager
+def _demo_allocation_transaction(blocked_slot_ids):
+    """Persist readiness blocks after the selection transaction settles."""
+
+    try:
+        with transaction.atomic():
+            yield
+    finally:
+        if blocked_slot_ids:
+            _persist_demo_slot_blocks(blocked_slot_ids)
 
 
 def allocate_demo_lease(
@@ -367,7 +374,10 @@ def allocate_demo_lease(
     network_hash = hash_demo_identifier("network", network_identifier)
 
     connection.set_schema_to_public()
-    with transaction.atomic():
+    allocation_error = None
+    grant = None
+    blocked_slot_ids = set()
+    with _demo_allocation_transaction(blocked_slot_ids):
         _lock_demo_identifiers(visitor_hash, network_hash)
         slot = (
             DemoTenantSlot.objects.select_for_update()
@@ -383,7 +393,21 @@ def allocate_demo_lease(
         )
         reused = slot is not None
 
-        if slot is None:
+        if slot is not None:
+            try:
+                schema_name = _validate_public_demo_slot(slot)
+                validate_demo_seed_readiness(schema_name=schema_name)
+            except Exception as exc:
+                mark_demo_slot_blocked(
+                    slot,
+                    "Seed da demo inconsistente; reset ou backfill obrigatorio.",
+                )
+                blocked_slot_ids.add(slot.pk)
+                allocation_error = DemoPoolUnavailable(
+                    "A vaga ativa da demo esta indisponivel para retomada."
+                )
+                allocation_error.__cause__ = exc
+        else:
             if resume_only:
                 raise DemoLeaseResumeUnavailable(
                     "O lease ativo nao esta mais disponivel para retomada."
@@ -400,52 +424,116 @@ def allocate_demo_lease(
                     "Limite de leases ativos para a rede atingido."
                 )
 
-            slot = (
-                DemoTenantSlot.objects.select_for_update(skip_locked=True)
-                .select_related("tenant")
-                .filter(
-                    slot_code__in=demo_public_pool_schema_names(),
-                    status=DemoTenantSlot.Status.LIVRE,
+            slot = None
+            last_readiness_error = None
+            blocked_candidate_ids = []
+            while True:
+                candidate = (
+                    DemoTenantSlot.objects.select_for_update(skip_locked=True)
+                    .select_related("tenant")
+                    .filter(
+                        slot_code__in=demo_public_pool_schema_names(),
+                        status=DemoTenantSlot.Status.LIVRE,
+                    )
+                    .exclude(pk__in=blocked_candidate_ids)
+                    .order_by("slot_code")
+                    .first()
                 )
-                .order_by("slot_code")
-                .first()
-            )
+                if candidate is None:
+                    break
+                try:
+                    candidate_schema = _validate_public_demo_slot(candidate)
+                    validate_demo_seed_readiness(schema_name=candidate_schema)
+                except Exception as exc:
+                    last_readiness_error = exc
+                    mark_demo_slot_blocked(
+                        candidate,
+                        "Seed da demo inconsistente; reset ou backfill obrigatorio.",
+                    )
+                    blocked_slot_ids.add(candidate.pk)
+                    blocked_candidate_ids.append(candidate.pk)
+                    continue
+                slot = candidate
+                schema_name = candidate_schema
+                break
+
             if slot is None:
-                raise DemoPoolFull("Pool demo temporariamente cheia.")
+                if last_readiness_error is None:
+                    raise DemoPoolFull("Pool demo temporariamente cheia.")
+                allocation_error = DemoPoolUnavailable(
+                    "Nenhuma vaga preparada da demo esta disponivel."
+                )
+                allocation_error.__cause__ = last_readiness_error
 
-        schema_name = _validate_public_demo_slot(slot)
-        seed_demo_tenant(schema_name)
-        sync_demo_public_user(schema_name)
+        if allocation_error is None:
+            sync_demo_public_user(schema_name)
 
-        if not reused:
-            slot.assigned_name = ""
-            slot.assigned_email = ""
-            slot.assigned_phone = ""
-            slot.visitor_key_hash = visitor_hash
-            slot.network_key_hash = network_hash
-            slot.lease_started_at = now
-            slot.lease_expires_at = now + timedelta(
-                minutes=settings.DEMO_LEASE_DURATION_MINUTES
+            if not reused:
+                slot.assigned_name = ""
+                slot.assigned_email = ""
+                slot.assigned_phone = ""
+                slot.visitor_key_hash = visitor_hash
+                slot.network_key_hash = network_hash
+                slot.lease_started_at = now
+                slot.lease_expires_at = now + timedelta(
+                    minutes=settings.DEMO_LEASE_DURATION_MINUTES
+                )
+                slot.last_assigned_at = now
+                slot.status = DemoTenantSlot.Status.OCUPADO
+
+            raw_token = secrets.token_urlsafe(32)
+            slot.exchange_token_digest = hash_demo_identifier("exchange", raw_token)
+            slot.exchange_token_expires_at = min(
+                slot.lease_expires_at,
+                now + timedelta(seconds=settings.DEMO_EXCHANGE_TOKEN_TTL_SECONDS),
             )
-            slot.last_assigned_at = now
-            slot.status = DemoTenantSlot.Status.OCUPADO
+            slot.exchange_token_consumed_at = None
+            slot.full_clean()
+            slot.save()
 
-        raw_token = secrets.token_urlsafe(32)
-        slot.exchange_token_digest = hash_demo_identifier("exchange", raw_token)
-        slot.exchange_token_expires_at = min(
-            slot.lease_expires_at,
-            now + timedelta(seconds=settings.DEMO_EXCHANGE_TOKEN_TTL_SECONDS),
-        )
-        slot.exchange_token_consumed_at = None
-        slot.full_clean()
-        slot.save()
+            grant = DemoLeaseGrant(
+                slot_code=slot.slot_code,
+                api_base_url=demo_api_base_url(slot.slot_code),
+                expires_at=slot.lease_expires_at,
+                exchange_token=raw_token,
+                reused=reused,
+            )
 
-        return DemoLeaseGrant(
-            slot_code=slot.slot_code,
-            api_base_url=demo_api_base_url(slot.slot_code),
-            expires_at=slot.lease_expires_at,
-            exchange_token=raw_token,
-            reused=reused,
+    if allocation_error is not None:
+        raise allocation_error
+    return grant
+
+
+def mark_demo_slot_blocked(slot, note):
+    slot.status = DemoTenantSlot.Status.BLOQUEADO
+    slot.notes = note
+    slot.exchange_token_digest = None
+    slot.exchange_token_expires_at = None
+    slot.exchange_token_consumed_at = None
+    slot.full_clean()
+    slot.save(
+        update_fields=[
+            "status",
+            "notes",
+            "exchange_token_digest",
+            "exchange_token_expires_at",
+            "exchange_token_consumed_at",
+            "updated_at",
+        ]
+    )
+
+
+def _persist_demo_slot_blocks(slot_ids):
+    """Confirm readiness blocks outside the allocation selection transaction."""
+
+    connection.set_schema_to_public()
+    with transaction.atomic():
+        DemoTenantSlot.objects.filter(pk__in=slot_ids).update(
+            status=DemoTenantSlot.Status.BLOQUEADO,
+            notes="Seed da demo inconsistente; reset ou backfill obrigatorio.",
+            exchange_token_digest=None,
+            exchange_token_expires_at=None,
+            exchange_token_consumed_at=None,
         )
 
 

@@ -18,6 +18,7 @@ from tenancy.services_demo_pool import (
     seed_demo_tenant,
     sync_demo_permanent_user,
 )
+from caixa.demo_seed import inspect_demo_seed_readiness, validate_demo_seed_readiness
 
 
 class Command(BaseCommand):
@@ -82,17 +83,20 @@ class Command(BaseCommand):
             user_ready = bool(user and user.is_active and user.has_usable_password())
 
         if options["dry_run"]:
+            readiness = inspect_demo_seed_readiness(schema_name=schema_name)
             self.stdout.write(
                 self.style.WARNING("DRY-RUN: nenhum dado sera alterado.")
             )
             self.stdout.write(
                 f"Tenant permanente validado: schema={schema_name}; "
-                f"usuario_pronto={'sim' if user_ready else 'nao'}."
+                f"usuario_pronto={'sim' if user_ready else 'nao'}; "
+                f"seed_pronto={'sim' if readiness.ready else 'nao'}."
             )
             return
 
         password = self._password_from_env(options.get("password_env"))
         seed_demo_tenant(schema_name)
+        validate_demo_seed_readiness(schema_name=schema_name)
         try:
             sync_demo_permanent_user(
                 schema_name,

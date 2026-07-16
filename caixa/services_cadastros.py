@@ -1,7 +1,10 @@
 import logging
 
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 
+from .demo_policy import assert_demo_write_allowed, is_demo_seed_object
+from .models import Orcamento
 from .permissions import can_approve_budget, current_schema_name
 
 
@@ -30,7 +33,40 @@ def aprovar_orcamento(orcamento, user):
         }
 
     try:
-        evento = orcamento.aprovar_e_gerar_evento()
+        with transaction.atomic():
+            locked_budget = (
+                Orcamento.objects.select_for_update()
+                .select_related("cliente", "configuracao_financeira")
+                .get(pk=orcamento.pk)
+            )
+            assert_demo_write_allowed(
+                user,
+                locked_budget,
+                operation="approve_budget",
+            )
+            if is_demo_seed_object(locked_budget):
+                raise PermissionDenied(
+                    "O orcamento de exemplo da demo nao pode ser aprovado."
+                )
+            if locked_budget.status not in {"rascunho", "enviado"}:
+                raise ValidationError(
+                    "Somente orcamentos em rascunho ou enviados podem ser aprovados."
+                )
+            evento = locked_budget.aprovar_e_gerar_evento()
+    except PermissionDenied as exc:
+        return {
+            "ok": False,
+            "codigo": "permission_denied",
+            "mensagem": str(exc),
+            "evento": None,
+        }
+    except ValidationError as exc:
+        return {
+            "ok": False,
+            "codigo": "invalid_state",
+            "mensagem": "; ".join(exc.messages),
+            "evento": None,
+        }
     except Exception:
         logger.exception(
             "budget_approval_failed budget_id=%s schema=%s user_id=%s stage=approval_flow",
@@ -47,13 +83,18 @@ def aprovar_orcamento(orcamento, user):
 
     return {
         "ok": True,
-        "mensagem": f"Contrato {orcamento.contrato} aprovado. Evento {evento.contrato} gerado/atualizado.",
+        "mensagem": f"Contrato {locked_budget.contrato} aprovado. Evento {evento.contrato} gerado.",
         "evento": evento,
     }
 
 
 def criar_custo_extra(form, user):
     custo_extra = form.save(commit=False)
+    assert_demo_write_allowed(
+        user,
+        custo_extra.evento,
+        operation="create_event_extra_cost",
+    )
     custo_extra.criado_por = user
     custo_extra.atualizado_por = user
     custo_extra.save()

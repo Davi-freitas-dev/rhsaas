@@ -4,6 +4,8 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Sum
 
+from .demo_policy import assert_demo_write_allowed
+
 from .models import DespesaOperacional
 from .models_custos_extras import EventoCustoExtra
 from .models_pagamentos import PagamentoEventoCustoExtra
@@ -43,6 +45,12 @@ def registrar_pagamento_custo_extra_com_lock(form, usuario):
                 EventoCustoExtra.objects.select_for_update()
                 .select_related("evento", "evento__cliente")
                 .get(pk=form.cleaned_data["custo_extra"].pk)
+            )
+
+            assert_demo_write_allowed(
+                usuario,
+                custo_extra,
+                operation="pay_event_extra_cost",
             )
 
             validar_custo_extra_pagavel(custo_extra)

@@ -20,6 +20,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from .models import ReceitaOperacional
+from .demo_policy import assert_demo_write_allowed, demo_object_flags
 from .permissions import (
     CHANGE_REVENUE_PERMISSION,
     VIEW_REVENUE_PERMISSION,
@@ -184,6 +185,7 @@ def _serialize_receita(receita):
         "contractLabel": dimensao["contractLabel"],
         "createdAt": _datetime_or_empty(receita.criado_em),
         "updatedAt": _datetime_or_empty(receita.atualizado_em),
+        **demo_object_flags(receita),
     }
 
 
@@ -270,6 +272,11 @@ def _receita_detalhe_response(request, receita):
 
 
 def _atualizar_receita_response(request, receita):
+    assert_demo_write_allowed(
+        request.user,
+        receita,
+        operation="change_revenue",
+    )
     payload = _json_required_response(request)
     if not isinstance(payload, dict):
         return payload

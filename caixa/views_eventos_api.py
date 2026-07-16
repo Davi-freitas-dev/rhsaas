@@ -17,6 +17,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from .models import Cliente, Evento
+from .demo_policy import assert_demo_write_allowed, demo_object_flags
 from .permissions import (
     CHANGE_EVENT_PERMISSION,
     VIEW_EVENT_PERMISSION,
@@ -189,6 +190,7 @@ def _serialize_evento(evento):
         "realizedProfitAmount": _money(evento.lucro_realizado),
         "createdAt": _datetime_or_empty(evento.criado_em),
         "updatedAt": _datetime_or_empty(evento.atualizado_em),
+        **demo_object_flags(evento),
     }
 
 
@@ -329,6 +331,11 @@ def _evento_data_from_payload(payload):
 
 
 def _atualizar_evento_response(request, evento):
+    assert_demo_write_allowed(
+        request.user,
+        evento,
+        operation="change_event",
+    )
     payload = _json_required_response(request)
     if not isinstance(payload, dict):
         return payload

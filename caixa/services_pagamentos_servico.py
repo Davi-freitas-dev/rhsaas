@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
+from .demo_policy import assert_demo_write_allowed
 from .constants_financeiros import TIPOS_CUSTO_SERVICO
 from .models import DespesaOperacional
 from .models_pagamentos import PagamentoEventoCustoServico
@@ -190,6 +191,12 @@ def registrar_pagamento_custo_servico_com_lock(form, usuario):
                 .get(pk=form.cleaned_data["custo_servico"].pk)
             )
             tipo = form.cleaned_data["tipo"]
+
+            assert_demo_write_allowed(
+                usuario,
+                custo_servico,
+                operation="pay_event_service_cost",
+            )
 
             validar_custo_servico_pagavel(custo_servico, tipo)
 

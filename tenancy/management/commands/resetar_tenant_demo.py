@@ -16,6 +16,7 @@ from django_tenants.utils import (
 )
 
 from caixa.tenant_files import artifacts_root_for_schema
+from caixa.demo_seed import validate_demo_seed_readiness
 from tenancy.command_guards import (
     ensure_demo_pool_reset_confirmation,
     ensure_demo_pool_schema,
@@ -289,6 +290,7 @@ class Command(BaseCommand):
     def _sync_minimal_seed(self, schema_name):
         try:
             seed_demo_tenant(schema_name)
+            validate_demo_seed_readiness(schema_name=schema_name)
         except Exception as exc:
             raise CommandError(
                 f"Seed da demonstracao nao foi recriado para {schema_name}."

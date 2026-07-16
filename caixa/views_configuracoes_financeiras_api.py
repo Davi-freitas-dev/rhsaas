@@ -21,6 +21,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from .models import ConfiguracaoFinanceira
+from .demo_policy import assert_demo_write_allowed, demo_object_flags
 from .permissions import (
     ADD_FINANCIAL_CONFIGURATION_PERMISSION,
     CHANGE_FINANCIAL_CONFIGURATION_PERMISSION,
@@ -144,6 +145,7 @@ def _serialize_configuracao(configuracao):
         "notes": configuracao.observacao,
         "createdAt": _datetime_or_empty(configuracao.criado_em),
         "updatedAt": _datetime_or_empty(configuracao.atualizado_em),
+        **demo_object_flags(configuracao),
     }
 
 
@@ -300,6 +302,10 @@ def _criar_configuracao_response(request):
             status=415,
         )
 
+    assert_demo_write_allowed(
+        request.user,
+        operation="create_financial_configuration",
+    )
     payload = _payload_json(request)
     if payload is None:
         return api_no_store_json_response({"detail": "JSON invalido."}, status=400)
@@ -344,6 +350,11 @@ def _atualizar_configuracao_response(request, configuracao):
             status=415,
         )
 
+    assert_demo_write_allowed(
+        request.user,
+        configuracao,
+        operation="change_financial_configuration",
+    )
     payload = _payload_json(request)
     if payload is None:
         return api_no_store_json_response({"detail": "JSON invalido."}, status=400)

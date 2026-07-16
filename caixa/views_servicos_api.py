@@ -20,6 +20,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from .models import Servico
+from .demo_policy import assert_demo_write_allowed, demo_object_flags
 from .permissions import (
     ADD_SERVICE_PERMISSION,
     CHANGE_SERVICE_PERMISSION,
@@ -160,6 +161,7 @@ def _serialize_servico(servico):
         "overtimeHourlyRate": _money(servico.valor_hora_extra),
         "createdAt": _datetime_or_empty(servico.criado_em),
         "updatedAt": _datetime_or_empty(servico.atualizado_em),
+        **demo_object_flags(servico),
     }
 
 
@@ -468,6 +470,7 @@ def _criar_servico_response(request):
             status=415,
         )
 
+    assert_demo_write_allowed(request.user, operation="create_service")
     payload = _payload_json(request)
     if payload is None:
         return api_no_store_json_response({"detail": "JSON invalido."}, status=400)
@@ -510,6 +513,11 @@ def _atualizar_servico_response(request, servico):
             status=415,
         )
 
+    assert_demo_write_allowed(
+        request.user,
+        servico,
+        operation="change_service",
+    )
     payload = _payload_json(request)
     if payload is None:
         return api_no_store_json_response({"detail": "JSON invalido."}, status=400)

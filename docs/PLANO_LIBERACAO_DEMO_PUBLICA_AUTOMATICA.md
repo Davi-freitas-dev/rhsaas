@@ -442,6 +442,540 @@ Implementacao e evidencias:
 Estado da fase: `[x]` implementacao e validacao local concluidas; producao e
 Nginx permaneceram intocados.
 
+### Diagnostico da ampliacao de permissoes e protecao do seed em 2026-07-16
+
+Estado: `[!]` diagnostico read-only concluido; ampliacao de permissoes
+bloqueada ate existir identificacao explicita dos objetos seed. Nesta etapa
+nenhum codigo, model, migration, banco, teste ou ambiente publicado foi
+alterado. A unica alteracao autorizada foi este registro documental.
+
+Estado observado: backend `5f90af4`, branch `feat/django-tenants-spike`, e
+frontend `a0ebb69`, branch `main`, ambos limpos antes deste registro.
+
+Segunda passada read-only: o diagnostico foi repetido contra os mesmos commits
+para revisar omissoes e contradicoes. Foram confirmados quatro pontos novos
+para a futura implementacao: replace-all de itens no PUT de orcamento como
+efeito da edicao, teste existente que exige reaprovacao idempotente, fixtures
+que dependem de seed durante alocacao e necessidade de negar toda escrita
+enquanto um schema demo legado ainda nao possuir o conjunto completo de chaves
+seed.
+
+#### Grupo, fonte canonica e associacao do usuario
+
+A fonte canonica e a configuracao declarativa `PERMISSION_PROFILES` em
+`caixa/permissions.py`. O grupo nao e criado por fixture nem por migration de
+dados: `sincronizar_grupos_permissoes()` faz `get_or_create` e substitui o
+conjunto inteiro com `group.permissions.set(...)`. Portanto, a futura
+allowlist deve continuar nesse ponto; nao deve existir uma segunda lista em
+command, seed ou signal.
+
+O perfil `Demo Publica` declara atualmente 22 permissoes, todas do app
+`caixa`:
+
+| App label | Model | Codenames atuais |
+| --- | --- | --- |
+| `caixa` | `Cliente` | `view_cliente`, `add_cliente`, `change_cliente` |
+| `caixa` | `Servico` | `view_servico`, `add_servico`, `change_servico` |
+| `caixa` | `ConfiguracaoFinanceira` | `view_configuracaofinanceira` |
+| `caixa` | `Orcamento` | `view_orcamento`, `add_orcamento`, `change_orcamento`, `approve_orcamento` |
+| `caixa` | `OrcamentoItem` | `view_orcamentoitem`, `add_orcamentoitem`, `change_orcamentoitem` |
+| `caixa` | `Evento` | `view_evento`, `add_evento`, `change_evento` |
+| `caixa` | `ReceitaOperacional` | `view_receitaoperacional` |
+| `caixa` | `DespesaOperacional` | `view_despesaoperacional` |
+| `caixa` | `CustoFixo` | `view_custofixo` |
+| `caixa` | `EventoCustoServico` | `view_eventocustoservico` |
+| `caixa` | `EventoCustoExtra` | `view_eventocustoextra` |
+
+`sync_demo_public_user()` e `sync_demo_permanent_user()` executam a
+sincronizacao, associam exatamente o grupo `Demo Publica`, limpam permissoes
+diretas e forcam `is_staff=False` e `is_superuser=False`. A associacao ocorre
+na criacao/reativacao manual, na alocacao automatica, na retomada e na
+preparacao de `demo1`.
+
+Mapa do ciclo de sincronizacao:
+
+- tenant novo: `Tenant.save()` cria o schema e executa migrations; o
+  `post_migrate` de `caixa/signals.py` sincroniza os grupos em todo schema
+  tenant e ignora `public`;
+- slot novo para tenant ja existente: a criacao isolada de `DemoTenantSlot`
+  nao sincroniza; o grupo sera sincronizado no proximo seed ou usuario;
+- provisionamento repetido de tenant existente: nao ha sincronizacao
+  explicita no command;
+- seed: sincroniza os grupos antes dos dados;
+- ocupacao/reocupacao e recriacao do usuario: sincronizam o grupo e removem
+  permissoes diretas;
+- reset: recria schema e migrations, recebe o `post_migrate` e depois executa
+  o seed, que sincroniza novamente;
+- deploy com `migrate_schemas`: reaplica pelo `post_migrate` em cada tenant.
+
+Rastreabilidade das fontes atuais:
+
+| Responsabilidade | Arquivo e simbolo canonico | Observacao |
+| --- | --- | --- |
+| allowlists dos grupos | `caixa/permissions.py::PERMISSION_PROFILES` | unica fonte declarativa; `Demo Publica` tem 22 codenames unicos |
+| sincronizacao exata | `caixa/permissions.py::sincronizar_grupos_permissoes` | usa `permissions.set`, mas nao acusa codename ausente |
+| sincronizacao por migration | `caixa/signals.py::criar_grupos_permissoes` | `post_migrate` somente em schema tenant |
+| usuario temporario | `tenancy/services_demo_pool.py::sync_demo_public_user` | grupo unico, sem permissoes diretas, staff/superuser falsos |
+| usuario permanente | `tenancy/services_demo_pool.py::sync_demo_permanent_user` | mesmas flags e grupo; preserva/exige senha utilizavel |
+| seed | `tenancy/services_demo_pool.py::seed_demo_tenant` | dados raiz e aprovacao que gera derivados |
+| alocacao/retomada | `tenancy/services_demo_pool.py::allocate_demo_lease` | chama seed e usuario nos dois caminhos atuais |
+| expiracao | `tenancy/services_demo_pool.py::expire_due_demo_leases` | desativa acesso e muda para `expirado`, sem liberar |
+| reset | `tenancy/management/commands/resetar_tenant_demo.py` | drop/recreate/seed antes de `livre`; falha deixa `bloqueado` |
+| manutencao | `tenancy/management/commands/manter_pool_demo.py` | expira e chama reset; ignora `demo1` |
+| ocupacao manual | `tenancy/management/commands/ocupar_tenant_demo.py` | exige `livre` e sincroniza usuario, mas nao valida seed |
+| provisionamento | `tenancy/management/commands/provisionar_pool_demo.py` | cria schema/domain/slot; schema novo recebe grupos por migration, mas nao seed |
+| demo permanente | `tenancy/management/commands/preparar_demo_permanente.py` | executa seed e sincroniza usuario de `demo1` |
+
+Risco residual: `permissions.set()` remove permissoes antigas e e idempotente,
+mas codenames declarados e ainda ausentes no banco sao silenciosamente
+ignorados pelo filtro. O seed valida nomes de grupos, nao a existencia de cada
+codename. A futura sincronizacao deve falhar de forma explicita se o conjunto
+de codenames encontrado diferir da allowlist e o provisionamento deve validar
+o conjunto final. Isso continua sendo implementado na fonte canonica atual.
+
+#### Seed atual, momento de execucao e isolamento
+
+`seed_demo_tenant()` em `tenancy/services_demo_pool.py` e a fonte do seed. Ele
+cria diretamente:
+
+- uma `ConfiguracaoFinanceira` ativa, apenas quando nenhuma ativa existe;
+- um `Cliente`, localizado por CPF/CNPJ visivel;
+- dois `Servico`, localizados por `codigo` visivel;
+- um `Orcamento`, localizado pelo numero visivel;
+- dois `OrcamentoItem`, apenas quando o orcamento acaba de ser criado.
+
+O seed aprova o orcamento e, por services e signals, cria ou sincroniza tambem
+`Evento`, `ReceitaOperacional`, `DespesaOperacional`,
+`EventoCustoServico`, `LancamentoFinanceiro` e `ObrigacaoFinanceira`. O seed
+atual nao inclui custo extra nem pagamentos porque o orcamento ficticio nao
+possui esses itens.
+
+A idempotencia observada e parcial e depende de chaves de negocio. Cliente e
+servicos usam `update_or_create` e sao sobrescritos em toda chamada. Se o
+visitante mudar CPF/CNPJ ou codigo, a proxima retomada pode criar outro
+registro com a chave original, enquanto o orcamento continua referenciando o
+registro alterado. A configuracao reaproveita a primeira ativa, que pode ser
+uma configuracao criada pelo visitante. O orcamento existente nao tem
+itens/evento recriados porque o bloco derivado roda somente quando ele e novo.
+Assim, a chamada repetida pode simultaneamente sobrescrever, duplicar e deixar
+partes alteradas, dependendo do campo modificado. O teste atual verifica apenas
+as contagens raiz de cliente, servicos, orcamento e evento apos duas alocacoes.
+
+`seed_demo_tenant()` tambem nao abre sua propria `transaction.atomic()`. Na
+alocacao ele participa da transacao externa e uma falha posterior reverte o
+seed. No reset, uma falha parcial deixa o slot bloqueado e um novo reset remove
+o schema incompleto, preservando isolamento. Em `demo1`, entretanto, uma falha
+do command de preparacao pode deixar seed parcial. A versao futura deve tornar
+a criacao/adocao do conjunto seed atomica no schema corrente e validar o
+conjunto completo antes de considerar o ambiente pronto.
+
+O desvio de ciclo de vida confirmado e importante: `allocate_demo_lease()`
+chama `seed_demo_tenant()` antes de criar o token tanto em alocacao nova quanto
+em retomada do mesmo lease. Portanto, logout/retomada pode sobrescrever o
+cliente e os servicos seed durante um lease. Exchange e consulta de sessao nao
+semeiam, mas o POST de lease/retomada que os antecede semeia. O command manual
+`ocupar_tenant_demo` sincroniza o usuario, mas nao semeia; um tenant apenas
+provisionado pode ser ocupado manualmente ainda vazio.
+
+Nao existe campo, tag, manager, object permission ou registro externo que
+distinga seed de dado posterior. Os valores visiveis usados pelo seed nao sao
+uma fronteira de autorizacao aceitavel: podem mudar e podem ser reproduzidos
+por um visitante. `Cliente`, `Servico`, `ConfiguracaoFinanceira`, `Orcamento`,
+`OrcamentoItem` e `Evento` nao possuem `created_by`/`owner`. Parte dos modelos
+financeiros possui `criado_por` e `atualizado_por`, mas o seed roda antes da
+criacao do usuario temporario e varios derivados ficam sem autor. Alem disso,
+todos os visitantes do slot usam o mesmo username `demo`; autoria isolada nao
+separa leases e nao cobre os objetos raiz.
+
+O isolamento entre visitantes, por outro lado, e forte no fluxo normal:
+alocacao automatica e manual selecionam apenas status `livre`; expiracao muda
+para `expirado`; reset aceita apenas `expirado`/`bloqueado`, faz `DROP SCHEMA
+... CASCADE`, recria schema e migrations, recria o seed e so entao marca
+`livre`. Qualquer falha mantem o slot `bloqueado`. Nao foi encontrado caminho
+de aplicacao que reocupe slot expirado ou bloqueado sem reset. Alterar status
+diretamente no banco continua sendo um bypass operacional proibido. Com esse
+invariante preservado, nao ha justificativa para adicionar identificador de
+lease a todos os objetos.
+
+#### Matriz atual de telas e APIs
+
+| Funcionalidade | Endpoint e metodo | Autorizacao backend | Resultado atual para `Demo Publica` | Bloqueio adicional |
+| --- | --- | --- | --- | --- |
+| Clientes | `GET/POST /api/clientes/`; `GET/PUT /api/clientes/{id}/` | `view/add/change_cliente` | todos permitidos | nenhum controle por objeto; cliente seed pode ser alterado |
+| Servicos | `GET/POST /api/servicos/`; `GET/PUT /api/servicos/{id}/` | `view/add/change_servico` | todos permitidos | nenhum controle por objeto; servicos seed podem ser alterados |
+| Configuracoes | `GET/POST /api/configuracoes-financeiras/`; `GET/PUT .../{id}/` | `view/add/change_configuracaofinanceira` | GET permitido; POST/PUT 403 | frontend desabilita criar/editar |
+| Orcamentos | `GET/POST /api/orcamentos/`; `GET/PUT .../{id}/` | GET `view`; POST `add_orcamento` + `add_orcamentoitem`; PUT apenas `change_orcamento` | permitidos | PUT apaga e recria itens/custos extras, sem `change_orcamentoitem` nem `delete_*`; status aprovado impede PUT do seed, mas nao e politica de seed |
+| Itens de orcamento | embutidos no POST/PUT de orcamento | ver linha anterior | criar/editar permitidos nos orcamentos editaveis | nao existe endpoint proprio; filhos do seed dependem apenas do status do pai |
+| Aprovar orcamento | `POST /api/orcamentos/{id}/aprovar/` | `approve_orcamento`, usuario ativo e schema tenant | permitido | nao valida seed, status editavel, ja aprovado nem `change_orcamento` |
+| Eventos | `GET /api/eventos/`; `GET/PUT /api/eventos/{id}/` | `view/change_evento` | listar/ver/editar permitidos | nao ha POST; evento seed pode ser alterado |
+| Receitas | listagem agregada; `GET/PUT /api/receitas/{id}/` | `view/change_receitaoperacional` | leitura permitida; PUT 403 | nao ha POST de criacao no contrato Next atual |
+| Despesas | listagem agregada; `GET/PUT /api/despesas/{id}/` | `view/change_despesaoperacional` | leitura permitida; PUT 403 | nao ha POST de criacao no contrato Next atual |
+| Custos fixos | `GET/POST /api/custos-fixos/`; `GET/PUT .../{id}/` | `view/add/change_custofixo` | GET permitido; POST/PUT 403 | frontend fica somente leitura |
+| Custos extras | leitura agregada; `POST /api/eventos/custos-extras/` | `view_eventocustoextra`; POST `add_eventocustoextra` | leitura permitida; POST 403 | nao ha PUT dedicado; frontend desabilita criacao |
+| Custos de servico | dashboards/obrigacoes | `view/change_eventocustoservico` e permissao de pagamento por operacao | leitura permitida; alteracao/pagamento bloqueados | custos sao derivados do orcamento; nao ha PUT dedicado |
+| Pagamentos | fila em `/api/obrigacoes-financeiras/`; POST `/api/obrigacoes-financeiras/liquidar/` | permissao por origem: change de despesa/custo/investimento/financiamento ou `add_pagamento*` | fila e liquidacao 403 | sidebar esconde por `canUsePayments=false` |
+| Dashboard | `GET /api/dashboard/financial-overview/` e `/api/custos-por-evento/` | `view_evento` | permitido | somente leitura |
+| Fluxo de caixa | `GET /api/mes-financeiro/` | `view_parceladivida` + `view_receitaoperacional` | 403 | sidebar nao oferece rota sem a capacidade |
+| Ledger/modelagem | `GET /api/lancamentos-financeiros/`, modelagem e baixas canonicas | `view_lancamentofinanceiro` | 403 | nenhuma exigencia de staff/superuser |
+| Obrigacoes | `GET /api/obrigacoes-financeiras/` | geral: `view_lancamentofinanceiro`; consulta por origem pode usar seu `view_*` | tela geral oculta/403; consultas limitadas por origem podem funcionar | liquidacao revalida permissao por origem no service |
+| FCI | `GET/POST /api/fci/` | `view_investimento`; POST tambem `add_investimento` | 403 | nao ha endpoint de edicao; liquidacao usa `change_investimento` |
+| FCF/credores | `GET/POST /api/fcf/`, `POST /api/fcf/debts/`, `GET/POST /api/fcf/creditors/` | `view_parceladivida`; `add_financiamentomovimentacao`; `add_dividafinanceira`; `view/add_credor` | 403 | nao ha endpoints de edicao desses cadastros; liquidacao usa change/add por origem |
+| Exportacao CSV | `GET /api/obrigacoes-financeiras/exportar/` | mesma autorizacao por escopo/origem + throttle | receitas/despesas por origem podem exportar; obrigacoes gerais e pagamentos retornam 403 | nao exige staff; e tenant-scoped |
+| Backups | `GET /api/backups/`; `POST /api/backups/criar/` | tenant administrator (`is_superuser` no schema tenant) | 403 | grupo/codename comum nao libera |
+| Download de backup | `GET /backups/{arquivo}/download/` | tenant administrator + throttle | negado/redirecionado pelo guard | caminho permanece tenant-scoped |
+| Restauracao/importacao | nao existe endpoint HTTP de restore | somente operacao/management command | indisponivel | acesso a command nao e concedido pela allowlist web |
+| Django Admin | `/admin/` | `is_staff` e permissoes | indisponivel | `demo` permanece `is_staff=False`, `is_superuser=False` |
+
+No frontend, o sidebar usa os booleans retornados por `/api/auth/session/`.
+Hoje aparecem dashboard, receitas, despesas, custos por evento, custos fixos,
+custos extras, eventos, orcamentos, servicos, configuracoes e clientes. Ficam
+ocultos pagamentos, obrigacoes, FCI, FCF, credores e backups. Clientes,
+servicos, orcamentos e eventos habilitam as acoes globais; nao existe flag por
+registro que permita deixar apenas o seed em modo leitura. O orcamento seed
+parece somente leitura apenas porque foi aprovado.
+
+#### Aprovacao de orcamento
+
+`approve_orcamento` e uma permissao customizada declarada em `Orcamento.Meta`
+e criada pela migration `0039_orcamento_approve_permission.py`.
+`can_approve_budget()` exige autenticacao, usuario ativo, schema tenant e esse
+codename; nao exige `change_orcamento`, `is_staff` ou `is_superuser`. API e
+acao do Django Admin chamam `aprovar_orcamento()`, e o model executa status,
+evento, receita, despesas, custos e registros canonicos dentro de transacao.
+
+Faltam controles de dominio: o service nao rejeita seed, status nao editavel
+ou orcamento ja aprovado, e o model volta a salvar `aprovado` e sincroniza o
+evento. A consulta ocorre no schema atual, portanto um ID de outro schema nao
+e localizado no host atual; o isolamento por host/schema e a fronteira entre
+tenants. A futura correcao deve manter a permissao customizada sem exigir
+superusuario, mas adicionar policy de objeto, validacao de status, bloqueio de
+reaprovacao e lock da linha no service transacional compartilhado pela API e
+pelo Admin.
+
+Existe conflito explicito com a nova regra: o teste
+`test_reapproval_is_idempotent_for_event_and_movements` em
+`caixa/test_budget_approval_tenant.py` aprova duas vezes e exige HTTP 200 sem
+duplicacao. A politica solicitada exige rejeitar a segunda aprovacao. Esse
+teste deve ser substituido por rejeicao deterministica e estado inalterado;
+nao pode permanecer verde por compatibilidade acidental.
+
+Decisao de escopo posterior ao diagnostico: o replace-all de filhos em
+`_salvar_orcamento_from_payload()` e aceito quando o orcamento nao e seed e
+esta editavel. A operacao pode apagar e recriar itens/custos extras como parte
+da edicao do agregado; isso nao equivale a conceder `delete_*` nem a publicar
+endpoint de exclusao autonoma. A policy deve bloquear o orcamento seed antes
+do primeiro delete interno e o PUT deve exigir tambem a capacidade de alterar
+itens. Exclusoes tecnicas de derivados continuam proibidas quando a raiz for
+seed.
+
+#### Estrategias avaliadas para identificar o seed
+
+| Estrategia | Models/migration | Impacto e contorno | Reset/manutencao | Decisao |
+| --- | --- | --- | --- | --- |
+| `is_demo_seed` booleano | campo em `Cliente`, `Servico`, `ConfiguracaoFinanceira` e `Orcamento`; uma migration | simples e nao gravavel pela API; filhos derivam do orcamento; nao identifica o papel de cada registro e o seed continuaria dependendo de chave visivel para localizar cada raiz | reset recria marcado; baixo custo | segura, mas menos explicita |
+| `demo_seed_key` estavel | campo textual interno, nulo e unico por model nos mesmos quatro roots; uma migration | identifica exatamente cada papel do seed, permite idempotencia sem usar nome/CPF/codigo/numero como autorizacao e nao deve ser exposto como writable | reset recria as chaves; manutencao simples e testavel | **recomendada** |
+| registro externo | novo model tenant-scoped com content type, object ID e chave; migration | evita quatro campos, mas exige joins/consultas, limpeza de orfaos e disciplina para registrar todo derivado | recriado no reset; maior risco de dessincronizacao | descartada por complexidade |
+| lista declarativa de IDs | sem migration apenas se os IDs fossem persistidos em outro lugar | IDs mudam no reset; lista em memoria ou IDs presumidos geram falso positivo/negativo | precisa ser reconstruida e equivale a um registro externo | insegura |
+| `created_by` | exigiria campos nos roots e preenchimento uniforme | seed nao possui autor, roots nao possuem campo e o mesmo usuario `demo` atende todos os visitantes | reset reduz risco, mas nao identifica seed e falha em retomadas | insegura |
+| identificador de lease nos objetos | migration ampla em roots e propagacao por todas as APIs | separa leases, mas adiciona estado a todo dominio e pode ser esquecido em entradas indiretas | desnecessario porque slot so volta a `livre` apos reset completo | descartada enquanto o invariante atual existir |
+
+A chave recomendada deve existir apenas nos quatro roots. `OrcamentoItem` e
+`OrcamentoCustoExtra` herdam a classificacao do orcamento; `Evento`, receitas,
+despesas, custos e pagamentos derivados herdam pelo caminho
+`evento -> orcamento`. Um objeto novo que apenas referencia cliente, servico
+ou configuracao seed nao se torna seed: isso e necessario para o visitante
+criar um orcamento editavel usando os catalogos ficticios iniciais. A API deve
+expor somente `isSeed`/`isReadOnly`, nunca a chave interna.
+
+O conjunto esperado inicial possui cinco chaves em quatro models: uma
+configuracao, um cliente, dois servicos e um orcamento. Os valores devem ficar
+em uma especificacao declarativa unica do seed e ser usados por criacao,
+validacao de prontidao, backfill controlado e testes. O campo deve ser
+`editable=False`, nulo para dados comuns e unico dentro de cada model; payload
+que tente enviar a chave deve ser rejeitado ou ignorado sem altera-la.
+
+A policy deve falhar fechada: se o usuario pertencer a `Demo Publica` e o
+schema nao possuir todas as cinco chaves/relacoes esperadas, nenhuma escrita
+operacional e permitida. O slot tambem nao deve ser entregue. Isso cobre a
+janela entre migration e backfill/reset e impede que objetos seed legados sem
+marcacao sejam tratados como dados novos mutaveis.
+
+#### Allowlist alvo proposta
+
+A lista abaixo e o alvo minimo para a experiencia operacional solicitada,
+depois da policy de objetos e dos contratos de API ausentes. Ela preserva as
+22 permissoes atuais e chega a 48 codenames explicitos:
+
+```text
+view_cliente, add_cliente, change_cliente
+view_servico, add_servico, change_servico
+view_configuracaofinanceira, add_configuracaofinanceira, change_configuracaofinanceira
+view_orcamento, add_orcamento, change_orcamento
+view_orcamentoitem, add_orcamentoitem, change_orcamentoitem
+approve_orcamento
+view_evento, add_evento, change_evento
+view_receitaoperacional, add_receitaoperacional, change_receitaoperacional
+view_despesaoperacional, add_despesaoperacional, change_despesaoperacional
+view_custofixo, add_custofixo, change_custofixo
+view_eventocustoservico, change_eventocustoservico
+view_eventocustoextra, add_eventocustoextra, change_eventocustoextra
+view_investimento, add_investimento, change_investimento
+view_financiamentomovimentacao, add_financiamentomovimentacao, change_financiamentomovimentacao
+view_credor, add_credor
+view_dividafinanceira, add_dividafinanceira
+view_parceladivida
+add_pagamentoparceladivida
+add_pagamentoeventocustoservico
+add_pagamentoeventocustoextra
+view_lancamentofinanceiro
+```
+
+Decomposicao para evitar concessao prematura:
+
+| Parte | Quantidade | Regra |
+| --- | ---: | --- |
+| permissoes atuais | 22 | preservadas inicialmente, mas `add_evento` ainda nao possui POST e `view/change_orcamentoitem` nao sao exigidas separadamente |
+| adicoes ja correspondentes a contratos atuais | 20 | configuracao, edicao de receita/despesa, custo fixo/extra, FCI/FCF, credor, divida, pagamentos e ledger; so entram depois da policy |
+| adicoes condicionais | 6 | `add_receitaoperacional`, `add_despesaoperacional`, `change_eventocustoservico`, `change_eventocustoextra`, `view_financiamentomovimentacao`, `view_dividafinanceira`; exigem endpoint ou autorizacao semantica nova |
+
+As 20 adicoes ligadas a contratos atuais sao:
+
+```text
+add_configuracaofinanceira, change_configuracaofinanceira
+change_receitaoperacional, change_despesaoperacional
+add_custofixo, change_custofixo
+add_eventocustoextra
+view_investimento, add_investimento, change_investimento
+add_financiamentomovimentacao, change_financiamentomovimentacao
+view_credor, add_credor
+add_dividafinanceira, view_parceladivida
+add_pagamentoparceladivida
+add_pagamentoeventocustoservico
+add_pagamentoeventocustoextra
+view_lancamentofinanceiro
+```
+
+Essa allowlist nao deve ser copiada do perfil `Financeiro`. Codenames de
+modelos canonicos internos, historicos, delete e pagamentos sem endpoint
+visivel foram deliberadamente excluidos. `add_receitaoperacional`,
+`add_despesaoperacional`, `add_evento` e algumas permissoes `change_*` ainda
+nao possuem endpoint Next correspondente; devem ser ativados somente junto do
+contrato seguro que os usa. Se esses endpoints ficarem fora do proximo escopo,
+os respectivos codenames tambem ficam fora da allowlist implantada.
+
+Antes do deploy da lista, `add_evento` deve ganhar POST seguro ou sair do
+perfil, e o PUT de orcamento deve exigir `change_orcamentoitem` quando houver
+mutacao de filhos. `view_financiamentomovimentacao` e
+`view_dividafinanceira` somente entram se o GET composto de FCF passar a
+aplica-las; conceder codename que nenhuma entrada consulta nao melhora a
+seguranca nem a funcionalidade.
+
+Continuam proibidos todos os `delete_*`, `auth.*`, `tenancy.*`,
+`add/change/delete_historical*`, backup, download, restore, importacao
+administrativa, schema `public`, tenant/domain e operacao global. Backups
+continuam protegidos por `is_superuser`, independentemente da lista do grupo.
+
+#### Menor patch futuro seguro
+
+1. Adicionar `demo_seed_key` interno aos quatro models raiz e a migration
+   `caixa.0042`, pequena, tenant-scoped e sem novo model.
+2. Criar uma especificacao canonica com as cinco chaves/relacoes esperadas e
+   validacao de prontidao; nao duplicar esses valores em policy, command e
+   testes.
+3. Tornar `seed_demo_tenant()` atomico, localizar roots pela chave interna e
+   executar apenas na preparacao inicial, em `preparar_demo_permanente` e apos
+   reset. Remover o seed de `allocate_demo_lease()`.
+4. Fazer provisionamento semear/verificar antes de criar um slot `livre` novo.
+   Antes de alocar ou ocupar slot existente, validar o seed completo. Slot
+   inconsistente deve ser persistido como `bloqueado` sem a marcacao ser
+   revertida pela mesma excecao/transacao.
+5. Criar um helper/policy central de demo que reconheca membro do grupo,
+   classifique roots e descendentes e rejeite mutacao indireta de seed. Aplicar
+   o helper nos services canonicos de escrita e settlement, nao apenas nos
+   botoes ou views.
+6. Preservar o replace-all de filhos nos orcamentos nao-seed editaveis, mas
+   validar a policy antes do primeiro delete e exigir
+   `change_orcamentoitem` para mutacao dos filhos.
+7. Serializar `isSeed` e `isReadOnly`; frontend desabilita edicao/aprovacao com
+   mensagem clara, mas o backend permanece autoridade.
+8. Endurecer aprovacao com `select_for_update`, status editavel, proibicao de
+   reaprovacao e policy de seed, mantendo transacao e tenant scope.
+9. Atualizar `PERMISSION_PROFILES['Demo Publica']` na unica fonte canonica,
+   validar codenames ausentes e sincronizar exatamente a allowlist.
+10. Adicionar contratos de criacao/edicao hoje inexistentes somente onde a UX
+   realmente os oferecer; nao conceder permission sem entrada funcional.
+
+Arquivos previstos no backend: `caixa/models.py`, uma nova migration de
+`caixa`, `caixa/permissions.py`, um helper central de policy, views/services
+de clientes, servicos, configuracoes, orcamentos/aprovacao, eventos, receitas,
+despesas, custos fixos/extras e liquidacao, `caixa/views_api_auth.py`,
+`tenancy/services_demo_pool.py`, commands de provisionamento/ocupacao e testes
+focados. No frontend: contrato de sessao, services/serializadores das entidades,
+componentes operacionais, sidebar apenas se novas capacidades forem expostas e
+E2E publico. Este documento deve ser atualizado durante a futura execucao.
+
+Migration prevista: um unico arquivo de schema com quatro campos
+`demo_seed_key`, provavelmente `caixa/migrations/0042_*.py`, aplicado por
+`migrate_schemas`. Nao e recomendado um `RunPython` generico: ele seria
+executado em todos os tenants e poderia marcar dado comum que coincidisse com
+uma chave visual. A transicao deve usar command explicito com `--dry-run`,
+schema demo validado, conjunto e relacoes exatos e confirmacao forte. Esse
+command importa a especificacao canonica; nao vira segunda fonte de seed.
+
+Rollout futuro seguro: desligar novas entradas; migrar campos; publicar policy
+que nega escrita em schema incompleto; fazer backfill validado de `demo1` e de
+slots livres legados; deixar slots ocupados expirarem e serem resetados pelo
+ciclo normal; validar as cinco chaves em cada slot; somente entao ampliar a
+allowlist e reativar entrada. Se o backfill nao reconhecer exatamente um seed,
+nao deve adivinhar por nome/ID: o slot fica bloqueado para reset ou revisao.
+
+Testes futuros obrigatorios: conjunto exato/idempotente de permissoes; ausencia
+de delete/admin/backup/historical; provisionamento/reset/reocupacao; flags e
+grupo unico do usuario; seed visivel e imutavel por todos os endpoints e
+filhos; CRUD permitido para registros do lease; aprovacao valida, transacional,
+nao repetivel e tenant-scoped; pagamentos/fluxo de caixa; 403 de backups e
+isolamento public/tenant; logout/retomada preservando dados; reset removendo
+alteracoes e recriando as chaves originais; tentativa direta de API; E2E de
+read-only do seed e edicao de registro novo.
+
+Matriz de cobertura dos 42 cenarios solicitados (`existente` nao significa que
+o teste foi executado nesta auditoria; significa apenas que foi localizado no
+codigo atual):
+
+| # | Cenario | Estado atual | Ajuste futuro |
+| ---: | --- | --- | --- |
+| 1 | usuario somente em `Demo Publica` | existente no fluxo de lease | manter e repetir apos sync/backfill |
+| 2 | `is_staff=False` | existente | manter |
+| 3 | `is_superuser=False` | existente | manter |
+| 4 | grupo recebe exatamente a allowlist | ausente | comparar pares app/model/codename, quantidade e igualdade exata |
+| 5 | nenhum `delete_*` | parcial: verifica apenas `delete_cliente` | verificar todo o conjunto e a ausencia de exclusao autonoma; o replace-all documentado no cenario 30 permanece permitido |
+| 6 | nenhuma permissao administrativa | parcial pelas flags | verificar apps/codenames proibidos e acesso `/admin/` |
+| 7 | nenhuma permissao de backup | parcial: `canManageBackups=false` e testes gerais | testar usuario demo nos tres contratos de backup |
+| 8 | nenhum historical perigoso | ausente | filtrar todos os codenames historical |
+| 9 | sync idempotente | parcial para grupos gerais | executar duas vezes e comparar conjunto exato da demo |
+| 10 | provisionamento aplica allowlist | indireto por `post_migrate` | testar schema novo e tenant existente/slot novo |
+| 11 | reset reaplica allowlist | parcial: grupo existe apos seed | comparar conjunto exato apos drop/recreate |
+| 12 | reocupacao nao amplia permissoes | parcial pelo service | injetar permissao extra/direta e confirmar remocao |
+| 13 | seed lista/detalhe | parcial por contagens raiz | testar respostas HTTP e flags read-only de todos os roots/derivados |
+| 14 | seed nao pode ser editado | ausente | PUT direto para cada raiz/derivado deve falhar sem mutacao |
+| 15 | endpoint alternativo nao altera seed | ausente | cobrir settlement, aprovacao, nested PUT, Admin service e pagamentos |
+| 16 | filhos do seed protegidos | ausente | item, custo, evento, receita, despesa, obrigacao e pagamento |
+| 17 | criar cliente | API geral existente; nao demo-especifica | testar como demo e banco final |
+| 18 | editar cliente criado no lease | API geral existente | distinguir novo de seed |
+| 19 | criar servico | API geral existente | testar como demo |
+| 20 | editar servico do lease | API geral existente | distinguir novo de seed |
+| 21 | criar orcamento | fluxo existente | usar roots seed como referencias sem tornar novo orcamento read-only |
+| 22 | editar orcamento permitido | fluxo existente | exigir policy e status |
+| 23 | criar/editar item permitido | parcial via replace-all | exigir `change_orcamentoitem`; replace-all e permitido em orcamento nao-seed |
+| 24 | nao editar orcamento seed | parcial apenas pelo status aprovado | testar policy independente do status |
+| 25 | aprovar orcamento permitido | existente | manter transacao e conferir derivados |
+| 26 | nao aprovar seed | ausente | bloquear por policy antes de qualquer save |
+| 27 | aprovacao sem superuser | existente | manter depois do endurecimento |
+| 28 | aprovacao tenant-scoped | existente | manter host/schema e ID coincidente em outro tenant |
+| 29 | registros financeiros necessarios | ausente para demo ampliada | testar cada origem e settlement permitido |
+| 30 | nenhuma exclusao autonoma | nao ha DELETE, mas nested PUT reconcilia filhos | confirmar nenhum `delete_*`/endpoint; permitir replace-all apenas em orcamento nao-seed |
+| 31 | nao listar backups | teste geral existe | repetir com usuario sincronizado da demo |
+| 32 | nao criar backup | teste geral existe | repetir com demo e CSRF valido |
+| 33 | nao baixar backup | isolamento/download geral existe | repetir com demo autenticado |
+| 34 | nao restaurar backup | nao ha endpoint HTTP | testar ausencia de rota e manter commands fora da superficie web |
+| 35 | nao acessar outro tenant | coberturas tenant gerais/aprovacao existem | repetir para objetos demo e IDs coincidentes |
+| 36 | nao acessar `public` | aprovacao cobre public parcialmente | cobrir todas as escritas demo relevantes |
+| 37 | logout/retomada preserva registros | lease/prazo existente; dados nao testados | criar objeto, logout/resume e conferir mesma PK/valores |
+| 38 | reset remove registros do lease | parcial pelo ciclo de manutencao | criar registros em varias raizes e provar ausencia |
+| 39 | reset desfaz alteracoes | ausente | alterar somente objetos permitidos e comparar estado recriado |
+| 40 | reset recria seed | existente por contagens raiz | validar cinco keys e derivados completos |
+| 41 | proximo visitante recebe seed intacto | parcial | completar dois visitantes separados por reset real |
+| 42 | API direta nao contorna frontend | ausente | forjar IDs/payloads, inclusive `demoSeedKey`, nested e settlement |
+
+Testes existentes que precisam ser alterados, nao apenas complementados:
+
+- `test_seed_e_ficticio_idempotente_e_isolado` chama alocacao duas vezes e
+  hoje codifica seed em retomada; deve preparar o slot antes e provar que
+  alocacao/retomada nao chamam o seed;
+- `test_falha_no_usuario_reverte_slot_e_seed` espera schema vazio apos falha de
+  usuario; no novo ciclo o seed preexistente deve permanecer intacto e apenas
+  a ocupacao deve ser revertida;
+- fixtures de `DemoPublicFlowTests` e `DemoPublicConcurrencyTests` criam slots
+  vazios e dependem da alocacao para semear; devem usar provisionamento que
+  entrega slot pronto;
+- `test_reapproval_is_idempotent_for_event_and_movements` conflita com a nova
+  proibicao de reaprovacao e deve passar a exigir rejeicao sem mutacao.
+
+Riscos restantes antes da implementacao: backfill seguro de `demo1`, garantir
+que nenhum service indireto contorne a policy, contratos ausentes para criar
+receitas/despesas/eventos e editar alguns cadastros financeiros, e impedir que
+uma alteracao operacional manual de status libere slot sem reset. Somam-se a
+janela migration/backfill, a persistencia correta de `bloqueado` fora do
+rollback da alocacao e a atual ausencia de transacao propria no seed. O
+replace-all de itens e risco apenas se a policy de seed for aplicada depois do
+primeiro delete; em orcamento permitido ele e comportamento aceito.
+
+Veredito desta etapa: `BLOQUEADO: NAO EXISTE DISTINCAO CONFIAVEL`.
+
+A ampliacao apenas da allowlist nao esta autorizada. O bloqueio pode ser
+removido na segunda etapa com a pequena alteracao explicita de
+`demo_seed_key`, policy central e correcao do ciclo de seed descritas acima.
+
+#### Implementacao da fundacao de protecao em 2026-07-16
+
+Estado: `[x]` Fase 1 concluida localmente. O escopo implementado identifica e
+protege o seed, sem ampliar a allowlist operacional. As 22 permissoes atuais
+de `Demo Publica` foram preservadas exatamente e continuam sem qualquer
+`delete_*`, permissao de backup ou permissao direta no usuario.
+
+Estado Git confirmado antes da edicao: backend `5f90af4`, branch
+`feat/django-tenants-spike`, somente este documento modificado; frontend
+`a0ebb69`, branch `main`, limpo. Diagnostico confirmado: o seed atual usa
+CPF/codigo/numero visiveis e ainda roda tanto na alocacao nova quanto na
+retomada. Nenhuma operacao de producao foi autorizada ou executada.
+
+Fundacao implementada:
+
+- migration tenant-scoped unica `caixa.0042_demo_seed_keys`, sem `RunPython`,
+  adiciona `demo_seed_key` textual, `NULL`, unico por model, `blank=True` e
+  `editable=False` em `ConfiguracaoFinanceira`, `Cliente`, `Servico` e
+  `Orcamento`; payloads e respostas nunca aceitam/expoem a chave;
+- especificacao declarativa unica em `caixa/demo_seed.py`, com as chaves
+  `demo.configuration.primary`, `demo.client.example`,
+  `demo.service.daily`, `demo.service.hourly` e `demo.budget.example`;
+- `seed_demo_tenant()` atomico, idempotente pelas chaves e executado somente em
+  preparacao, provisionamento e reset; alocacao e retomada apenas validam o
+  conjunto pronto e nao reescrevem valores durante o lease;
+- prontidao fail-closed valida cinco roots, models, relacoes, dois itens,
+  evento e derivados financeiros minimos; slot inconsistente nao e entregue
+  e fica `bloqueado` mesmo se uma falha posterior provocar rollback na
+  transacao de selecao;
+- command `backfill_demo_seed_keys` exige schema explicito, `--dry-run` ou a
+  confirmacao forte `MARCAR-SEED demoN`, rejeita `public` e rejeita `rh_teste`
+  sem a opcao especifica de teste; correspondencia parcial ou ambigua nao
+  grava chaves;
+- policy central classifica filhos pelo caminho dirigido ao orcamento/evento
+  seed. Um novo orcamento que referencia cliente, configuracao ou servicos
+  seed continua comum e editavel. Escritas, nested replace-all, aprovacao,
+  pagamentos e liquidacoes do seed falham antes da primeira mutacao;
+- aprovacao usa `select_for_update`, aceita somente `rascunho`/`enviado`,
+  rejeita seed e reaprovacao de forma deterministica e e compartilhada pela
+  API e pela acao do Admin;
+- APIs expoem somente `isSeed` e `isReadOnly`; o frontend mantem visualizacao,
+  desabilita edicao/aprovacao do seed e mostra `Dados de exemplo - somente
+  leitura`, sem impedir cadastro e edicao de objetos comuns;
+- sincronizacao de grupos valida previamente todos os codenames e falha
+  explicitamente se algum nao existir antes de alterar permissoes.
+
+Validacao final desta fase: 15/15 testes dedicados da fundacao; 49/54 testes
+integrados passaram na primeira bateria e os cinco restantes falharam apenas
+porque seus fixtures violavam a constraint temporal do lease. A preparacao de
+tempo foi corrigida e esses cinco passaram 5/5, incluindo expiracao e reset
+real. O frontend passou lint, typecheck, todos os guardrails e build; o E2E
+publico passou 22/22. O banco local de desenvolvimento permaneceu sem aplicar
+`caixa.0040`, `0041` e `0042`; bancos efemeros de teste aplicaram todas.
+
+Veredito da fundacao: `APROVADO PARA FASE 2`. Isso nao autoriza deploy,
+migration, backfill ou reset em producao. Antes de homologar, cada schema demo
+legado deve ser migrado e depois reconhecido pelo backfill exato ou recriado
+por reset controlado; nunca se deve mudar um slot bloqueado diretamente para
+`livre`.
+
 ## 3. Decisoes arquiteturais
 
 ### Fluxo publico de entrada
@@ -566,15 +1100,17 @@ em nova alocacao silenciosa.
 
 - [x] diagnostico;
 - [x] reserva permanente de `demo1` e pool publica `demo2...demo10`;
-- [~] estabilizacao dos testes existentes;
+- [x] estabilizacao dos testes existentes relacionados a Fase 1;
 - [x] servico de lease;
 - [x] endpoint publico;
 - [x] concorrencia e rollback;
 - [x] autenticacao automatica;
 - [x] frontend publico;
 - [x] disponibilidade agregada e lease ativo na entrada publica;
-- [x] permissoes;
-- [x] seed;
+- [x] permissoes minimas atuais;
+- [ ] ampliacao operacional do grupo, reservada para a Fase 2;
+- [x] seed atomico, prontidao fail-closed e reset validado;
+- [x] identificacao e protecao read-only do seed no backend e frontend;
 - [x] expiracao;
 - [x] limpeza;
 - [x] reset;
@@ -618,6 +1154,8 @@ em nova alocacao silenciosa.
 | Retomada imediata apos logout | `caixa/throttling.py`, `config/settings.py`, `tenancy/demo_visitor.py`, `tenancy/services_demo_pool.py`, `tenancy/views_demo_public.py`, testes, envs e runbook | `manage.py check`; `makemigrations --check --dry-run`; `DemoPublicFlowTests`; `DemoPublicConcurrencyTests`; `corepack pnpm run verify:frontend`; `test:e2e:public-demo` | backend 21/21 + concorrencia 3/3; frontend completo verde; E2E 15/15; mesmo tenant e expiracao, novo exchange, sem segundo slot e sem 429 da cota de novas alocacoes | nenhum commit desta solicitacao | validar Redis e Nginx reais em homologacao; Nginx ainda pode limitar rajadas abusivas antes do Django |
 | Aviso transitorio no logout | seis views financeiras com handler de logout, `public-demo.spec.ts` | auditoria global de `logoutFromBackend`; eslint focado; `test:e2e:public-demo`; `verify:frontend`; `git diff --check` | 16 ocorrencias revisadas; consultas posteriores removidas de dashboard, backups, FCF, obrigacoes, FCI e custos extras; demais refetches preservados; E2E publico 16/16 e frontend completo verde | nenhum commit desta solicitacao | repetir smoke test visual depois do deploy frontend |
 | Disponibilidade e lease ativo | `services_demo_pool.py`, `views_demo_public.py`, URLs, throttle/settings/envs, `features/demo-public/` e `public-demo.spec.ts` | `manage.py check`; `makemigrations --check --dry-run`; 8 testes focados; 2 testes concorrentes; `pnpm run verify:frontend`; `pnpm run test:e2e:public-demo` | check limpo; nenhuma migration; backend 8/8, concorrencia 2/2; frontend oficial verde; E2E 21/21; status nao muta lease nem revela outros slots e retomada preserva tenant/prazo | nenhum commit desta solicitacao | repetir com Redis, cookies entre hosts, timer e backend reais em homologacao |
+| Diagnostico de permissoes e seed read-only, em duas passadas | grupo, seed, ciclo de lease/reset, APIs, frontend e testes existentes relacionados | duas leituras estaticas dirigidas; nenhum teste ou banco executado por restricao da etapa | 22 codenames atuais mapeados; reset garante isolamento; seed roda indevidamente em alocacao/retomada; nao existe marcador seguro; segunda passada registrou replace-all aceito, conflito do teste de reaprovacao, fixtures dependentes da alocacao e fail-closed para schemas sem as cinco chaves | backend `5f90af4`, frontend `a0ebb69`; sem commit | implementacao bloqueada ate `demo_seed_key`, policy central e correcao do ciclo de seed |
+| Fundacao de protecao do seed | `caixa/models.py`, `demo_seed.py`, `demo_policy.py`, migration `0042`, views/services de escrita, commands da pool, testes, cinco services/componentes frontend | `compileall`; `manage.py check`; `makemigrations --check --dry-run`; suite dedicada; suites de pool/aprovacao; `verify:frontend`; `test:e2e:public-demo` | 15/15 dedicados; 49 testes integrados aprovados de primeira e 5/5 expiracao/reset aprovados apos corrigir fixtures temporais; lint, tipos, guardrails e build aprovados; E2E publico 22/22; exatamente 22 permissoes preservadas | sem commit; backend base `5f90af4`, frontend base `a0ebb69` | migration/backfill/reset nao executados fora dos bancos efemeros de teste; homologacao real e Fase 2 pendentes |
 
 ### Tentativas, problemas e correcoes durante a implementacao
 
@@ -644,6 +1182,9 @@ em nova alocacao silenciosa.
 | repeticao com `--keepdb` apos a interrupcao | `demo1` residual causou `UniqueViolation` no `setUpClass` funcional, embora os tres testes transacionais tenham passado | invalidar somente a classe que nao iniciou e eliminar o banco residual | execucao funcional com `--noinput` recriou o banco e passou 8/8; concorrencia independente passou 2/2 e ambos destruíram o banco ao final |
 | primeiros E2E isolados de status | servidor Next manual nao possuia `NEXT_PUBLIC_API_BASE_URL` e a propria tela informou configuracao ausente | nao alterar produto para acomodar servidor invalido | encerrar o servidor manual e deixar Playwright iniciar com o ambiente contratual |
 | primeira bateria E2E completa desta fase | 18/21 passaram; duas rotas ainda compilavam alem da expectativa de 10 s e o fixture secundario esperava lease antes de cria-lo | aguardar URL/sessao com limite de compilacao, sem pausa fixa, e restaurar a sequencia real acessar/logout/continuar | tres cenarios passaram isolados e a repeticao completa passou 21/21 em 2,7 min |
+| primeira repeticao da suite dedicada da fundacao | `DEBUG=release` persistido no ambiente local foi rejeitado antes de criar o banco | nao alterar `.env` nem enfraquecer a validacao de settings | repetir somente no processo com `DEBUG=True`; suite passou inicialmente 12/12 e, apos ampliar cobertura, 15/15 |
+| primeira inicializacao E2E da fundacao | Playwright esgotou 120 s aguardando o webserver; o servidor manual seguinte iniciou sem `NEXT_PUBLIC_API_BASE_URL` e exibiu corretamente configuracao ausente | nao mudar o produto para acomodar ambiente invalido | iniciar o servidor de teste com as mesmas variaveis contratuais do Playwright; caso novo passou isolado e a suite oficial passou 22/22 |
+| bateria backend integrada da fundacao | 49/54 passaram; cinco testes tentavam expirar o lease colocando apenas o fim antes do inicio e o PostgreSQL rejeitou a fixture pela constraint `demo_slot_lease_order` | preservar a constraint e corrigir apenas a cronologia artificial dos testes | inicio, fim e validade do exchange foram movidos coerentemente ao passado; os cinco cenarios passaram 5/5, incluindo manutencao, reset e novo seed |
 
 ## 6. Riscos e bloqueadores
 
@@ -670,6 +1211,12 @@ em nova alocacao silenciosa.
 | Rotacao de `SECRET_KEY` durante leases ativos | baixa | o mesmo IP passa a produzir outro HMAC ate os leases anteriores expirarem | nao rotacionar durante janela ativa sem esvaziar a pool; expiracao/reset remove hashes antigos | residual operacional | identificadores persistidos sao apenas HMAC e nao sao reversiveis sem o segredo |
 | Nginx limita antes da aplicacao | baixa | uma rajada de varias retomadas ainda pode receber 429 HTML antes de o DRF reconhecer o lease | manter burst atual, orientar fluxo normal e validar uma retomada imediata real em homologacao; nao remover protecao de borda | residual deliberado contra abuso | caso observado chegou ao DRF; configuracao versionada usa `3r/m` com burst 2 |
 | Status muda entre consulta e clique | baixa | contagem exibida pode ficar desatualizada ou a retomada pode expirar | tratar GET como informativo; POST transacional continua autoridade; retomada explicita retorna 409 e atualiza status sem alocar outro slot | mitigado no codigo | teste de `resume_unavailable` confirma zero exchange e nenhuma nova vaga |
+| Ampliar allowlist sem completar a Fase 2 | critica | novos fluxos financeiros podem introduzir pontos de escrita ainda nao cobertos | manter as 22 permissoes nesta fase e auditar cada novo contrato contra a policy antes de ampliar | controlado; Fase 2 nao iniciada | marker e policy existem; teste confirma exatamente 22 codenames e nenhum `delete_*` |
+| Seed executado em alocacao e retomada | alta | retomada pode sobrescrever dados durante lease ativo | preparar/resetar previamente e validar prontidao antes da entrega | mitigado no codigo | teste prova que alocacao/retomada nao chamam seed e preservam valor alterado |
+| Codenames declarados inexistentes | media | grupo pode ficar incompleto apos deploy/migration divergente | validar todos antes de `group.permissions.set(...)` e falhar fechado | mitigado no codigo | teste injeta codename ausente e recebe `ImproperlyConfigured` antes da sincronizacao |
+| Schema demo legado sem as cinco chaves seed | critica | dado seed sem marcador pode ser tratado como comum durante rollout | negar escrita e alocacao; backfill exato ou reset completo antes de liberar | mitigado no codigo, bloqueado operacionalmente ate tratar cada schema | teste nega PUT, bloqueia slot e preserva banco; command dry-run/backfill testado localmente |
+| Seed sem transacao propria | alta | falha parcial deixa conjunto incompleto | transacao propria e validacao completa antes de retornar | mitigado no codigo | falha simulada no segundo item reverte todos os roots; suite dedicada 15/15 |
+| Reaprovacao de orcamento | alta | segunda aprovacao pode alterar ou duplicar derivados | lock, status aprovavel e rejeicao deterministica antes de mutacao | mitigado no codigo | suites dedicada e de aprovacao confirmam banco inalterado apos rejeicao |
 
 ## 7. Mudancas de escopo e decisoes substituidas
 
@@ -729,6 +1276,23 @@ receber tenant dedicado fora da pool.
 
 Motivo: uma sessao ilimitada dentro de slot temporario impediria reset seguro,
 reduziria a capacidade indefinidamente e poderia divergir do estado do lease.
+
+### Edicao agregada de orcamento
+
+Decisao considerada durante o diagnostico: tratar qualquer remocao interna de
+item ou custo extra durante um PUT de orcamento como exclusao proibida.
+
+Decisao final: preservar o replace-all atual para um orcamento nao-seed e em
+estado editavel. O backend pode apagar e recriar seus itens/custos extras como
+parte da edicao do agregado, sem conceder `delete_*` e sem disponibilizar um
+endpoint de exclusao autonoma. A policy de seed deve ser avaliada antes do
+primeiro delete interno, e a mutacao de filhos deve exigir a capacidade
+correspondente de alteracao.
+
+Motivo: a exclusao tecnica dos filhos faz parte da forma atual de persistir a
+edicao autorizada e nao representa, por si, uma acao destrutiva adicional para
+o visitante. O limite de seguranca permanece na raiz seed, no estado editavel,
+nas permissoes e na ausencia de operacao de exclusao independente.
 
 ## 8. Operacao
 
@@ -825,25 +1389,35 @@ venv/bin/python manage.py makemigrations --check --dry-run
 venv/bin/python manage.py migrate_schemas --plan
 venv/bin/python manage.py migrate_schemas --shared
 venv/bin/python manage.py migrate_schemas
+venv/bin/python manage.py backfill_demo_seed_keys --schema=demo1 --dry-run
 venv/bin/python manage.py provisionar_pool_demo --slots=10 --dry-run
-venv/bin/python manage.py provisionar_pool_demo --slots=10
 venv/bin/python manage.py preparar_demo_permanente --dry-run
 venv/bin/python manage.py manter_pool_demo --dry-run
 ```
 
-5. Se o dry-run informar `usuario_pronto=sim`, executar
+5. Antes do provisionamento real, classificar todos os schemas demo que ja
+   possuem dados. Se o conjunto legado corresponder exatamente, executar o
+   backfill com a confirmacao forte individual, por exemplo
+   `backfill_demo_seed_keys --schema=demo1 --confirm="MARCAR-SEED demo1"`.
+   Se um slot temporario `demo2+` nao corresponder e os dados forem
+   descartaveis, aguardar/encerrar o lease de forma controlada e usar
+   `resetar_tenant_demo --slot=demoN --confirm="RESETAR demoN"`. Nao resetar
+   `demo1` automaticamente; divergencia nele exige revisao manual. Depois de
+   todos os existentes estarem prontos, executar
+   `provisionar_pool_demo --slots=10` para criar/preparar somente os ausentes.
+6. Se o dry-run informar `usuario_pronto=sim`, executar
    `preparar_demo_permanente` sem senha. Se informar `nao`, carregar a senha
    do secret manager em `DEMO_PERMANENT_PASSWORD`, executar com
    `--password-env=DEMO_PERMANENT_PASSWORD` e remover a variavel.
-6. Instalar/recarregar as units e o Nginx conforme o runbook; validar timer,
+7. Instalar/recarregar as units e o Nginx conforme o runbook; validar timer,
    health, DNS e TLS, ainda com a flag desligada.
-7. Homologar `?tenant=demo1`, login permanente, seed e permissoes minimas.
-8. Confirmar no schema `public` que nao existe slot `demo1` e que existem
+8. Homologar `?tenant=demo1`, login permanente, seed e permissoes minimas.
+9. Confirmar no schema `public` que nao existe slot `demo1` e que existem
    exatamente nove slots `demo2...demo10`.
-9. Ativar a flag, reiniciar a API e executar o E2E real: alocacao em `demo2+`,
+10. Ativar a flag, reiniciar a API e executar o E2E real: alocacao em `demo2+`,
    troca de token, isolamento, concorrencia, pool cheia/fallback e um ciclo
    completo de expiracao/reset pelo timer.
-10. Desativar novamente a flag se qualquer gate falhar; nao liberar slot
+11. Desativar novamente a flag se qualquer gate falhar; nao liberar slot
     manualmente para contornar falha.
 
 ### Producao

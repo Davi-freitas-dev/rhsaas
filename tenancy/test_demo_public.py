@@ -29,6 +29,7 @@ from tenancy.services_demo_pool import (
     allocate_demo_lease,
     expire_due_demo_leases,
     hash_demo_identifier,
+    seed_demo_tenant,
 )
 from tenancy.test_helpers import MultiTenantTestCase
 
@@ -75,6 +76,7 @@ class DemoPublicFlowTests(MultiTenantTestCase):
         connection.set_schema_to_public()
         DemoTenantSlot.objects.all().delete()
         DemoTenantSlot.objects.create(tenant=self.demo1, slot_code="demo1")
+        seed_demo_tenant("demo2")
         DemoTenantSlot.objects.create(tenant=self.demo2, slot_code="demo2")
         cache.clear()
 
@@ -122,6 +124,8 @@ class DemoPublicFlowTests(MultiTenantTestCase):
         )
 
     def _add_network_limit_slots(self):
+        seed_demo_tenant("demo3")
+        seed_demo_tenant("demo4")
         connection.set_schema_to_public()
         DemoTenantSlot.objects.create(tenant=self.demo3, slot_code="demo3")
         DemoTenantSlot.objects.create(tenant=self.demo4, slot_code="demo4")
@@ -326,8 +330,11 @@ class DemoPublicFlowTests(MultiTenantTestCase):
             visitor_identifier="visitante-retomada-expirada",
             network_identifier="203.0.113.54",
         )
+        expired_at = timezone.now() - timedelta(seconds=1)
         DemoTenantSlot.objects.filter(slot_code=first_grant.slot_code).update(
-            lease_expires_at=timezone.now() - timedelta(seconds=1),
+            lease_started_at=expired_at - timedelta(hours=1),
+            lease_expires_at=expired_at,
+            exchange_token_expires_at=expired_at,
         )
 
         with self.assertRaises(DemoLeaseResumeUnavailable):
@@ -409,8 +416,11 @@ class DemoPublicFlowTests(MultiTenantTestCase):
             network_identifier=network_identifier,
         )
         connection.set_schema_to_public()
+        expired_at = timezone.now() - timedelta(seconds=1)
         DemoTenantSlot.objects.filter(slot_code=first_grant.slot_code).update(
-            lease_expires_at=timezone.now() - timedelta(seconds=1),
+            lease_started_at=expired_at - timedelta(hours=1),
+            lease_expires_at=expired_at,
+            exchange_token_expires_at=expired_at,
         )
         demo1 = DemoTenantSlot.objects.get(slot_code="demo1")
         demo1.status = DemoTenantSlot.Status.OCUPADO
@@ -615,8 +625,11 @@ class DemoPublicFlowTests(MultiTenantTestCase):
     def test_status_nao_apresenta_lease_expirado_nem_vaga_antes_do_reset(self):
         client, _lease_response = self._lease()
         connection.set_schema_to_public()
+        expired_at = timezone.now() - timedelta(seconds=1)
         DemoTenantSlot.objects.filter(slot_code="demo2").update(
-            lease_expires_at=timezone.now() - timedelta(seconds=1),
+            lease_started_at=expired_at - timedelta(hours=1),
+            lease_expires_at=expired_at,
+            exchange_token_expires_at=expired_at,
         )
 
         _client, response = self._status(client)
@@ -672,15 +685,23 @@ class DemoPublicFlowTests(MultiTenantTestCase):
             DemoTenantSlot.objects.filter(status=DemoTenantSlot.Status.OCUPADO).exists()
         )
 
-    def test_seed_e_ficticio_idempotente_e_isolado(self):
-        allocate_demo_lease(
-            visitor_identifier="visitante-seed",
-            network_identifier="203.0.113.30",
-        )
-        allocate_demo_lease(
-            visitor_identifier="visitante-seed",
-            network_identifier="203.0.113.30",
-        )
+    def test_alocacao_e_retomada_nao_executam_seed(self):
+        with schema_context("demo2"):
+            seed_client = Cliente.objects.get(demo_seed_key__isnull=False)
+            seed_client.responsavel = "Alteracao preservada durante o lease"
+            seed_client.save(update_fields=["responsavel", "atualizado_em"])
+
+        with patch("tenancy.services_demo_pool.seed_demo_tenant") as seed_service:
+            allocate_demo_lease(
+                visitor_identifier="visitante-seed",
+                network_identifier="203.0.113.30",
+            )
+            allocate_demo_lease(
+                visitor_identifier="visitante-seed",
+                network_identifier="203.0.113.30",
+            )
+
+        seed_service.assert_not_called()
 
         with schema_context("demo2"):
             self.assertEqual(Cliente.objects.count(), 1)
@@ -688,6 +709,10 @@ class DemoPublicFlowTests(MultiTenantTestCase):
             self.assertEqual(Orcamento.objects.count(), 1)
             self.assertEqual(Evento.objects.count(), 1)
             self.assertTrue(Cliente.objects.get().email.endswith(".invalid"))
+            self.assertEqual(
+                Cliente.objects.get().responsavel,
+                "Alteracao preservada durante o lease",
+            )
             self.assertTrue(Group.objects.filter(name="Demo Publica").exists())
         with schema_context("demo1"):
             self.assertEqual(Cliente.objects.count(), 0)
@@ -744,8 +769,18 @@ class DemoPublicFlowTests(MultiTenantTestCase):
             self.assertTrue(Session.objects.exists())
         connection.set_schema_to_public()
         slot = DemoTenantSlot.objects.get(slot_code="demo2")
-        slot.lease_expires_at = timezone.now() - timedelta(seconds=1)
-        slot.save(update_fields=["lease_expires_at", "updated_at"])
+        expired_at = timezone.now() - timedelta(seconds=1)
+        slot.lease_started_at = expired_at - timedelta(hours=1)
+        slot.lease_expires_at = expired_at
+        slot.exchange_token_expires_at = expired_at
+        slot.save(
+            update_fields=[
+                "lease_started_at",
+                "lease_expires_at",
+                "exchange_token_expires_at",
+                "updated_at",
+            ]
+        )
 
         results = expire_due_demo_leases(slot_code="demo2")
 
@@ -761,7 +796,7 @@ class DemoPublicFlowTests(MultiTenantTestCase):
             self.assertEqual(AccessAttempt.objects.count(), 0)
             self.assertIsNone(cache.get("demo-expiration-marker"))
 
-    def test_falha_no_usuario_reverte_slot_e_seed(self):
+    def test_falha_no_usuario_reverte_slot_e_preserva_seed_preparado(self):
         with patch(
             "tenancy.services_demo_pool.sync_demo_public_user",
             side_effect=RuntimeError("falha simulada"),
@@ -777,7 +812,7 @@ class DemoPublicFlowTests(MultiTenantTestCase):
         self.assertEqual(slot.status, DemoTenantSlot.Status.LIVRE)
         self.assertEqual(slot.visitor_key_hash, "")
         with schema_context("demo2"):
-            self.assertEqual(Cliente.objects.count(), 0)
+            self.assertEqual(Cliente.objects.count(), 1)
 
 
 class DemoPublicConcurrencyTests(TransactionTestCase):
@@ -885,8 +920,18 @@ class DemoPublicConcurrencyTests(TransactionTestCase):
         )
         connection.set_schema_to_public()
         slot = DemoTenantSlot.objects.get(slot_code=grant.slot_code)
-        slot.lease_expires_at = timezone.now() - timedelta(seconds=1)
-        slot.save(update_fields=["lease_expires_at", "updated_at"])
+        expired_at = timezone.now() - timedelta(seconds=1)
+        slot.lease_started_at = expired_at - timedelta(hours=1)
+        slot.lease_expires_at = expired_at
+        slot.exchange_token_expires_at = expired_at
+        slot.save(
+            update_fields=[
+                "lease_started_at",
+                "lease_expires_at",
+                "exchange_token_expires_at",
+                "updated_at",
+            ]
+        )
 
         call_command("manter_pool_demo", slot=grant.slot_code, verbosity=0)
 

@@ -49,6 +49,13 @@ class Servico(models.Model):
     ativo = models.BooleanField(default=True)
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
+    demo_seed_key = models.CharField(
+        max_length=80,
+        null=True,
+        blank=True,
+        unique=True,
+        editable=False,
+    )
 
     class Meta:
         verbose_name = "Serviço"
@@ -155,6 +162,13 @@ class ConfiguracaoFinanceira(models.Model):
     observacao = models.TextField(blank=True)
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
+    demo_seed_key = models.CharField(
+        max_length=80,
+        null=True,
+        blank=True,
+        unique=True,
+        editable=False,
+    )
 
     class Meta:
         verbose_name = "Configuração financeira"
@@ -218,6 +232,13 @@ class Cliente(models.Model):
     ativo = models.BooleanField(default=True, db_index=True)
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
+    demo_seed_key = models.CharField(
+        max_length=80,
+        null=True,
+        blank=True,
+        unique=True,
+        editable=False,
+    )
 
     class Meta:
         verbose_name = "Cliente"
@@ -284,6 +305,13 @@ class Orcamento(models.Model):
 
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
+    demo_seed_key = models.CharField(
+        max_length=80,
+        null=True,
+        blank=True,
+        unique=True,
+        editable=False,
+    )
 
     class Meta:
         verbose_name = "Orçamento"
@@ -397,6 +425,11 @@ class Orcamento(models.Model):
         with transaction.atomic():
             if not self.pk:
                 raise ValidationError("Salve o orçamento antes de aprovar.")
+
+            if self.status not in {"rascunho", "enviado"}:
+                raise ValidationError(
+                    "Somente orcamentos em rascunho ou enviados podem ser aprovados."
+                )
 
             if not self.itens.exists():
                 raise ValidationError("Não é possível aprovar um orçamento sem itens.")
