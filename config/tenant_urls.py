@@ -8,7 +8,12 @@ from drf_spectacular.views import (
 )
 
 from caixa.views import pwa_manifest, service_worker
-from tenancy.views_demo_public import api_demo_exchange, api_demo_lease, api_health
+from tenancy.views_demo_public import (
+    api_demo_exchange,
+    api_demo_lease,
+    api_demo_status,
+    api_health,
+)
 
 api_docs_urlpatterns = []
 if settings.ENABLE_API_DOCS:
@@ -44,6 +49,7 @@ urlpatterns = [
     *api_docs_urlpatterns,
     path("api/health/", api_health, name="api_health"),
     path("api/demo/lease/", api_demo_lease, name="api_demo_lease"),
+    path("api/demo/status/", api_demo_status, name="api_demo_status"),
     path("api/demo/exchange/", api_demo_exchange, name="api_demo_exchange"),
     path("manifest.webmanifest", pwa_manifest, name="pwa_manifest"),
     path("sw.js", service_worker, name="service_worker"),

@@ -3,7 +3,7 @@
 Documento de acompanhamento da preparacao do RH SaaS para abertura publica
 como demo tecnica de portfolio com distribuicao automatica de tenants.
 
-Atualizado em: 2026-07-15
+Atualizado em: 2026-07-16
 
 Estados usados neste documento:
 
@@ -349,6 +349,99 @@ oficiais e build de producao das 22 rotas; `git diff --check` passou.
 Estado da fase: `[x]` correcao global e validacao local concluidas; producao nao
 foi alterada.
 
+### Diagnostico de disponibilidade e lease ativo na entrada em 2026-07-16
+
+Estado inicial: backend `2318f46`, branch `feat/django-tenants-spike`, e
+frontend `c58f42b`, branch `main`, ambos limpos. Nenhuma consulta ou alteracao
+de producao foi realizada.
+
+Diagnostico read-only apresentado antes da implementacao:
+
+- nao existe endpoint publico de status da pool; `/api/health/` informa apenas
+  `status` e `demoEntryEnabled`;
+- o visitante e reconhecido somente pelo cookie assinado e `HttpOnly`
+  `rhsaas_demo_visitor`; a raiz limpa corretamente o lease operacional do
+  `localStorage`, portanto o estado local nao deve ser usado para restaurar o
+  dashboard automaticamente;
+- o contador interno usa o `expiresAt` original do backend e recalcula o tempo
+  restante pelo relogio local;
+- `DemoTenantSlot.Status.LIVRE` e a autoridade de prontidao: expirado,
+  bloqueado ou ainda em reset nao e anunciado como disponivel; o reset so muda
+  para `livre` depois de recriar schema, tabelas e seed;
+- a configuracao central `DEMO_PUBLIC_POOL_SLOTS` permite contar apenas a pool
+  automatica e exclui `demo1` sem condicional espalhada;
+- consultar disponibilidade no throttle de lease consumiria a cota errada;
+  sera usado o escopo separado `demo_status`;
+- a disponibilidade e informativa e pode mudar entre GET e POST; a transacao,
+  os advisory locks e `select_for_update` do lease continuam como autoridade;
+- a retomada visual precisa declarar intencao explicita no POST existente para
+  que um lease expirado entre status e clique retorne `resume_unavailable` sem
+  ocupar silenciosamente outra vaga.
+
+Decisao: adicionar `GET /api/demo/status/`, somente leitura e `no-store`, com
+capacidade agregada e dados do proprio lease quando o cookie corresponder a um
+slot ativo. O endpoint nao cria token, nao renova prazo, nao executa seed/reset
+e usa throttle proprio. O frontend consulta ao abrir, em polling moderado e ao
+voltar para a aba; `/` permanece publica. `Continuar demo` reutiliza o POST de
+lease com intencao `resume`, preservando prazo e tenant. Nao e necessario novo
+endpoint de retomada, migration ou bloco Nginx.
+
+Contrato implementado:
+
+```json
+{
+  "enabled": true,
+  "capacity": { "total": 3, "available": 2 },
+  "activeLease": {
+    "exists": true,
+    "tenant": "demo2",
+    "expiresAt": "2026-07-16T03:43:50Z",
+    "remainingSeconds": 2418
+  }
+}
+```
+
+Sem lease proprio, `activeLease` contem apenas `exists=false`. A resposta nunca
+lista slots, visitantes, rede, hashes, cookies ou tokens. `total` vem de
+`DEMO_PUBLIC_POOL_SLOTS`; `available` conta somente registros `livre`. Em
+producao, a configuracao atual `demo2...demo4` resulta em total tres, sem
+assuncao desse numero pelo frontend.
+
+Implementacao e evidencias:
+
+- backend: `tenancy/services_demo_pool.py` faz a leitura agregada no schema
+  publico; `tenancy/views_demo_public.py` publica o GET e aceita somente
+  `{"resume": true}` como retomada explicita; `config/public_urls.py` e
+  `config/tenant_urls.py` registram a rota, que devolve 404 nos slots
+  temporarios;
+- throttle: `caixa/throttling.py` e `config/settings.py` adicionam o escopo
+  `demo_status`; `.env.example` e
+  `docs/deploy/demo-publica/.env.production.example` registram
+  `DRF_THROTTLE_DEMO_STATUS_RATE`, com recomendacao de `30/minute` em ambiente
+  publicado;
+- frontend: `public-demo-service.ts` valida o contrato, distingue pool cheia,
+  limite de rede, retomada expirada e throttle; `public-demo-entry.tsx` mantem a
+  landing visivel durante a leitura e usa retomada explicita;
+  `public-demo-availability.tsx` e `demo-lease-time.ts` exibem capacidade e
+  contador local baseado em `expiresAt`, com polling de status a cada 60 s e
+  atualizacao ao voltar para a aba;
+- `python manage.py check`: sem problemas; `makemigrations --check --dry-run`:
+  nenhuma alteracao; nao existe migration nova;
+- oito testes focados de status/retomada em `tenancy/test_demo_public.py`:
+  `8/8 OK` em 137,812 s; dois testes concorrentes em execucao independente:
+  `2/2 OK` em 267,495 s; o teste de manutencao/reset tambem passou na execucao
+  anterior da classe transacional;
+- `pnpm run verify:frontend`: passou na repeticao final em 125,8 s, incluindo lint, typecheck,
+  guardrails de dominio/layout/cache/acessibilidade/runtime e build das 22
+  rotas; `pnpm run test:e2e:public-demo`: `21/21` em 2,7 min;
+- limitacao restante: disponibilidade e uma fotografia informativa. A
+  transacao do POST continua sendo a autoridade se o estado mudar entre GET e
+  clique. Homologacao com backend real, cookies entre hosts e timer permanece
+  obrigatoria antes de producao.
+
+Estado da fase: `[x]` implementacao e validacao local concluidas; producao e
+Nginx permaneceram intocados.
+
 ## 3. Decisoes arquiteturais
 
 ### Fluxo publico de entrada
@@ -457,6 +550,18 @@ bloqueia a vaga e exige diagnostico.
 Razao: nao expor metadata interna e nunca liberar uma vaga cujo estado nao foi
 comprovadamente limpo.
 
+### Disponibilidade publica e retomada explicita
+
+Decisao: o status publico apresenta somente total configurado, vagas realmente
+`livre` e o lease ativo do proprio cookie. Slots expirados aguardando reset nao
+contam como disponiveis. A resposta e `no-store`, possui throttle dedicado e
+nao executa operacao mutavel. A acao de continuar envia intencao explicita de
+retomada ao endpoint de lease ja existente.
+
+Razao: informar capacidade sem expor a pool, preservar a raiz como landing e
+impedir que uma corrida entre status e clique transforme uma retomada expirada
+em nova alocacao silenciosa.
+
 ## 4. Checklist por fase
 
 - [x] diagnostico;
@@ -467,6 +572,7 @@ comprovadamente limpo.
 - [x] concorrencia e rollback;
 - [x] autenticacao automatica;
 - [x] frontend publico;
+- [x] disponibilidade agregada e lease ativo na entrada publica;
 - [x] permissoes;
 - [x] seed;
 - [x] expiracao;
@@ -511,6 +617,7 @@ comprovadamente limpo.
 | Reutilizacao e cota por rede | `config/settings.py`, `tenancy/services_demo_pool.py`, `tenancy/views_demo_public.py`, `tenancy/test_demo_public.py`, envs, runbook, `public-demo-service.ts`, `public-demo.spec.ts` | `manage.py check`; `makemigrations --check --dry-run`; classes `DemoPublicFlowTests` e `DemoPublicConcurrencyTests`; `corepack pnpm run verify:frontend`; E2E publico e completo | backend 19/19 + 3/3; sem migration nova; frontend completo verde; E2E publico 15/15; bateria completa 27 aprovados e 1 opcional ignorado; mesmo cookie reutiliza, dois cookies ficam isolados e o terceiro recebe `network_limit` sem ocupar slot | nenhum commit novo desta solicitacao | validar proxy/IP canonico, Redis/throttle e expiracao real em homologacao |
 | Retomada imediata apos logout | `caixa/throttling.py`, `config/settings.py`, `tenancy/demo_visitor.py`, `tenancy/services_demo_pool.py`, `tenancy/views_demo_public.py`, testes, envs e runbook | `manage.py check`; `makemigrations --check --dry-run`; `DemoPublicFlowTests`; `DemoPublicConcurrencyTests`; `corepack pnpm run verify:frontend`; `test:e2e:public-demo` | backend 21/21 + concorrencia 3/3; frontend completo verde; E2E 15/15; mesmo tenant e expiracao, novo exchange, sem segundo slot e sem 429 da cota de novas alocacoes | nenhum commit desta solicitacao | validar Redis e Nginx reais em homologacao; Nginx ainda pode limitar rajadas abusivas antes do Django |
 | Aviso transitorio no logout | seis views financeiras com handler de logout, `public-demo.spec.ts` | auditoria global de `logoutFromBackend`; eslint focado; `test:e2e:public-demo`; `verify:frontend`; `git diff --check` | 16 ocorrencias revisadas; consultas posteriores removidas de dashboard, backups, FCF, obrigacoes, FCI e custos extras; demais refetches preservados; E2E publico 16/16 e frontend completo verde | nenhum commit desta solicitacao | repetir smoke test visual depois do deploy frontend |
+| Disponibilidade e lease ativo | `services_demo_pool.py`, `views_demo_public.py`, URLs, throttle/settings/envs, `features/demo-public/` e `public-demo.spec.ts` | `manage.py check`; `makemigrations --check --dry-run`; 8 testes focados; 2 testes concorrentes; `pnpm run verify:frontend`; `pnpm run test:e2e:public-demo` | check limpo; nenhuma migration; backend 8/8, concorrencia 2/2; frontend oficial verde; E2E 21/21; status nao muta lease nem revela outros slots e retomada preserva tenant/prazo | nenhum commit desta solicitacao | repetir com Redis, cookies entre hosts, timer e backend reais em homologacao |
 
 ### Tentativas, problemas e correcoes durante a implementacao
 
@@ -533,6 +640,10 @@ comprovadamente limpo.
 | primeiro `manage.py check` desta fase | o ambiente local continha `DEBUG=release`, valor invalido para booleano, e o Django parou antes de carregar o projeto | nao mascarar nem alterar configuracao persistente fora do escopo | repetir somente no processo com `DEBUG=True`; `check` e `makemigrations --check --dry-run` passaram |
 | primeiras chamadas de `verify:frontend` e E2E completo | a janela curta do executor encerrou o launcher antes de produzir resultado | nao classificar timeout da ferramenta como falha do projeto | repetir os mesmos comandos com janela adequada; ambos terminaram com codigo 0 |
 | primeira chamada da suite de retomada com janela curta | o launcher encerrou, mas deixou um runner filho migrando o banco `--keepdb`; a repeticao concorrente encontrou a coluna `origem` ja criada | encerrar somente os PIDs da suite e descartar o banco de teste parcialmente migrado | execucao unica com `--noinput` recriou apenas `test_rhsaas_dev` e passou 21/21; desenvolvimento e producao nao foram tocados |
+| primeira suite agregada desta fase | o limite de 10 minutos encerrou o shell e deixou os dois processos Python do teste em execucao | nao interpretar timeout como resultado e nao iniciar runner concorrente | encerrar somente os PIDs com o comando exato, dividir evidencias e recriar apenas `test_rhsaas_dev` |
+| repeticao com `--keepdb` apos a interrupcao | `demo1` residual causou `UniqueViolation` no `setUpClass` funcional, embora os tres testes transacionais tenham passado | invalidar somente a classe que nao iniciou e eliminar o banco residual | execucao funcional com `--noinput` recriou o banco e passou 8/8; concorrencia independente passou 2/2 e ambos destruíram o banco ao final |
+| primeiros E2E isolados de status | servidor Next manual nao possuia `NEXT_PUBLIC_API_BASE_URL` e a propria tela informou configuracao ausente | nao alterar produto para acomodar servidor invalido | encerrar o servidor manual e deixar Playwright iniciar com o ambiente contratual |
+| primeira bateria E2E completa desta fase | 18/21 passaram; duas rotas ainda compilavam alem da expectativa de 10 s e o fixture secundario esperava lease antes de cria-lo | aguardar URL/sessao com limite de compilacao, sem pausa fixa, e restaurar a sequencia real acessar/logout/continuar | tres cenarios passaram isolados e a repeticao completa passou 21/21 em 2,7 min |
 
 ## 6. Riscos e bloqueadores
 
@@ -558,6 +669,7 @@ comprovadamente limpo.
 | Troca de IP, VPN ou multiplas redes | media | agente abusivo pode contornar a cota e consumir outras vagas | throttle existente, pool finita, leases curtos, logs agregados e monitoramento de `network_limit`/`pool_full` | residual, monitorar | nao ha fingerprint nem coleta adicional de PII por decisao de privacidade |
 | Rotacao de `SECRET_KEY` durante leases ativos | baixa | o mesmo IP passa a produzir outro HMAC ate os leases anteriores expirarem | nao rotacionar durante janela ativa sem esvaziar a pool; expiracao/reset remove hashes antigos | residual operacional | identificadores persistidos sao apenas HMAC e nao sao reversiveis sem o segredo |
 | Nginx limita antes da aplicacao | baixa | uma rajada de varias retomadas ainda pode receber 429 HTML antes de o DRF reconhecer o lease | manter burst atual, orientar fluxo normal e validar uma retomada imediata real em homologacao; nao remover protecao de borda | residual deliberado contra abuso | caso observado chegou ao DRF; configuracao versionada usa `3r/m` com burst 2 |
+| Status muda entre consulta e clique | baixa | contagem exibida pode ficar desatualizada ou a retomada pode expirar | tratar GET como informativo; POST transacional continua autoridade; retomada explicita retorna 409 e atualiza status sem alocar outro slot | mitigado no codigo | teste de `resume_unavailable` confirma zero exchange e nenhuma nova vaga |
 
 ## 7. Mudancas de escopo e decisoes substituidas
 
@@ -654,6 +766,10 @@ O procedimento completo e os comandos de servidor estao em
 - logs: `journalctl` das units da API e manutencao; eventos esperados sao lease,
   troca, expiracao e reset, sem token, senha, hash anonimo, IP puro ou PII;
 - health: `/api/health/` no apex e em um tenant, com resposta agregada minima;
+- status publico: `GET /api/demo/status/` somente no host de entrada, esperando
+  `Cache-Control: no-store`, total igual a `DEMO_PUBLIC_POOL_SLOTS` e sem nomes
+  de slots quando nao houver lease proprio; monitorar 429 do escopo
+  `demo_status` separadamente de lease/exchange;
 - diagnostico de recursos: `free -h`, `df -h`, processos por RSS e
   `systemctl show` para memoria/tarefas;
 - ordem obrigatoria: backup e restore testado, codigo com flag off, migrations,

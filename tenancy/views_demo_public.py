@@ -8,7 +8,7 @@ from django.middleware.csrf import get_token
 from django.utils import timezone
 from django.views.decorators.cache import never_cache
 from django.views.decorators.debug import sensitive_post_parameters, sensitive_variables
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_GET, require_POST
 from drf_spectacular.utils import OpenApiTypes, extend_schema
 from rest_framework.decorators import (
     api_view,
@@ -21,7 +21,11 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from django_tenants.utils import get_public_schema_name
 
-from caixa.throttling import DemoExchangeRateThrottle, DemoLeaseRateThrottle
+from caixa.throttling import (
+    DemoExchangeRateThrottle,
+    DemoLeaseRateThrottle,
+    DemoStatusRateThrottle,
+)
 from caixa.views_api_auth import (
     _json_payload,
     _user_payload,
@@ -34,6 +38,7 @@ from .demo_visitor import (
     DEMO_VISITOR_COOKIE_SALT,
     get_or_create_demo_visitor_identifier,
     is_demo_lease_resume_only,
+    read_demo_visitor_identifier,
 )
 
 from .services_demo_pool import (
@@ -44,6 +49,7 @@ from .services_demo_pool import (
     DemoPoolUnavailable,
     allocate_demo_lease,
     consume_demo_exchange_token,
+    get_demo_public_status,
 )
 
 
@@ -111,7 +117,10 @@ def api_demo_lease(request):
     payload, error_response = _json_request_payload(django_request)
     if error_response is not None:
         return error_response
-    if payload:
+    resume_requested = (
+        set(payload) == {"resume"} and payload.get("resume") is True
+    )
+    if payload and not resume_requested:
         return Response({"detail": "Este endpoint nao aceita campos."}, status=400)
 
     visitor_identifier = _visitor_identifier(django_request)
@@ -120,7 +129,9 @@ def api_demo_lease(request):
         grant = allocate_demo_lease(
             visitor_identifier=visitor_identifier,
             network_identifier=network_identifier,
-            resume_only=is_demo_lease_resume_only(django_request),
+            resume_only=(
+                resume_requested or is_demo_lease_resume_only(django_request)
+            ),
         )
     except DemoLeaseResumeUnavailable:
         logger.info("demo_lease outcome=resume_unavailable")
@@ -180,6 +191,51 @@ def api_demo_lease(request):
     _set_visitor_cookie(response, visitor_identifier)
     logger.info("demo_lease outcome=granted reused=%s", grant.reused)
     return response
+
+
+@require_GET
+@never_cache
+@extend_schema(responses={200: OpenApiTypes.OBJECT})
+@api_view(["GET"])
+@throttle_classes([DemoStatusRateThrottle])
+@permission_classes([AllowAny])
+def api_demo_status(request):
+    django_request = getattr(request, "_request", request)
+    allowed_entry_schemas = {
+        get_public_schema_name(),
+        settings.DEMO_PUBLIC_ENTRY_SCHEMA,
+    }
+    if getattr(connection, "schema_name", "") not in allowed_entry_schemas:
+        return Response({"detail": "Nao encontrado."}, status=404)
+
+    now = timezone.now()
+    status = get_demo_public_status(
+        visitor_identifier=read_demo_visitor_identifier(django_request),
+        now=now,
+    )
+    active_lease = {"exists": status.active_slot_code is not None}
+    if status.active_slot_code and status.active_expires_at:
+        active_lease.update(
+            {
+                "tenant": status.active_slot_code,
+                "expiresAt": _iso_datetime(status.active_expires_at),
+                "remainingSeconds": max(
+                    0,
+                    int((status.active_expires_at - now).total_seconds()),
+                ),
+            }
+        )
+
+    return Response(
+        {
+            "enabled": bool(settings.DEMO_PUBLIC_LEASE_ENABLED),
+            "capacity": {
+                "total": status.total,
+                "available": status.available,
+            },
+            "activeLease": active_lease,
+        }
+    )
 
 
 @require_POST

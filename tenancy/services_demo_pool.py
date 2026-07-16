@@ -69,6 +69,14 @@ class DemoLeaseGrant:
 
 
 @dataclass(frozen=True)
+class DemoPublicStatus:
+    total: int
+    available: int
+    active_slot_code: str | None
+    active_expires_at: object | None
+
+
+@dataclass(frozen=True)
 class DemoExpirationResult:
     slot_code: str
     sessions_removed: int
@@ -103,6 +111,49 @@ def has_active_demo_lease(*, visitor_identifier, now=None):
             status=DemoTenantSlot.Status.OCUPADO,
             lease_expires_at__gt=now,
         ).exists()
+
+
+def get_demo_public_status(*, visitor_identifier=None, now=None):
+    pool_slots = demo_public_pool_schema_names()
+    total = len(pool_slots)
+    if not settings.DEMO_PUBLIC_LEASE_ENABLED:
+        return DemoPublicStatus(
+            total=total,
+            available=0,
+            active_slot_code=None,
+            active_expires_at=None,
+        )
+
+    now = now or timezone.now()
+    visitor_hash = (
+        hash_demo_identifier("visitor", visitor_identifier)
+        if visitor_identifier
+        else None
+    )
+    with schema_context(get_public_schema_name()):
+        slots = DemoTenantSlot.objects.filter(slot_code__in=pool_slots)
+        available = slots.filter(status=DemoTenantSlot.Status.LIVRE).count()
+        active_slot = None
+        if visitor_hash:
+            active_slot = (
+                slots.filter(
+                    visitor_key_hash=visitor_hash,
+                    status=DemoTenantSlot.Status.OCUPADO,
+                    lease_expires_at__gt=now,
+                )
+                .order_by("slot_code")
+                .values("slot_code", "lease_expires_at")
+                .first()
+            )
+
+    return DemoPublicStatus(
+        total=total,
+        available=available,
+        active_slot_code=active_slot["slot_code"] if active_slot else None,
+        active_expires_at=(
+            active_slot["lease_expires_at"] if active_slot else None
+        ),
+    )
 
 
 def demo_api_base_url(slot_code):

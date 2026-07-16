@@ -16,7 +16,11 @@ from django.utils import timezone
 from django_tenants.utils import schema_context
 
 from caixa.models import Cliente, Evento, Orcamento, Servico
-from caixa.throttling import DemoLeaseRateThrottle, DemoLeaseResumeRateThrottle
+from caixa.throttling import (
+    DemoLeaseRateThrottle,
+    DemoLeaseResumeRateThrottle,
+    DemoStatusRateThrottle,
+)
 from tenancy.command_guards import DEMO_POOL_SCHEMA_NAMES
 from tenancy.models import DemoTenantSlot, Domain, Tenant
 from tenancy.services_demo_pool import (
@@ -102,6 +106,10 @@ class DemoPublicFlowTests(MultiTenantTestCase):
             content_type="application/json",
         )
         return client, response
+
+    def _status(self, client=None):
+        client = client or self._public_client()
+        return client, client.get("/api/demo/status/")
 
     def _exchange(self, client, token):
         csrf_response = client.get("/api/auth/csrf/")
@@ -275,6 +283,39 @@ class DemoPublicFlowTests(MultiTenantTestCase):
         self.assertEqual(
             DemoTenantSlot.objects.filter(status=DemoTenantSlot.Status.OCUPADO).count(),
             1,
+        )
+
+    def test_retomada_explicita_nao_aloca_se_nao_houver_lease_ativo(self):
+        client = self._public_client()
+        response = client.post(
+            "/api/demo/lease/",
+            data=json.dumps({"resume": True}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["code"], "resume_unavailable")
+        connection.set_schema_to_public()
+        self.assertFalse(
+            DemoTenantSlot.objects.filter(status=DemoTenantSlot.Status.OCUPADO).exists()
+        )
+
+    def test_retomada_explicita_preserva_slot_e_prazo(self):
+        client, first_response = self._lease()
+        first_payload = first_response.json()
+        response = client.post(
+            "/api/demo/lease/",
+            data=json.dumps({"resume": True}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.json()["reused"])
+        self.assertEqual(response.json()["apiBaseUrl"], first_payload["apiBaseUrl"])
+        self.assertEqual(response.json()["expiresAt"], first_payload["expiresAt"])
+        self.assertNotEqual(
+            response.json()["exchangeToken"],
+            first_payload["exchangeToken"],
         )
 
     @override_settings(DEMO_PUBLIC_POOL_SLOTS=("demo2", "demo3"))
@@ -491,6 +532,118 @@ class DemoPublicFlowTests(MultiTenantTestCase):
         serialized = response.content.decode("utf-8")
         self.assertNotIn("slots", serialized)
         self.assertNotIn("demo1", serialized)
+
+    @override_settings(DEMO_PUBLIC_POOL_SLOTS=("demo2", "demo3", "demo4"))
+    def test_status_informa_capacidade_agregada_sem_demo1(self):
+        self._add_network_limit_slots()
+
+        _client, response = self._status()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["enabled"], True)
+        self.assertEqual(
+            response.json()["capacity"],
+            {"total": 3, "available": 3},
+        )
+        self.assertEqual(response.json()["activeLease"], {"exists": False})
+        self.assertIn("no-store", response["Cache-Control"])
+        serialized = response.content.decode("utf-8")
+        self.assertNotIn("demo1", serialized)
+        self.assertNotIn("visitor", serialized)
+        self.assertNotIn("network", serialized)
+        self.assertNotIn("exchange", serialized)
+
+    @override_settings(DEMO_PUBLIC_POOL_SLOTS=("demo2", "demo3", "demo4"))
+    def test_status_conta_somente_slots_livres_e_prontos(self):
+        self._add_network_limit_slots()
+        connection.set_schema_to_public()
+        now = timezone.now()
+        DemoTenantSlot.objects.filter(slot_code="demo2").update(
+            status=DemoTenantSlot.Status.OCUPADO,
+            lease_started_at=now,
+            lease_expires_at=now + timedelta(minutes=30),
+        )
+        DemoTenantSlot.objects.filter(slot_code="demo3").update(
+            status=DemoTenantSlot.Status.EXPIRADO,
+        )
+
+        _client, partial_response = self._status()
+        DemoTenantSlot.objects.filter(slot_code="demo4").update(
+            status=DemoTenantSlot.Status.BLOQUEADO,
+        )
+        _client, full_response = self._status()
+
+        self.assertEqual(
+            partial_response.json()["capacity"],
+            {"total": 3, "available": 1},
+        )
+        self.assertEqual(
+            full_response.json()["capacity"],
+            {"total": 3, "available": 0},
+        )
+
+    def test_status_reconhece_so_o_proprio_lease_sem_muta_lo(self):
+        visitor_client, lease_response = self._lease()
+        lease_payload = lease_response.json()
+        connection.set_schema_to_public()
+        before = DemoTenantSlot.objects.filter(slot_code="demo2").values().get()
+
+        _client, first_status = self._status(visitor_client)
+        _client, second_status = self._status(visitor_client)
+        _other_client, other_status = self._status(self._public_client())
+
+        connection.set_schema_to_public()
+        after = DemoTenantSlot.objects.filter(slot_code="demo2").values().get()
+        self.assertEqual(before, after)
+        self.assertEqual(first_status.status_code, 200)
+        self.assertEqual(first_status.json(), second_status.json())
+        self.assertEqual(first_status.json()["capacity"], {"total": 1, "available": 0})
+        self.assertEqual(
+            first_status.json()["activeLease"]["tenant"],
+            "demo2",
+        )
+        self.assertEqual(
+            first_status.json()["activeLease"]["expiresAt"],
+            lease_payload["expiresAt"],
+        )
+        self.assertGreater(first_status.json()["activeLease"]["remainingSeconds"], 0)
+        self.assertEqual(other_status.json()["activeLease"], {"exists": False})
+        serialized = first_status.content.decode("utf-8")
+        self.assertNotIn("exchangeToken", serialized)
+        self.assertNotIn(lease_payload["exchangeToken"], serialized)
+
+    def test_status_nao_apresenta_lease_expirado_nem_vaga_antes_do_reset(self):
+        client, _lease_response = self._lease()
+        connection.set_schema_to_public()
+        DemoTenantSlot.objects.filter(slot_code="demo2").update(
+            lease_expires_at=timezone.now() - timedelta(seconds=1),
+        )
+
+        _client, response = self._status(client)
+
+        self.assertEqual(response.json()["activeLease"], {"exists": False})
+        self.assertEqual(response.json()["capacity"], {"total": 1, "available": 0})
+
+    def test_status_usa_throttle_separado_sem_consumir_lease(self):
+        client = self._public_client(remote_addr="203.0.113.41")
+        with (
+            patch.object(DemoStatusRateThrottle, "rate", "2/hour", create=True),
+            patch.object(DemoLeaseRateThrottle, "rate", "1/hour", create=True),
+        ):
+            first_status = self._status(client)[1]
+            second_status = self._status(client)[1]
+            third_status = self._status(client)[1]
+            _client, lease_response = self._lease(client)
+
+        self.assertEqual(first_status.status_code, 200)
+        self.assertEqual(second_status.status_code, 200)
+        self.assertEqual(third_status.status_code, 429)
+        self.assertEqual(lease_response.status_code, 201)
+
+    def test_status_nao_e_publicado_em_slot_temporario(self):
+        response = self._tenant_client("demo2").get("/api/demo/status/")
+
+        self.assertEqual(response.status_code, 404)
 
     def test_throttle_retorna_429_sem_metadata_da_pool(self):
         first_client = self._public_client(remote_addr="203.0.113.40")

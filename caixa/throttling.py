@@ -101,6 +101,13 @@ class DemoLeaseResumeRateThrottle(SimpleRateThrottle):
         }
 
 
+class DemoStatusRateThrottle(
+    DemoTrustedClientIpThrottleMixin,
+    TenantScopedOperationRateThrottle,
+):
+    scope = "demo_status"
+
+
 class DemoLeaseRateThrottle(
     DemoTrustedClientIpThrottleMixin,
     TenantScopedOperationRateThrottle,
