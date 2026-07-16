@@ -161,6 +161,57 @@ automatica, com padrao `demo2...demo10`. A migration de dados pequena remove
 somente o registro `DemoTenantSlot` de `demo1`, preservando Tenant, Domain,
 schema, dados e usuario permanentes.
 
+### Diagnostico do fluxo pos-exchange em 2026-07-15
+
+Estado antes da correcao: backend `8c03da7`, branch
+`feat/django-tenants-spike`, e frontend `77df602`, branch `main`; ambos limpos
+e sincronizados com seus upstreams. A observacao de producao informou lease
+`201`, exchange `200`, `demo2` ocupado e token marcado como consumido, mas o
+frontend voltou a entrada com a mensagem generica de preparacao.
+
+Diagnostico read-only confirmado antes de editar:
+
+- o contrato backend devolve `authenticated: true` somente depois de criar a
+  sessao;
+- o bundle publicado contem a URL publica correta e o mesmo fluxo do commit
+  local;
+- preflight, CORS, CSP e uma leitura de `/api/auth/session/` feita pelo Chrome
+  a partir da origem publica foram aprovados, sem POST ou alteracao externa;
+- o frontend persistia o lease apenas depois de interpretar a resposta do
+  exchange;
+- o mesmo `try/catch` abrangia exchange, persistencia e
+  `window.location.replace`, convertendo qualquer excecao posterior ao
+  exchange em erro generico;
+- na URL temporaria, sessao nao confirmada disparava `allocate()` novamente e
+  podia solicitar outra vaga;
+- a causa nativa era descartada, sem diagnostico seguro no console.
+
+Decisao: corrigir somente o frontend. Persistir o lease antes da troca,
+confirmar a sessao no tenant quando o resultado do POST for ambiguo, navegar
+fora do `catch`, nunca realocar automaticamente durante recuperacao e registrar
+somente nome/mensagem/status/codigo do erro, sem token ou dados pessoais.
+
+Implementacao aplicada no frontend:
+
+- lease valido e `expiresAt` sao persistidos antes do POST de troca, sem salvar
+  o token;
+- resposta ambigua do exchange consulta a sessao no host ja reservado e, se a
+  sessao existir, segue para o dashboard;
+- navegacao explicita ocorre fora do `catch` da alocacao;
+- falha de sessao apos redirecionamento nao chama novo lease automaticamente;
+- falha real HTTP no exchange remove o lease local e apresenta o detalhe seguro;
+- erros nativos registram somente metadados seguros no console.
+
+Tentativa de teste: E2E publico com porta isolada `3111` falhou porque o mock
+preexistente autoriza CORS para a porta contratual `3100`. Decisao: nao alterar
+o produto por esse falso negativo e repetir com a configuracao oficial.
+Correcao/reversao: nenhuma correcao de produto foi necessaria; a repeticao em
+`3100` aprovou 13/13 cenarios, incluindo exchange ambiguo recuperado, falha real,
+reload sem novo lease, `demo1`, tenant temporario sem lease e logout.
+
+Estado da fase: `[x]` implementacao e validacao local concluidas. Nenhuma
+alteracao de backend, pool, Nginx, timer, producao, commit ou push foi realizada.
+
 ## 3. Decisoes arquiteturais
 
 ### Fluxo publico de entrada
@@ -319,6 +370,7 @@ comprovadamente limpo.
 | Commands da pool `demo2+` | provisionar, ocupar, expirar, resetar e guards | classes focadas separadas; repeticoes focadas finais | provisionar 5/5; ocupar 10 cenarios validados; expirar 8/8; reset 11 cenarios validados; guards relacionados aprovados; comandos de pool rejeitam `demo1` | nenhum commit novo desta solicitacao | bateria agregada excede 15 minutos; manter classes separadas no CI |
 | Demo permanente | `preparar_demo_permanente.py`, seed e usuario minimo | teste de preparacao permanente | `demo1` sem slot; seed presente; usuario ativo, com senha preservada/fornecida por env, sem staff/superuser e grupo unico | nenhum commit novo desta solicitacao | credencial real deve vir do secret manager no ambiente |
 | Fallback frontend | `public-demo-entry.tsx`, `demo-api-runtime.ts`, E2E | `corepack pnpm verify:frontend` e `verify:e2e` | frontend completo verde; E2E 17/17; pool cheia oferece `?tenant=demo1` sem segundo lease | nenhum commit novo desta solicitacao | validar login permanente real em homologacao |
+| Recuperacao pos-exchange | `public-demo-service.ts`, `public-demo-entry.tsx`, `public-demo.spec.ts` | `corepack pnpm verify:frontend`; `corepack pnpm run test:e2e:public-demo`; `corepack pnpm run test:e2e` | lint, tipos, guardrails oficiais e build aprovados; E2E publico 13/13; bateria completa 25 aprovados e 1 `rh_teste` ignorado por falta da senha opcional | nenhum commit novo desta solicitacao | repetir contra backend real em homologacao; producao nao foi alterada |
 
 ### Tentativas, problemas e correcoes durante a implementacao
 
@@ -336,16 +388,19 @@ comprovadamente limpo.
 | classe de ocupacao apos a divisao da pool | teste de slot inexistente provisionava `demo2` por engano | corrigir somente o fixture para `--slots=1` | oito cenarios ja aprovados e o cenario corrigido passou isoladamente |
 | classe completa de guards | comando anterior `auditar_snapshots_diaria_orcamentos` nao estava classificado | registrar seu comportamento real como somente leitura | falha focada e novo guard da pool passaram juntos 2/2 |
 | primeira verificacao frontend | lint exigiu `Link` para navegacao interna do fallback | usar `next/link` sem mudar o destino | `verify:frontend` completo passou na repeticao |
+| E2E pos-exchange na porta `3111` | mocks existentes devolvem CORS apenas para a origem contratual `127.0.0.1:3100`, causando `TypeError: Failed to fetch` | tratar como falso negativo de configuracao, sem mudar o produto | repeticao oficial em `3100` passou 13/13; bateria completa passou 25 testes e ignorou somente o E2E opcional sem senha |
+| `check:financial-cache-guardrails` adicional | executor Node direto nao resolve o alias TypeScript `@/lib` antes de iniciar as assercoes | nao alterar codigo financeiro fora do escopo nem confundir com os guardrails oficiais | `verify:frontend`, que inclui os guardrails oficiais, passou integralmente; incompatibilidade antiga do script adicional permanece documentada |
 
 ## 6. Riscos e bloqueadores
 
 | Risco | Severidade | Impacto | Mitigacao | Estado | Evidencia |
 | --- | --- | --- | --- | --- | --- |
 | Usuario demo superuser/staff | critica | acesso administrativo e a backups | grupo minimo e flags falsas | mitigado no codigo | teste focado confirma flags falsas e grupo unico |
-| Endpoint/fluxo automatico inexistente | bloqueador | visitante nao entra sozinho | lease + troca + pagina publica | mitigado no codigo | backend 13/13, frontend verde e E2E publico 5/5 |
+| Endpoint/fluxo automatico inexistente | bloqueador | visitante nao entra sozinho | lease + troca + pagina publica | mitigado no codigo | backend 13/13, frontend verde e E2E publico 13/13 |
 | Dupla alocacao | alta | dois visitantes no mesmo schema | advisory lock por identificador + row lock | mitigado no codigo | teste real com duas conexoes aprovou |
 | Senha exposta no frontend | alta | credencial reutilizavel | token HMAC de uso unico | mitigado no codigo | token nao e persistido no browser e o digest e consumido uma vez |
 | Sessao/Axes/cache residual | alta | acesso ou dados do visitante anterior | limpeza schema-scoped antes do reset | mitigado localmente | sessao, Axes e cache cobertos no teste de expiracao |
+| Exchange consumido com resposta ambigua no navegador | alta | vaga ocupada, token inutilizavel e usuario preso na entrada | persistir lease antes da troca, confirmar sessao e redirecionar para o tenant ja reservado | mitigado no frontend | E2E recupera resposta ambigua sem alerta e sem segundo lease |
 | Seed insuficiente | alta | nova vaga vazia/inutilizavel | seed idempotente ficticio | mitigado no codigo | cliente/servicos/orcamento/evento isolados em teste |
 | Pool incompleta | alta | capacidade menor e 404 | preservar `demo1` e provisionar nove vagas `demo2...demo10` | bloqueado para deploy | demo10 externo 404 |
 | Migrations pendentes | alta | schemas divergentes | aplicar na sequencia de deploy aprovada | bloqueado para deploy | `migrate_schemas --plan` |
