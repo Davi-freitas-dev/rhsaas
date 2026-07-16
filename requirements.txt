@@ -5,7 +5,7 @@ attrs==26.1.0
 certifi==2026.2.25
 cffi==2.0.0
 charset-normalizer==3.4.5
-Django==6.0.6
+Django==6.0.7
 django-axes==8.3.1
 django-environ==0.13.0
 django-redis==6.0.0
