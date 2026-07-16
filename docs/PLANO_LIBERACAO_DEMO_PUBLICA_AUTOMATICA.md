@@ -1589,3 +1589,183 @@ O patch local esta aprovado para homologacao. Nao ha migration nova, permissao
 de exclusao, permissao administrativa, backup, acesso cross-tenant ou contrato
 de escrita no schema `public`. Homologacao, deploy e validacao pos-deploy
 permanecem deliberadamente pendentes e nao foram executados nesta fase.
+
+## 12. Quota real de armazenamento da pool publica
+
+### Estado inicial e diagnostico (2026-07-16)
+
+- backend: `5f2f754`, branch `feat/django-tenants-spike`, arvore limpa;
+- frontend: `18a584e`, branch `main`, arvore limpa;
+- `DemoTenantSlot.max_storage_mb` existe no schema publico, com padrao e limite
+  maximo de 50 MB, mas nao participa de nenhuma decisao de escrita;
+- nao existe selector ou service de tamanho por schema;
+- a medicao PostgreSQL escolhida soma `pg_total_relation_size` das relacoes de
+  tabela, materialized view e tabela particionada do schema. Indices e TOAST
+  entram no total por meio da propria funcao, sem somar classes de indice;
+- medicao local: `rh_teste` com 7.659.520 bytes; cinco repeticoes da consulta
+  ficaram entre aproximadamente 99 e 112 ms neste ambiente Windows;
+- nao ha `FileField`, `ImageField` ou upload multipart nas rotas operacionais;
+  backups e artefatos ficam fora das permissoes da demo publica;
+- as escritas normais passam por diversas views/services; aprovacao de
+  orcamento e liquidacoes podem criar varias linhas na mesma operacao. Nao ha
+  `bulk_create` nas rotas normais, somente em migrations/testes;
+- `caixa.demo_policy.assert_demo_write_allowed` centraliza protecao de seed,
+  mas nao mede tamanho nem protege o commit que ultrapassa a quota;
+- `resetar_tenant_demo` limpa cache, executa `DROP SCHEMA ... CASCADE`, recria
+  migrations/seed e remove artefatos. Portanto libera efetivamente o espaco e
+  invalida qualquer estado de quota tenant-scoped.
+
+### Decisoes arquiteturais
+
+1. Aplicar middleware depois de `AuthenticationMiddleware`, somente a metodos
+   inseguros e a usuarios ativos do grupo `Demo Publica` em schemas presentes
+   em `DEMO_PUBLIC_POOL_SLOTS`. `public`, `rh_teste`, `demo1`, staff,
+   superusuarios, administracao, autenticacao, logout e exchange ficam fora.
+   Motivo: cobrir todas as entradas atuais e futuras sem repetir verificacoes.
+2. Usar cache curto tenant-scoped para a ultima medicao e lock transacional
+   PostgreSQL por schema. Quando o cache ja indicar limite, bloquear antes da
+   view. Caso contrario, executar a operacao em `transaction.atomic`, medir uma
+   vez antes do commit e reverter integralmente se o total ultrapassar o limite.
+   Motivo: uma checagem apenas anterior permite overshoot; duas medicoes exatas
+   por escrita dobrariam o custo sem aumentar a garantia do pos-commit.
+3. Nao medir em GETs comuns. Um endpoint de status autenticado usara o cache e
+   fara medicao exata somente em cache miss. Motivo: manter leitura e navegacao
+   baratas e ainda permitir que o frontend conheca o bloqueio.
+4. Retornar HTTP 403 com codigo estavel e a mensagem definida no requisito. O
+   frontend manterá um estado global tenant-scoped, exibira aviso no layout e
+   combinará o bloqueio com as capacidades de criacao/edicao das telas.
+   Motivo: preservar leitura, filtros, navegacao e logout sem esconder a causa.
+5. Nao criar migration nem novo campo de uso atual. O tamanho real permanece
+   derivado do PostgreSQL; `max_storage_mb` continua sendo a fonte do limite.
+
+### Checklist da quota
+
+- [x] diagnostico de schema, SQL, custo, cache, escritas, uploads e reset;
+- [x] estrategia de concorrencia, rollback, escopo e frontend definida;
+- [x] service/selector de quota e cache tenant-scoped;
+- [x] middleware transacional e resposta 403;
+- [x] endpoint de status;
+- [x] invalidacao no reset;
+- [x] aviso e bloqueio de criacao/edicao no frontend;
+- [x] testes backend de limite, bypass, isolamento, reset e performance;
+- [x] testes frontend e E2E relacionado;
+- [x] documentacao operacional e comandos de diagnostico;
+- [x] revisao final do diff;
+- [ ] homologacao, deploy e validacao pos-deploy (fora desta execucao).
+
+### Riscos iniciais
+
+| Risco | Severidade | Impacto | Mitigacao | Estado/evidencia |
+| --- | --- | --- | --- | --- |
+| consulta de tamanho cara em schema com muitas relacoes | media | latencia de escrita | uma consulta exata por escrita; cache em leituras/status | 99-112 ms local |
+| duas escritas concorrentes ultrapassarem juntas | alta | quota ineficaz | advisory lock transacional por schema e medicao antes do commit | implementado em `tenancy/middleware.py` e `tenancy/services_demo_storage.py` |
+| operacao composta deixar escrita parcial | alta | dados inconsistentes | middleware envolve toda a view em `transaction.atomic` e marca rollback | testes de criacao/edicao confirmam ausencia de persistencia apos 403 |
+| cache antigo depois do reset/troca de tenant | alta | falso bloqueio | cache tenant-scoped ja limpo pelo reset; frontend reinicia por runtime | reset auditado |
+| rollback nao devolver imediatamente paginas fisicas alocadas | media | schema pode continuar no limite ate reset | quota mede uso fisico real; reset por DROP SCHEMA e a recuperacao garantida | comportamento PostgreSQL aceito |
+| outro navegador/aba atingir a quota | baixa | aba ja aberta pode manter botoes ativos ate a proxima escrita | backend sempre bloqueia; payload 403 atualiza a aba imediatamente; reload consulta status | sem polling para nao aumentar custo PostgreSQL |
+| pouco espaco no disco local | media | Turbopack nao conclui suite longa | limpar apenas caches `.next`/`test-results` ou liberar disco antes de nova execucao completa | observado `ENOSPC`; fonte e build permanecem integros |
+
+### Evidencias de implementacao e testes
+
+- arquivos backend: `tenancy/services_demo_storage.py`, `tenancy/middleware.py`,
+  `tenancy/views_demo_storage.py`, `config/settings.py`,
+  `config/tenant_urls.py` e `tenancy/test_demo_storage_quota.py`;
+- a consulta exata ocorre uma vez ao final de cada escrita aplicavel; GETs
+  operacionais nao executam a consulta. O endpoint `GET /api/demo/storage/`
+  reutiliza a medicao por 15 segundos e so mede em cache miss;
+- a resposta de bloqueio usa HTTP 403, codigo
+  `demo_storage_quota_exceeded`, `Cache-Control: no-store` e a mensagem
+  operacional definida para a demo;
+- suite inicial: 12 testes encontrados, 11 aprovados e uma falha no teste de
+  reset porque o comando exige `--confirm "RESETAR demo2"`. A chamada foi
+  corrigida sem alterar o comando;
+- segunda tentativa isolada do reset: o PostgreSQL recusou `DROP SCHEMA` dentro
+  da transacao de isolamento do runner por eventos de trigger pendentes. O
+  teste passou a manter o comando real, a liberacao do slot e a limpeza real de
+  cache, substituindo somente os passos destrutivos de drop/recriacao/seed. A
+  suite preexistente de reset continua responsavel pelo drop real do schema;
+- teste isolado corrigido: 1 teste aprovado; confirmou cache removido, slot
+  livre, status abaixo da quota apos recriacao simulada e novo lease em
+  `demo2`;
+- suite backend completa da quota: `python manage.py test
+  tenancy.test_demo_storage_quota --verbosity 1 --noinput`; 12 de 12 testes
+  aprovados em 362,781 s, incluindo criacao, edicao, leitura sem medicao,
+  superusuario, `public`, `rh_teste`, `demo1`, status, isolamento entre slots,
+  cache, reset e novo lease;
+- `python manage.py check`: sem problemas; `python manage.py makemigrations
+  --check --dry-run`: nenhuma migration nova;
+- verificacoes preliminares: `manage.py check`, compilacao Python,
+  `git diff --check` backend e `npm run typecheck` frontend aprovados;
+- arquivos frontend concluidos: estado global de quota, sincronizacao no
+  layout, captura do payload 403 e bloqueio das capacidades de escrita em
+  clientes, servicos, orcamentos, eventos, configuracoes, custos fixos,
+  credores, custos extras, investimentos, financiamentos, receitas/despesas,
+  pagamentos e obrigacoes.
+
+### Operacao da quota
+
+1. Fonte do limite: editar `DemoTenantSlot.max_storage_mb` no schema publico.
+   Nao ha migration desta entrega e o padrao existente continua em 50 MB.
+2. Medicao: para cada escrita aplicavel, o middleware adquire
+   `pg_advisory_xact_lock` do schema, executa a view em transacao e soma
+   `pg_total_relation_size` de tabelas, materialized views e particoes antes do
+   commit. Indices e TOAST estao incluidos. Se `used_bytes >= max_bytes`, toda
+   a operacao e revertida e a API devolve 403.
+3. Frequencia/cache: GETs comuns nao medem. O ultimo resultado fica em cache
+   tenant-scoped por `DEMO_STORAGE_QUOTA_CACHE_SECONDS` (padrao 15, intervalo
+   aceito 1..300). Escritas abaixo do limite ainda fazem uma medicao exata ao
+   final para impedir overshoot; cache ja excedido bloqueia antes da view.
+4. Status: `GET /api/demo/storage/` exige sessao autenticada, nao revela nome
+   de schema e retorna `applies: false` fora da pool. A resposta nao deve ser
+   armazenada por navegador ou proxy.
+5. Reset: o comando operacional existente `resetar_tenant_demo` limpa todo o
+   cache tenant-scoped antes de `DROP SCHEMA ... CASCADE`; apos recriacao/seed,
+   a primeira medicao reflete o schema novo e um lease novo pode usar o slot.
+6. Diagnostico PostgreSQL (substituir apenas por slot configurado):
+
+   ```sql
+   SELECT COALESCE(SUM(pg_total_relation_size(c.oid)), 0)::bigint AS used_bytes
+     FROM pg_class c
+     JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'demo2'
+      AND c.relkind IN ('r', 'm', 'p');
+   ```
+
+7. Logs: procurar por `demo_storage_quota_exceeded`; o registro informa
+   schema, bytes usados e limite, sem usuario, token ou dado pessoal.
+8. Rollback de codigo: reverter middleware, endpoint/status e frontend. Como
+   nao ha migration nem dado novo, o campo existente permanece inofensivo.
+9. Ordem recomendada de deploy: backend primeiro, validar `manage.py check` e
+   `GET /api/demo/storage/` autenticado em homologacao; depois frontend. O
+   frontend ignora de forma segura endpoint ausente durante a janela, mas a
+   protecao real so existe depois do backend.
+
+### Evidencias frontend e ocorrencias durante validacao
+
+- `npm run verify:frontend`: aprovado; inclui lint, typecheck, parsing de
+  servicos por hora, snapshots de orcamento, todos os guardrails de dashboard,
+  runtime da API e build de producao com 22 rotas;
+- o primeiro guardrail rejeitou `apiFetch` diretamente no hook. A chamada foi
+  movida para `features/demo-public/services/demo-storage-quota-service.ts` e o
+  novo service foi incluido explicitamente na fronteira aprovada; a repeticao
+  completa passou;
+- E2E focal de quota: aprovado; confirma lista legivel, aviso com mensagem
+  operacional e botoes de criar/salvar desabilitados;
+- primeira suite publica: 25/26. O unico caso usava lease de cinco segundos e
+  podia expirar antes de a tela inicial aparecer. A espera temporal foi trocada
+  por expiracao explicita do mock + atualizacao de status por
+  `visibilitychange`, sem `waitForTimeout`;
+- suite publica final: 26/26 aprovada em 295,8 s, incluindo quota, demo1,
+  lease/exchange, logout/retomada, isolamento, pool cheia e permissoes;
+- suite complementar de filtros: uma tentativa terminou com 8/12 e OOM; outra
+  com 9/12 e `ENOSPC` no cache Turbopack. Os tres casos afetados pelo disco
+  passaram isoladamente depois da limpeza controlada de `.next`, totalizando
+  os 12 cenarios validados. A rota de quota passou a ser mockada como nao
+  aplicavel nessa suite de demo1;
+- `check:financial-cache-guardrails`, nao incluido em `verify:frontend`, nao
+  inicia as assercoes no Node 24 local porque o loader nao resolve o alias
+  `@/lib` de `financial-data-cache.ts`. Falha preexistente e independente da
+  quota; o guardrail oficial de fronteira/canonicalidade passou;
+- limitacao da maquina: o C: ficou sem espaco durante o E2E complementar. Foram
+  removidos somente `.next` e `test-results`, ambos artefatos descartaveis do
+  frontend. Nenhum arquivo fonte foi apagado.

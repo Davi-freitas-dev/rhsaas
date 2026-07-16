@@ -214,6 +214,10 @@ DEMO_MAX_ACTIVE_LEASES_PER_NETWORK = env.int(
     "DEMO_MAX_ACTIVE_LEASES_PER_NETWORK",
     default=2,
 )
+DEMO_STORAGE_QUOTA_CACHE_SECONDS = env.int(
+    "DEMO_STORAGE_QUOTA_CACHE_SECONDS",
+    default=15,
+)
 if not DEMO_PUBLIC_ENTRY_SCHEMA:
     raise ImproperlyConfigured("DEMO_PUBLIC_ENTRY_SCHEMA nao pode ficar vazio.")
 DEMO_TENANT_SCHEMA_NAMES = {f"demo{index}" for index in range(1, 11)}
@@ -241,6 +245,10 @@ if not 1 <= DEMO_MAX_ACTIVE_LEASES_PER_NETWORK <= len(DEMO_PUBLIC_POOL_SLOTS):
     raise ImproperlyConfigured(
         "DEMO_MAX_ACTIVE_LEASES_PER_NETWORK deve ficar entre 1 e o total de "
         "slots configurados em DEMO_PUBLIC_POOL_SLOTS."
+    )
+if not 1 <= DEMO_STORAGE_QUOTA_CACHE_SECONDS <= 300:
+    raise ImproperlyConfigured(
+        "DEMO_STORAGE_QUOTA_CACHE_SECONDS deve ficar entre 1 e 300."
     )
 if not 5 <= DEMO_LEASE_DURATION_MINUTES <= 1440:
     raise ImproperlyConfigured(
@@ -300,6 +308,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "tenancy.middleware.DemoStorageQuotaMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "simple_history.middleware.HistoryRequestMiddleware",
