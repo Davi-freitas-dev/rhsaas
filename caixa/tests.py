@@ -19637,7 +19637,6 @@ class FiltrosHtmlTests(TenantScopedTestCase):
             "diagnostico_conciliacao",
             "base_realizada",
             "read_model",
-            "filtros_aplicados",
         ]
         colunas_receitas_despesas = [
             "item",
@@ -19653,7 +19652,6 @@ class FiltrosHtmlTests(TenantScopedTestCase):
             "realizado",
             "pendente",
             "fluxo",
-            "filtros_aplicados",
         ]
 
         response_obligations = self.client.get(
@@ -19760,7 +19758,6 @@ class FiltrosHtmlTests(TenantScopedTestCase):
                 "suporta_descricao_pagamento",
                 "suporta_ajustes",
                 "suporta_baixa_saldo",
-                "filtros_aplicados",
             ],
         )
         self.assertEqual(len(rows) - 1, 3)
@@ -19769,6 +19766,7 @@ class FiltrosHtmlTests(TenantScopedTestCase):
         self.assertNotIn("queueOffset", rows[0])
         self.assertNotIn("limit", rows[0])
         self.assertNotIn("offset", rows[0])
+        self.assertNotIn("filtros_aplicados", rows[0])
 
     def test_exportacao_obrigacoes_preserva_erros_json_de_validacao(self):
         url = reverse("caixa:api_exportar_obrigacoes_financeiras")
@@ -19896,9 +19894,11 @@ class FiltrosHtmlTests(TenantScopedTestCase):
         self.assertIn("Receita export dentro", linhas_receitas)
         self.assertNotIn("Receita export fora", linhas_receitas)
         self.assertNotIn("Despesa export dentro", linhas_receitas)
+        self.assertNotIn("filtros_aplicados", linhas_receitas)
         self.assertEqual(response_despesas.status_code, 200, response_despesas.content)
         self.assertIn("Despesa export dentro", linhas_despesas)
         self.assertNotIn("Receita export dentro", linhas_despesas)
+        self.assertNotIn("filtros_aplicados", linhas_despesas)
 
     def test_exportacao_receitas_e_despesas_completa_ignora_paginacao_e_teto_300(
         self,

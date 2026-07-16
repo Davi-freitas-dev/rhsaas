@@ -298,7 +298,6 @@ Colunas de `exportScope=obligations`:
 - `diagnostico_conciliacao`.
 - `base_realizada`.
 - `read_model`.
-- `filtros_aplicados`.
 
 Colunas de `exportScope=revenues`:
 
@@ -315,7 +314,6 @@ Colunas de `exportScope=revenues`:
 - `realizado`.
 - `pendente`.
 - `fluxo`.
-- `filtros_aplicados`.
 
 Colunas de `exportScope=expenses`:
 
@@ -343,7 +341,9 @@ Colunas de `exportScope=payments`:
 - `suporta_descricao_pagamento`.
 - `suporta_ajustes`.
 - `suporta_baixa_saldo`.
-- `filtros_aplicados`.
+
+Os filtros recebidos continuam definindo quais registros entram em cada escopo,
+mas nao sao serializados como coluna ou metadado dentro do CSV.
 
 Shape de erros JSON:
 

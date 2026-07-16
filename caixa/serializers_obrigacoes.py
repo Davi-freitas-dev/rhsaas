@@ -1,5 +1,4 @@
 import csv
-import json
 from io import StringIO
 from decimal import Decimal, InvalidOperation
 
@@ -2010,13 +2009,6 @@ def montar_exportacao_obrigacoes_financeiras_csv(params, usuario=None):
 
     filtros = normalizar_filtros_obrigacoes(params)
     itens, fonte_dados = listar_obrigacoes_com_fonte(filtros)
-    filtros_serializados = serializar_filtros_obrigacoes(filtros)
-    filtros_aplicados = json.dumps(
-        filtros_serializados,
-        ensure_ascii=False,
-        sort_keys=True,
-    )
-
     if export_scope == "payments":
         contrato_baixa = serializar_contrato_baixa_obrigacoes_usuario(usuario)
         candidates = listar_payment_queue_candidates(
@@ -2028,17 +2020,13 @@ def montar_exportacao_obrigacoes_financeiras_csv(params, usuario=None):
             candidates,
             params.get("queueFilter"),
         )
-        headers, rows = linhas_csv_exportacao_pagamentos(
-            candidates,
-            filtros_aplicados,
-        )
+        headers, rows = linhas_csv_exportacao_pagamentos(candidates)
     else:
         headers, rows = linhas_csv_exportacao_obrigacoes(
             itens,
             export_scope,
             filtros,
             fonte_dados,
-            filtros_aplicados,
         )
 
     return {
@@ -2060,7 +2048,6 @@ def linhas_csv_exportacao_obrigacoes(
     export_scope,
     filtros,
     fonte_dados,
-    filtros_aplicados,
 ):
     if export_scope in {"revenues", "expenses"}:
         headers = [
@@ -2077,7 +2064,6 @@ def linhas_csv_exportacao_obrigacoes(
             "realizado",
             "pendente",
             "fluxo",
-            "filtros_aplicados",
         ]
         return headers, [
             [
@@ -2094,7 +2080,6 @@ def linhas_csv_exportacao_obrigacoes(
                 csv_decimal(item["realized_amount"]),
                 csv_decimal(item["pending_amount"]),
                 item.get("cash_flow_group") or "",
-                filtros_aplicados,
             ]
             for item in itens
         ]
@@ -2123,7 +2108,6 @@ def linhas_csv_exportacao_obrigacoes(
         "diagnostico_conciliacao",
         "base_realizada",
         "read_model",
-        "filtros_aplicados",
     ]
     realized_basis = filtros.get("realizedAmountBasis") or "originState"
     read_model = fonte_dados.get("actual") or ""
@@ -2154,13 +2138,12 @@ def linhas_csv_exportacao_obrigacoes(
             or "",
             realized_basis,
             item.get("read_model_source") or read_model,
-            filtros_aplicados,
         ]
         for item in itens
     ]
 
 
-def linhas_csv_exportacao_pagamentos(candidates, filtros_aplicados):
+def linhas_csv_exportacao_pagamentos(candidates):
     headers = [
         "obrigacao",
         "descricao",
@@ -2182,7 +2165,6 @@ def linhas_csv_exportacao_pagamentos(candidates, filtros_aplicados):
         "suporta_descricao_pagamento",
         "suporta_ajustes",
         "suporta_baixa_saldo",
-        "filtros_aplicados",
     ]
     rows = []
     for candidate in candidates:
@@ -2209,7 +2191,6 @@ def linhas_csv_exportacao_pagamentos(candidates, filtros_aplicados):
                 csv_bool(candidate["supportsPaymentDescription"]),
                 csv_bool(candidate["supportsAdjustments"]),
                 csv_bool(candidate["supportsWriteOff"]),
-                filtros_aplicados,
             ]
         )
     return headers, rows
