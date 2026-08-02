@@ -3334,3 +3334,39 @@ o código após a validação funcional.
 O commit documental desta seção é criado em seguida; seu hash não é escrito
 aqui para evitar um ciclo de autoatualização. Não houve push, deploy, produção,
 uso de `demo1`/`rh_teste` ou criação de migration persistente nesta revisão.
+
+
+### 17.14 Homologação exploratória final SaaS multi-tenant — 02/08/2026
+
+Esta rodada ocorreu depois da F7 aprovada em 17.12 e dos commits de 17.13. Não repetiu a regressão Django integral, Playwright ou os gates F7: foi exploração manual assistida por navegador contra frontend, backend e PostgreSQL locais.
+
+#### Ambiente, escopo e isolamento
+
+Foi criado exclusivamente o PostgreSQL descartável `rhsaas_explore_20260802_r1`, em `localhost:5433`. A pré-validação confirmou host local, ausência de conexão de produção, nome diferente de banco persistente, zero escrita em `demo1` e `rh_teste`, e remoção segura ao final. Foram criados somente os tenants descartáveis `explorea`, `exploreb` e `explorerestore` dentro desse banco. Não houve acesso a produção, deploy, push ou commit.
+
+#### Fluxos explorados
+
+O navegador concluiu a execução final em `101,0 s` (11:35:03–11:36:44, código 0), além da confirmação posterior do clique real da barra lateral. Foram exercitados autenticação CSRF/sessão, aba adicional e refresh de sessão, logout, permissão limitada, CRUD de cliente, isolamento entre tenants e rejeição CSRF cruzada, eventos e detalhe com escala diária, participação mensal e custo, CRUD de servidor, custo fixo, plano recorrente, idempotência/materialização, dashboard, relatórios, obrigações, links profundos, refresh, voltar/avançar e telas de erro/autorização.
+
+As 15 combinações responsivas de Dashboard, Eventos, Custos fixos, Servidores e Custos de servidores (desktop, tablet e celular) não apresentaram overflow horizontal. A telemetria final não encontrou erro React/página, falha de request ou HTTP inesperado. Os 401/403 eram respostas intencionalmente provocadas por logout, CSRF cruzado e permissão limitada. Uma extensão local de segurança injetou tentativa de recurso externo; ela foi bloqueada no contexto do navegador antes de sair da máquina e não houve host externo efetivo. Indicadores locais: `DOMContentLoaded` 1.925 ms, `load` 6.930 ms e transferência de 76.254 bytes; não são benchmark de produção.
+
+O backup real de `explorea`, `backup_banco_2026-08_20260802_112155_553606.json`, foi restaurado em `explorerestore`: `loaddata` instalou 645 objetos com código 0. O marcador UTF-8 `Árvore São João — Tenant A` foi confirmado por codepoints e o marcador do tenant B foi zero. A cópia recuperável do dump e metadado ficou somente nos diagnósticos externos.
+
+A Demo pública não foi provisionada nem mutada nesta rodada, pois criar ou usar o seed público contrariaria a proibição explícita de escrita em `demo1` e `rh_teste`. O banco temporário confirmou zero schema reservado; a proteção de não escrita foi respeitada. O fluxo público completo, inclusive seed/reset/isolamento, permanece coberto pela evidência F7 aprovada em 17.12.
+
+#### Problema encontrado e correção mínima
+
+O item **Dashboard** da sidebar apontava para `/`, rota de entrada da Demo pública, em vez do dashboard privado do tenant. A correção foi restrita ao frontend:
+
+- `rhsaasfront/components/dashboard/sidebar.tsx`: destino alterado de `/` para `/dashboard`;
+- `rhsaasfront/app/dashboard/page.tsx`: rota privada que renderiza `FinancialDashboardView`.
+
+Após o hot reload, o clique real em **Dashboard** chegou a `/dashboard`, exibiu o título esperado e terminou com código 0. Não houve alteração de backend, remoção de teste, skip, xfail, redução de assert ou aumento de timeout.
+
+#### Evidências, limpeza e estado Git
+
+Os logs persistentes externos estão em `C:\Users\Davif\.codex\diagnostics\rhsaas_exploratory_homologation_20260802_run01`: `environment_preflight.log`, `fixture_setup.log`, `migrate_shared.log`, `browser_exploration.log`, `backup_restore.log`, `public_demo_protection.log` e `cleanup.log`. O backup criado sob `backups/tenants/explorea` foi removido do repositório após a cópia diagnóstica. As portas 8010 e 3110 foram encerradas, todas as conexões remanescentes do alvo foram terminadas e a consulta final retornou zero bancos com o prefixo `rhsaas_explore_20260802_`.
+
+Estado Git ao finalizar: backend em `feat/django-tenants-spike` / `13ab56b`, com somente `M PLANO_ATUALIZACAO_PARIDADE_FUNCIONAL_MULTITENANT.md`; frontend em `main` / `f5d1a40`, com `M components/dashboard/sidebar.tsx` e a nova rota não rastreada `app/dashboard/page.tsx`. Não deve ser criado commit nesta etapa.
+
+Veredito: **Homologação exploratória aprovada com observações documentadas.**
