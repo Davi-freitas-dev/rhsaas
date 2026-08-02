@@ -12,6 +12,13 @@ from .models_dividas import DividaFinanceira, PagamentoParcelaDivida, ParcelaDiv
 from .models_fcf import FinanciamentoMovimentacao
 from .models_fci import Investimento
 from .models_pagamentos import PagamentoEventoCustoExtra, PagamentoEventoCustoServico
+from .models_servidores import (
+    HistoricoSalarialServidor,
+    ParticipacaoServidorEvento,
+    Servidor,
+    ServidorEventoDiaTrabalhado,
+    ServidorServico,
+)
 from .permissions import sincronizar_grupos_permissoes
 from .services_lancamentos import (
     sincronizar_lancamento_despesa_manual,
