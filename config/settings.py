@@ -532,6 +532,13 @@ TIME_ZONE = "America/Maceio"
 USE_I18N = True
 USE_TZ = True
 
+# Planos sem término são projetados sob demanda e nunca podem gerar uma consulta
+# ilimitada.
+CUSTOS_RECORRENTES_HORIZONTE_MAXIMO_MESES = env.int(
+    "CUSTOS_RECORRENTES_HORIZONTE_MAXIMO_MESES",
+    default=24,
+)
+
 
 # Arquivos de midia
 # A demo nao possui upload real. Qualquer upload futuro deve gravar em

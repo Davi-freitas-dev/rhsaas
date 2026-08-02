@@ -1,5 +1,7 @@
 from decimal import Decimal
 
+from django.db.models import Q
+
 from django.utils import timezone
 
 from .constants_financeiros import STATUS_CANCELADO, STATUS_PAGO
@@ -9,6 +11,13 @@ from .utils_periodos import resolver_periodo_rapido_com_sessao
 
 
 NOMES_CATEGORIAS_CUSTO_FIXO = dict(CustoFixo.CATEGORIA_CHOICES)
+
+Q_CUSTO_FIXO_RECORRENTE = (
+    Q(recorrente=True)
+    | Q(custo_pai__isnull=False)
+    | Q(plano_recorrente__isnull=False)
+    | Q(origem_recorrencia__in=["plano", "salario"])
+)
 
 OPCOES_RECORRENTE_CUSTO_FIXO = (
     ("sim", "Sim"),
@@ -51,9 +60,9 @@ def filtrar_custos_fixos(filtros):
         custos = custos.filter(status=filtros["status"])
 
     if filtros["recorrente"] == "sim":
-        custos = custos.filter(recorrente=True)
+        custos = custos.filter(Q_CUSTO_FIXO_RECORRENTE)
     elif filtros["recorrente"] == "nao":
-        custos = custos.filter(recorrente=False)
+        custos = custos.exclude(Q_CUSTO_FIXO_RECORRENTE)
 
     if filtros["tipo_registro"] == "manual":
         custos = custos.filter(gerado_automaticamente=False)

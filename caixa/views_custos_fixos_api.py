@@ -1,4 +1,6 @@
 import json
+import calendar
+from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import ValidationError
@@ -10,7 +12,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.views.defaults import page_not_found
 from django.views.decorators.http import require_http_methods
-from drf_spectacular.utils import OpenApiTypes, extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework.decorators import (
     api_view,
     authentication_classes,
@@ -20,17 +22,19 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from .constants_financeiros import STATUS_CANCELADO, STATUS_PAGO, STATUS_PENDENTE
-from .models_custo_fixo import CustoFixo
+from .models_custo_fixo import CustoFixo, PlanoCustoRecorrente
 from .demo_policy import assert_demo_write_allowed, demo_object_flags
 from .permissions import (
     ADD_FIXED_COST_PERMISSION,
     CHANGE_FIXED_COST_PERMISSION,
     VIEW_FIXED_COST_PERMISSION,
+    VIEW_SERVER_SALARY_PERMISSION,
     api_authentication_required_response,
     api_no_store_json_response,
     api_permission_denied_response,
 )
 from .selectors_custos_fixos import (
+    Q_CUSTO_FIXO_RECORRENTE,
     agrupar_custos_fixos_por_categoria,
     categorias_custo_fixo_para_filtro,
     listar_custos_fixos_ordenados,
@@ -39,6 +43,25 @@ from .selectors_custos_fixos import (
     status_custo_fixo_para_filtro,
     tipos_registro_custo_fixo_para_filtro,
     totais_custos_fixos,
+)
+from .services_custos_recorrentes import (
+    adicionar_meses_competencia,
+    criar_plano_recorrente,
+    horizonte_maximo_meses,
+    projetar_custos_recorrentes,
+)
+from .services_idempotencia import (
+    ChaveIdempotenciaInvalida,
+    ConflitoChaveIdempotencia,
+    executar_requisicao_idempotente,
+    parsear_chave_idempotencia,
+)
+from .serializers_api import HttpApiErrorSerializer
+from .serializers_custos_fixos_api import (
+    FixedCostDetailResponseSerializer,
+    FixedCostListResponseSerializer,
+    FixedCostMutationResponseSerializer,
+    FixedCostPayloadSerializer,
 )
 from .views_clientes_api import JsonBodySafeSessionAuthentication
 
@@ -150,6 +173,7 @@ def _record_type_label(custo_fixo):
 
 
 def _serialize_custo_fixo(custo_fixo):
+    salarial = custo_fixo.origem_recorrencia == "salario"
     return {
         "id": custo_fixo.id,
         "description": custo_fixo.descricao,
@@ -166,16 +190,54 @@ def _serialize_custo_fixo(custo_fixo):
         "settlementReason": custo_fixo.motivo_baixa,
         "notes": custo_fixo.observacao,
         "isActive": custo_fixo.ativo,
-        "isRecurring": custo_fixo.recorrente,
+        "isRecurring": custo_fixo.eh_recorrente,
         "monthsCount": custo_fixo.quantidade_meses,
         "parentId": custo_fixo.custo_pai_id,
         "generatedAutomatically": custo_fixo.gerado_automaticamente,
         "recordType": _record_type(custo_fixo),
         "recordTypeLabel": _record_type_label(custo_fixo),
+        "kind": "occurrence",
+        "origin": custo_fixo.origem_recorrencia,
+        "planId": custo_fixo.plano_recorrente_id,
+        "competence": _date_or_empty(custo_fixo.competencia),
+        "serverId": custo_fixo.servidor_salario_id,
+        "serverReferenceId": custo_fixo.servidor_salario_id,
+        "source": (
+            "salaryHistory"
+            if custo_fixo.origem_recorrencia == "salario"
+            else (
+                "recurringPlan"
+                if custo_fixo.plano_recorrente_id
+                else "fixedCost"
+            )
+        ),
+        "projectedAmount": "0.00",
+        "forecastAmount": _money(custo_fixo.valor_pendente_pagamento),
+        "readOnly": salarial,
+        "canEdit": not salarial,
+        "canPay": custo_fixo.status not in [STATUS_PAGO, STATUS_CANCELADO],
         "isOverdue": _is_overdue(custo_fixo),
         "createdAt": _datetime_or_empty(custo_fixo.criado_em),
         "updatedAt": _datetime_or_empty(custo_fixo.atualizado_em),
         **demo_object_flags(custo_fixo),
+    }
+
+
+def _serialize_salario_fixo(item):
+    return {
+        **item,
+        "plannedAmount": _money(item["plannedAmount"]),
+        "paidAmount": _money(item["paidAmount"]),
+        "pendingPaymentAmount": _money(item["pendingPaymentAmount"]),
+        "dueDate": _date_or_empty(item["dueDate"]),
+        "paymentDate": "",
+        "manuallySettled": False,
+        "settlementReason": "",
+        "notes": "Fonte única: histórico salarial do servidor.",
+        "monthsCount": 1,
+        "parentId": None,
+        "createdAt": "",
+        "updatedAt": "",
     }
 
 
@@ -187,6 +249,10 @@ def _serialize_group(grupo):
         "plannedAmount": _money(grupo["subtotal_previsto"]),
         "paidAmount": _money(grupo["subtotal_pago"]),
         "pendingPaymentAmount": _money(grupo["subtotal_contas_pendentes"]),
+        "realizedAmount": _money(grupo["subtotal_pago"]),
+        "materializedPlannedAmount": _money(grupo["subtotal_previsto"]),
+        "projectedAmount": "0.00",
+        "forecastAmount": _money(grupo["subtotal_contas_pendentes"]),
         "total": grupo["quantidade"],
         "overdueCount": grupo["quantidade_vencidos"],
     }
@@ -240,8 +306,13 @@ def _build_filters(request):
     }
 
 
-def _filtered_fixed_costs(filtros):
+def _filtered_fixed_costs(filtros, *, pode_ver_salario):
     custos = CustoFixo.objects.all()
+
+    if not pode_ver_salario:
+        custos = custos.exclude(
+            Q(origem_recorrencia="salario") | Q(categoria="salario")
+        )
 
     if filtros["ativo"] == "nao":
         custos = custos.filter(ativo=False)
@@ -266,9 +337,9 @@ def _filtered_fixed_costs(filtros):
         custos = custos.filter(status=filtros["status"])
 
     if filtros["recorrente"] == "sim":
-        custos = custos.filter(recorrente=True)
+        custos = custos.filter(Q_CUSTO_FIXO_RECORRENTE)
     elif filtros["recorrente"] == "nao":
-        custos = custos.filter(recorrente=False)
+        custos = custos.exclude(Q_CUSTO_FIXO_RECORRENTE)
 
     if filtros["tipo_registro"] == "manual":
         custos = custos.filter(gerado_automaticamente=False)
@@ -282,6 +353,84 @@ def _filtered_fixed_costs(filtros):
         )
 
     return custos
+
+
+def _projection_for_filters(filtros, *, pode_ver_salario):
+    if (
+        filtros["ativo"] == "nao"
+        or filtros["recorrente"] == "nao"
+        or filtros["tipo_registro"] == "manual"
+        or (
+            filtros["status"]
+            and filtros["status"] not in {"projected", "blocked"}
+        )
+        or filtros["periodo_rapido"] == "vencidos"
+    ):
+        return {
+            "items": [],
+            "summary": {
+                "projectedAmount": "0.00",
+                "projectedCount": 0,
+                "blockedCount": 0,
+            },
+            "period": None,
+        }
+
+    hoje = timezone.localdate()
+    inicio = filtros["data_inicial"] or hoje
+    fim = filtros["data_final"]
+    if isinstance(inicio, str):
+        inicio = parse_date(inicio) or hoje
+    if isinstance(fim, str):
+        fim = parse_date(fim)
+    if not fim:
+        ultima_competencia = adicionar_meses_competencia(
+            inicio,
+            horizonte_maximo_meses() - 1,
+        )
+        fim = date(
+            ultima_competencia.year,
+            ultima_competencia.month,
+            calendar.monthrange(
+                ultima_competencia.year,
+                ultima_competencia.month,
+            )[1],
+        )
+
+    planos = PlanoCustoRecorrente.objects.filter(ativo=True)
+    if not pode_ver_salario:
+        planos = planos.exclude(origem=PlanoCustoRecorrente.ORIGEM_SALARIO)
+    if filtros["categoria"]:
+        planos = planos.filter(categoria=filtros["categoria"])
+    if filtros["busca"]:
+        planos = planos.filter(
+            Q(descricao__icontains=filtros["busca"])
+            | Q(observacao__icontains=filtros["busca"])
+        )
+    resultado = projetar_custos_recorrentes(inicio=inicio, fim=fim, planos=planos)
+    if filtros["status"] in {"projected", "blocked"}:
+        resultado["items"] = [
+            item
+            for item in resultado["items"]
+            if item["status"] == filtros["status"]
+        ]
+        resultado["summary"]["projectedAmount"] = _money(
+            sum(
+                (
+                    Decimal(item["projectedAmount"])
+                    for item in resultado["items"]
+                    if item["status"] == "projected"
+                ),
+                Decimal("0.00"),
+            )
+        )
+        resultado["summary"]["projectedCount"] = sum(
+            item["status"] == "projected" for item in resultado["items"]
+        )
+        resultado["summary"]["blockedCount"] = sum(
+            item["status"] == "blocked" for item in resultado["items"]
+        )
+    return resultado
 
 
 def _custo_fixo_data_from_payload(payload):
@@ -337,10 +486,60 @@ def _custo_fixo_data_from_payload(payload):
 
 def _custos_fixos_response(request):
     filtros = _build_filters(request)
-    lista_custos = listar_custos_fixos_ordenados(_filtered_fixed_costs(filtros))
+    pode_ver_salario = request.user.has_perm(VIEW_SERVER_SALARY_PERMISSION)
+    lista_custos = listar_custos_fixos_ordenados(
+        _filtered_fixed_costs(filtros, pode_ver_salario=pode_ver_salario)
+    )
     totais = totais_custos_fixos(lista_custos)
     grupos = agrupar_custos_fixos_por_categoria(lista_custos)
+    projecao = _projection_for_filters(
+        filtros,
+        pode_ver_salario=pode_ver_salario,
+    )
+    itens_projetados = projecao["items"]
+    total_projetado = Decimal(projecao["summary"]["projectedAmount"])
     overdue_count = sum(1 for custo in lista_custos if _is_overdue(custo))
+    grupos_payload = [_serialize_group(grupo) for grupo in grupos]
+    for item in itens_projetados:
+        grupo_projecao = next(
+            (
+                grupo
+                for grupo in grupos_payload
+                if grupo["category"] == item["category"]
+            ),
+            None,
+        )
+        if grupo_projecao is None:
+            grupo_projecao = {
+                "category": item["category"],
+                "categoryLabel": item["categoryLabel"],
+                "items": [],
+                "plannedAmount": "0.00",
+                "paidAmount": "0.00",
+                "pendingPaymentAmount": "0.00",
+                "realizedAmount": "0.00",
+                "materializedPlannedAmount": "0.00",
+                "projectedAmount": "0.00",
+                "forecastAmount": "0.00",
+                "total": 0,
+                "overdueCount": 0,
+            }
+            grupos_payload.append(grupo_projecao)
+        grupo_projecao["items"].append(item)
+        grupo_projecao["projectedAmount"] = _money(
+            Decimal(grupo_projecao["projectedAmount"])
+            + (
+                Decimal(item["projectedAmount"])
+                if item["status"] == "projected"
+                else Decimal("0.00")
+            )
+        )
+        grupo_projecao["forecastAmount"] = _money(
+            Decimal(grupo_projecao["pendingPaymentAmount"])
+            + Decimal(grupo_projecao["projectedAmount"])
+        )
+        grupo_projecao["total"] += 1
+    grupos_payload.sort(key=lambda grupo: grupo["categoryLabel"])
     filters_payload = {
         **filtros,
         "search": filtros["busca"],
@@ -356,13 +555,26 @@ def _custos_fixos_response(request):
     return api_no_store_json_response(
         {
             "data": {
-                "fixedCosts": [_serialize_custo_fixo(custo) for custo in lista_custos],
-                "groups": [_serialize_group(grupo) for grupo in grupos],
+                "fixedCosts": [
+                    *[_serialize_custo_fixo(custo) for custo in lista_custos],
+                    *itens_projetados,
+                ],
+                "projections": itens_projetados,
+                "groups": grupos_payload,
                 "summary": {
                     "plannedAmount": _money(totais["total_previsto"]),
                     "paidAmount": _money(totais["total_pago"]),
+                    "realizedAmount": _money(totais["total_pago"]),
+                    "materializedPlannedAmount": _money(totais["total_previsto"]),
                     "pendingPaymentAmount": _money(totais["total_contas_pendentes"]),
-                    "total": totais["quantidade"],
+                    "projectedAmount": _money(total_projetado),
+                    "forecastAmount": _money(
+                        totais["total_contas_pendentes"] + total_projetado
+                    ),
+                    "total": totais["quantidade"] + len(itens_projetados),
+                    "materializedCount": totais["quantidade"],
+                    "projectedCount": projecao["summary"]["projectedCount"],
+                    "blockedProjectionCount": projecao["summary"]["blockedCount"],
                     "manualCount": totais["quantidade_manuais"],
                     "automaticCount": totais["quantidade_automaticos"],
                     "overdueCount": overdue_count,
@@ -370,7 +582,11 @@ def _custos_fixos_response(request):
                 "filters": filters_payload,
                 "filterOptions": {
                     "categories": _choice_options(categorias_custo_fixo_para_filtro()),
-                    "statuses": _choice_options(status_custo_fixo_para_filtro()),
+                    "statuses": [
+                        *_choice_options(status_custo_fixo_para_filtro()),
+                        {"value": "projected", "label": "Projetado"},
+                        {"value": "blocked", "label": "Bloqueado"},
+                    ],
                     "recurring": _choice_options(recorrencia_custo_fixo_para_filtro()),
                     "recordTypes": _choice_options(tipos_registro_custo_fixo_para_filtro()),
                     "activeStatuses": [
@@ -423,14 +639,142 @@ def _criar_custo_fixo_response(request):
     payload = _payload_json(request)
     if payload is None:
         return api_no_store_json_response({"detail": "JSON invalido."}, status=400)
+    categoria_payload = _string_payload_value(payload, "category", "categoria")
+    if (
+        categoria_payload == "salario"
+        and not request.user.has_perm(VIEW_SERVER_SALARY_PERMISSION)
+    ):
+        return api_permission_denied_response()
 
+    replayed = False
     try:
-        custo_fixo = CustoFixo(**_custo_fixo_data_from_payload(payload))
-        custo_fixo.criado_por = request.user
-        custo_fixo.atualizado_por = request.user
-        custo_fixo.full_clean()
-        custo_fixo.save()
-        custo_fixo.gerar_recorrencias()
+        dados_custo = _custo_fixo_data_from_payload(payload)
+        if dados_custo["recorrente"]:
+            if dados_custo["categoria"] == "salario":
+                raise ValidationError(
+                    {
+                        "categoria": (
+                            "Custo salarial recorrente deve ser configurado "
+                            "no cadastro do servidor."
+                        )
+                    }
+                )
+            if (
+                dados_custo["valor_pago"] > Decimal("0.00")
+                or dados_custo["baixado_manualmente"]
+            ):
+                raise ValidationError(
+                    {
+                        "valor_pago": (
+                            "Plano recorrente deve ser criado sem pagamento; "
+                            "liquide a ocorrência materializada."
+                        )
+                    }
+                )
+            inicio = dados_custo["data_vencimento"].replace(day=1)
+            fim = None
+            if not _boolean_payload_value(
+                payload,
+                "openEnded",
+                "sem_data_fim",
+                default=False,
+            ):
+                ultima_competencia = adicionar_meses_competencia(
+                    inicio,
+                    dados_custo["quantidade_meses"] - 1,
+                )
+                fim = date(
+                    ultima_competencia.year,
+                    ultima_competencia.month,
+                    calendar.monthrange(
+                        ultima_competencia.year,
+                        ultima_competencia.month,
+                    )[1],
+                )
+            autorizacao = _date_payload_value(
+                payload,
+                "authorizedMaterializationDate",
+                "authorizedMaterializationDate",
+                "data_autorizacao_materializacao",
+            )
+            if autorizacao is None:
+                raise ValidationError(
+                    {
+                        "authorizedMaterializationDate": (
+                            "Informe explicitamente a data autorizada."
+                        )
+                    }
+                )
+            idempotency_key = parsear_chave_idempotencia(
+                request.headers.get("Idempotency-Key")
+            )
+            dados_plano = {
+                    "descricao": dados_custo["descricao"],
+                    "categoria": dados_custo["categoria"],
+                    "origem": PlanoCustoRecorrente.ORIGEM_COMUM,
+                    "periodicidade": PlanoCustoRecorrente.PERIODICIDADE_MENSAL,
+                    "valor_previsto": dados_custo["valor_previsto"],
+                    "data_inicio": inicio,
+                    "data_fim": fim,
+                    "dia_vencimento": dados_custo["data_vencimento"].day,
+                    "data_autorizacao_materializacao": autorizacao,
+                    "ativo": dados_custo["ativo"],
+                    "observacao": dados_custo["observacao"],
+            }
+
+            def criar_plano_compatibilidade():
+                plano_criado, materializacao_criada = criar_plano_recorrente(
+                    dados=dados_plano,
+                    usuario=request.user,
+                    materializar_atual=True,
+                )
+                materializacao_segura = (
+                    {
+                        chave: valor
+                        for chave, valor in materializacao_criada.items()
+                        if chave != "value"
+                    }
+                    if materializacao_criada
+                    else None
+                )
+                return (
+                    {
+                        "planId": plano_criado.pk,
+                        "materialization": materializacao_segura,
+                    },
+                    201,
+                )
+
+            resultado_idempotente, _, replayed = executar_requisicao_idempotente(
+                escopo="criar-plano-via-custo-fixo",
+                chave=idempotency_key,
+                payload=payload,
+                ator=request.user,
+                operacao=criar_plano_compatibilidade,
+            )
+            plano = PlanoCustoRecorrente.objects.get(
+                pk=resultado_idempotente["planId"]
+            )
+            materializacao = resultado_idempotente["materialization"]
+            custo_fixo = (
+                CustoFixo.objects.get(pk=materializacao["fixedCostId"])
+                if materializacao and materializacao["status"] == "created"
+                else None
+            )
+        else:
+            plano = None
+            materializacao = None
+            custo_fixo = CustoFixo(**dados_custo)
+            custo_fixo.criado_por = request.user
+            custo_fixo.atualizado_por = request.user
+            custo_fixo.full_clean()
+            custo_fixo.save()
+    except (ChaveIdempotenciaInvalida, ConflitoChaveIdempotencia) as error:
+        return api_no_store_json_response(
+            {"errors": {"Idempotency-Key": [str(error)]}},
+            status=400,
+            json_dumps_params={"ensure_ascii": False},
+        )
     except ValidationError as error:
         return api_no_store_json_response(
             {"errors": _errors_from_validation_error(error)},
@@ -444,16 +788,41 @@ def _criar_custo_fixo_response(request):
             json_dumps_params={"ensure_ascii": False},
         )
 
-    return api_no_store_json_response(
+    response = api_no_store_json_response(
         {
             "data": {
-                "fixedCost": _serialize_custo_fixo(custo_fixo),
-                "message": "Custo fixo cadastrado com sucesso.",
+                "fixedCost": _serialize_custo_fixo(custo_fixo) if custo_fixo else None,
+                "recurringPlan": (
+                    {
+                        "id": plano.pk,
+                        "description": plano.descricao,
+                        "category": plano.categoria,
+                        "plannedAmount": _money(plano.valor_previsto),
+                        "startDate": plano.data_inicio.isoformat(),
+                        "endDate": plano.data_fim.isoformat() if plano.data_fim else None,
+                        "dueDay": plano.dia_vencimento,
+                        "authorizedMaterializationDate": (
+                            plano.data_autorizacao_materializacao.isoformat()
+                        ),
+                        "isActive": plano.ativo,
+                    }
+                    if plano
+                    else None
+                ),
+                "materialization": materializacao,
+                "message": (
+                    "Plano recorrente cadastrado com sucesso."
+                    if plano
+                    else "Custo fixo cadastrado com sucesso."
+                ),
             }
         },
         status=201,
         json_dumps_params={"ensure_ascii": False},
     )
+    if plano:
+        response["Idempotency-Replayed"] = "true" if replayed else "false"
+    return response
 
 
 def _atualizar_custo_fixo_response(request, custo_fixo):
@@ -504,11 +873,42 @@ def _atualizar_custo_fixo_response(request, custo_fixo):
 
 
 @require_http_methods(["GET", "POST"])
-@extend_schema(methods=["GET"], responses={200: OpenApiTypes.OBJECT}, auth=[{"cookieAuth": []}])
+@extend_schema(
+    methods=["GET"],
+    responses={
+        200: FixedCostListResponseSerializer,
+        401: HttpApiErrorSerializer,
+        403: HttpApiErrorSerializer,
+        405: HttpApiErrorSerializer,
+    },
+    auth=[{"cookieAuth": []}],
+)
 @extend_schema(
     methods=["POST"],
-    request=OpenApiTypes.OBJECT,
-    responses={201: OpenApiTypes.OBJECT},
+    parameters=[
+        OpenApiParameter(
+            name="Idempotency-Key",
+            type=str,
+            location=OpenApiParameter.HEADER,
+            required=False,
+            description="Obrigatória quando isRecurring=true.",
+        ),
+        OpenApiParameter(
+            name="Idempotency-Replayed",
+            type=str,
+            location=OpenApiParameter.HEADER,
+            response=[201],
+            description="Indica replay da criação recorrente compatível.",
+        ),
+    ],
+    request=FixedCostPayloadSerializer,
+    responses={
+        201: FixedCostMutationResponseSerializer,
+        400: HttpApiErrorSerializer,
+        401: HttpApiErrorSerializer,
+        403: HttpApiErrorSerializer,
+        415: HttpApiErrorSerializer,
+    },
     auth=[{"cookieAuth": []}],
 )
 @api_view(["GET", "POST"])
@@ -518,7 +918,11 @@ def api_custos_fixos(request):
     def drf_response_from_json_response(response):
         payload = json.loads(response.content.decode(response.charset or "utf-8"))
         drf_response = Response(payload, status=response.status_code)
-        for header_name in ("Cache-Control", "Expires"):
+        for header_name in (
+            "Cache-Control",
+            "Expires",
+            "Idempotency-Replayed",
+        ):
             if header_name in response:
                 drf_response[header_name] = response[header_name]
         return drf_response
@@ -544,14 +948,27 @@ def api_custos_fixos(request):
 @extend_schema(
     methods=["GET"],
     operation_id="custos_fixos_detalhe_retrieve",
-    responses={200: OpenApiTypes.OBJECT},
+    responses={
+        200: FixedCostDetailResponseSerializer,
+        401: HttpApiErrorSerializer,
+        403: HttpApiErrorSerializer,
+        404: HttpApiErrorSerializer,
+        405: HttpApiErrorSerializer,
+    },
     auth=[{"cookieAuth": []}],
 )
 @extend_schema(
     methods=["PUT"],
     operation_id="custos_fixos_detalhe_update",
-    request=OpenApiTypes.OBJECT,
-    responses={200: OpenApiTypes.OBJECT},
+    request=FixedCostPayloadSerializer,
+    responses={
+        200: FixedCostMutationResponseSerializer,
+        400: HttpApiErrorSerializer,
+        401: HttpApiErrorSerializer,
+        403: HttpApiErrorSerializer,
+        404: HttpApiErrorSerializer,
+        415: HttpApiErrorSerializer,
+    },
     auth=[{"cookieAuth": []}],
 )
 @api_view(["GET", "PUT"])
@@ -572,6 +989,11 @@ def api_custo_fixo_detalhe(request, pk):
         return page_not_found(django_request, exception)
 
     django_request = getattr(request, "_request", request)
+    custos_visiveis = CustoFixo.objects.all()
+    if not request.user.has_perm(VIEW_SERVER_SALARY_PERMISSION):
+        custos_visiveis = custos_visiveis.exclude(
+            Q(origem_recorrencia="salario") | Q(categoria="salario")
+        )
 
     if not request.user.is_authenticated:
         return drf_response_from_json_response(api_authentication_required_response())
@@ -581,7 +1003,7 @@ def api_custo_fixo_detalhe(request, pk):
             return drf_response_from_json_response(api_permission_denied_response())
 
         try:
-            custo_fixo = get_object_or_404(CustoFixo, pk=pk)
+            custo_fixo = get_object_or_404(custos_visiveis, pk=pk)
         except Http404:
             return django_not_found_response()
 
@@ -593,9 +1015,24 @@ def api_custo_fixo_detalhe(request, pk):
         return drf_response_from_json_response(api_permission_denied_response())
 
     try:
-        custo_fixo = get_object_or_404(CustoFixo, pk=pk)
+        custo_fixo = get_object_or_404(custos_visiveis, pk=pk)
     except Http404:
         return django_not_found_response()
+
+    if custo_fixo.origem_recorrencia == "salario":
+        return drf_response_from_json_response(
+            api_no_store_json_response(
+                {
+                    "errors": {
+                        "detail": [
+                            "A ocorrência salarial é derivada; altere contrato e salário no cadastro do servidor."
+                        ]
+                    }
+                },
+                status=400,
+                json_dumps_params={"ensure_ascii": False},
+            )
+        )
 
     return drf_response_from_json_response(
         _atualizar_custo_fixo_response(django_request, custo_fixo)
