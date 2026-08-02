@@ -53,7 +53,10 @@ def sincronizar_custos_servicos_orcamento(orcamento, evento):
         servico_id__in=servicos_processados,
     )
     for custo_excedente in custos_excedentes:
-        if custo_servico_possui_movimento(custo_excedente):
+        if (
+            custo_servico_possui_movimento(custo_excedente)
+            or custo_servico_possui_participacao(custo_excedente)
+        ):
             custo_excedente.valor_diarias = Decimal("0.00")
             custo_excedente.valor_alimentacao = Decimal("0.00")
             custo_excedente.valor_transporte = Decimal("0.00")
@@ -163,6 +166,18 @@ def custo_servico_possui_movimento(custo_servico):
     )
 
 
+def custo_servico_possui_participacao(custo_servico):
+    # Uma participação não pode ficar sem sua fonte de rateio. O model de
+    # custo também recusa a exclusão; aqui zeramos o total no mesmo caminho
+    # que atualiza o orçamento para que o recálculo preserve as invariantes.
+    from .models_servidores import ParticipacaoServidorEvento
+
+    return ParticipacaoServidorEvento.objects.filter(
+        evento_id=custo_servico.evento_id,
+        servico_id=custo_servico.servico_id,
+    ).exists()
+
+
 def criar_ou_atualizar_evento_do_orcamento(orcamento):
     from .models import Evento
 
@@ -213,19 +228,26 @@ def criar_ou_atualizar_evento_do_orcamento(orcamento):
                 raise
 
     if not criado:
-        evento.cliente = orcamento.cliente
-        evento.nome_evento = orcamento.nome_evento
-        evento.data_inicio = orcamento.data_evento
-        evento.data_fim = orcamento.data_evento
-        evento.local = orcamento.local
-        evento.observacoes = orcamento.observacoes
-        evento.valor_total_previsto = orcamento.total_venda
-        evento.custo_total_previsto = quantizar_moeda(
-            orcamento.subtotal_custos + orcamento.total_impostos
+        from .services_participacoes_servidores import atualizar_evento_com_periodo
+
+        evento = atualizar_evento_com_periodo(
+            evento,
+            valores={
+                "cliente": orcamento.cliente,
+                "nome_evento": orcamento.nome_evento,
+                "data_inicio": orcamento.data_evento,
+                "data_fim": orcamento.data_evento,
+                "local": orcamento.local,
+                "observacoes": orcamento.observacoes,
+                "valor_total_previsto": orcamento.total_venda,
+                "custo_total_previsto": quantizar_moeda(
+                    orcamento.subtotal_custos + orcamento.total_impostos
+                ),
+                "lucro_previsto": orcamento.total_lucro,
+            },
+            usuario=getattr(orcamento, "atualizado_por", None)
+            or getattr(orcamento, "criado_por", None),
         )
-        evento.lucro_previsto = orcamento.total_lucro
-        evento.full_clean()
-        evento.save()
 
     return evento
 

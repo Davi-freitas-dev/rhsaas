@@ -942,6 +942,13 @@ class Evento(models.Model):
 
         if self.data_fim < self.data_inicio:
             erros["data_fim"] = "A data final não pode ser menor que a data inicial."
+        elif self.pk and self.participacoes_servidores.filter(
+            models.Q(dias_trabalhados__data__lt=self.data_inicio)
+            | models.Q(dias_trabalhados__data__gt=self.data_fim)
+        ).exists():
+            erros["data_fim"] = (
+                "O período não pode excluir datas já trabalhadas por servidores."
+            )
 
         if erros:
             raise ValidationError(erros)

@@ -36,6 +36,7 @@ from .selectors_cadastros import (
 from .selectors_opcoes_filtros import listar_clientes_filtro
 from .serializers_dimensoes_operacionais import serializar_dimensao_operacional
 from .services_dimensoes_operacionais import relacao_carregada
+from .services_participacoes_servidores import atualizar_evento_com_periodo
 from .utils_financeiros import decimal_zero
 from .views_clientes_api import JsonBodySafeSessionAuthentication
 
@@ -342,11 +343,11 @@ def _atualizar_evento_response(request, evento):
 
     try:
         evento_data = _evento_data_from_payload(payload)
-        for field, value in evento_data.items():
-            setattr(evento, field, value)
-
-        evento.full_clean()
-        evento.save(update_fields=[*EDITABLE_EVENT_FIELDS, "atualizado_em"])
+        evento = atualizar_evento_com_periodo(
+            evento,
+            valores=evento_data,
+            usuario=request.user,
+        )
         evento = _eventos_queryset().get(pk=evento.pk)
     except Cliente.DoesNotExist:
         return api_no_store_json_response(

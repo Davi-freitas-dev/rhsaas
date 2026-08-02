@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import models, transaction
 from simple_history.models import HistoricalRecords
 
 from .constants_financeiros import (
@@ -234,3 +234,80 @@ class EventoCustoServico(models.Model):
 
         if erros:
             raise ValidationError(erros)
+
+    def _recalcular_participacoes_apos_mutacao(self):
+        from .services_participacoes_servidores import (
+            recalcular_participacoes_por_custo_servico,
+        )
+
+        recalcular_participacoes_por_custo_servico(
+            self,
+            usuario=self.atualizado_por or self.criado_por,
+        )
+
+    def save(self, *args, **kwargs):
+        """Mantém custo distribuível e rateio como uma única operação lógica.
+
+        O lock do Evento vem antes de gravar o custo. Assim a gravação de um
+        orçamento/Admin e uma alteração de participação usam o mesmo primeiro
+        lock e não deixam o rateio observar um total intermediário.
+        """
+        if getattr(self, "_skip_participation_domain", False):
+            return super().save(*args, **kwargs)
+        if not self.evento_id:
+            self.full_clean()
+            return super().save(*args, **kwargs)
+
+        from .models import Evento
+
+        with transaction.atomic():
+            self.evento = Evento.objects.select_for_update().get(pk=self.evento_id)
+            if self.pk:
+                anterior = (
+                    self.__class__.objects.select_for_update()
+                    .only("evento_id", "servico_id")
+                    .get(pk=self.pk)
+                )
+                if (
+                    anterior.evento_id != self.evento_id
+                    or anterior.servico_id != self.servico_id
+                ):
+                    raise ValidationError(
+                        {
+                            "service": (
+                                "O evento e o serviço de um custo estruturado "
+                                "não podem ser trocados. Crie a nova fonte de "
+                                "custo e ajuste as participações pelo serviço de "
+                                "domínio."
+                            )
+                        }
+                    )
+            self.full_clean()
+            result = super().save(*args, **kwargs)
+            self._recalcular_participacoes_apos_mutacao()
+            return result
+
+    def delete(self, *args, **kwargs):
+        """Não permite remover a fonte de um grupo de rateio existente."""
+        if not self.pk:
+            return super().delete(*args, **kwargs)
+
+        from .models import Evento
+        from .models_servidores import ParticipacaoServidorEvento
+
+        with transaction.atomic():
+            Evento.objects.select_for_update().get(pk=self.evento_id)
+            custo = self.__class__.objects.select_for_update().get(pk=self.pk)
+            if ParticipacaoServidorEvento.objects.filter(
+                evento_id=custo.evento_id,
+                servico_id=custo.servico_id,
+            ).exists():
+                raise ValidationError(
+                    {
+                        "service": (
+                            "Não é possível remover o custo estruturado enquanto "
+                            "existirem participações para este serviço."
+                        )
+                    }
+                )
+            return super().delete(*args, **kwargs)
