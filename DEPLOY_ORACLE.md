@@ -134,13 +134,13 @@ Se o frontend estiver apenas na Vercel, registre a referencia do deploy:
 
 ```bash
 python manage.py gerar_snapshot_baseline_financeira --json --frontend-ref=<commit-ou-deploy-vercel>
-python manage.py validar_baseline_pm02 --falhar --json --frontend-ref=<commit-ou-deploy-vercel>
+python manage.py tenant_command validar_baseline_pm02 --schema=<schema-do-tenant> --falhar --json --frontend-ref=<commit-ou-deploy-vercel>
 ```
 
 Para rodar a baseline PM-02 completa em um unico relatorio, use:
 
 ```bash
-python manage.py validar_baseline_pm02 --falhar --json
+python manage.py tenant_command validar_baseline_pm02 --schema=<schema-do-tenant> --falhar --json
 ```
 
 `ready=true` nesse comando significa que as validacoes automaticas passaram; o
@@ -148,9 +148,11 @@ relatorio humano tambem chama isso de baseline automatica aprovada. A PM-02 so
 fecha depois de registrar tambem tag/referencia publicada, backup real do banco,
 snapshot das variaveis de ambiente e resultados no plano mestre.
 O proprio relatorio inclui comandos sugeridos para essas confirmacoes manuais,
-incluindo `python manage.py backup_banco_mensal --force --manter 12`. O JSON
-tambem publica `pm02StrictServerCommand` e `strictServerCommand` para evitar
-divergencia entre documentacao e comando realmente usado na janela. Use
+incluindo `python manage.py tenant_command backup_banco_mensal --schema=<schema-do-tenant> --force --manter 12`. O JSON
+tambem publica `pm02StrictServerCommand` e `strictServerCommand` para
+rastreabilidade da janela. Para todo comando tenant-only, prevalece a forma
+documentada com `tenant_command --schema=<schema-do-tenant>`, mesmo que uma
+sugestao legado apareca em alguma evidencia. Use
 `manualEvidenceComplete=true` como confirmacao de que release, backup,
 referencia do frontend, nome do ambiente e snapshot foram informados no
 relatorio; ainda assim, registre o resultado no plano mestre antes de marcar a
@@ -202,13 +204,13 @@ Em producao, quando quiser reprovar explicitamente worktree suja ou `DEBUG`
 ativo e exigir referencia do frontend publicado, acrescente:
 
 ```bash
-python manage.py validar_baseline_pm02 --modo-servidor-estrito --frontend-ref=<commit-ou-deploy-vercel> --ambiente=producao --release-ref=<tag-ou-commit-backend> --backup-ref=<arquivo-ou-id-backup> --json
+python manage.py tenant_command validar_baseline_pm02 --schema=<schema-do-tenant> --modo-servidor-estrito --frontend-ref=<commit-ou-deploy-vercel> --ambiente=producao --release-ref=<tag-ou-commit-backend> --backup-ref=<arquivo-ou-id-backup> --json
 ```
 
 Ou, quando for mais facil registrar a URL publicada do Vercel:
 
 ```bash
-python manage.py validar_baseline_pm02 --modo-servidor-estrito --frontend-deploy-url=<url-deploy-vercel> --ambiente=producao --release-ref=<tag-ou-commit-backend> --backup-ref=<arquivo-ou-id-backup> --json
+python manage.py tenant_command validar_baseline_pm02 --schema=<schema-do-tenant> --modo-servidor-estrito --frontend-deploy-url=<url-deploy-vercel> --ambiente=producao --release-ref=<tag-ou-commit-backend> --backup-ref=<arquivo-ou-id-backup> --json
 ```
 
 Para validar tambem os valores esperados do `.env` de producao, acrescente:
@@ -264,10 +266,11 @@ comandos abaixo ficam como roteiro de repeticao/auditoria dessa evidencia. Essa
 etapa nao ativa origem nova; ela apenas comprova que a origem ja publicada
 continua escrevendo pela estrutura canonica, sem baixa legada na janela.
 
-Use uma data de ativacao real da janela e grave as evidencias fora do repositorio:
+Use uma data de ativacao real da janela e grave as evidencias fora do repositorio.
+Os comandos operacionais abaixo devem receber sempre o schema do tenant alvo.
 
 ```bash
-python manage.py validar_janela_canonical_first \
+python manage.py tenant_command validar_janela_canonical_first --schema=<schema-do-tenant> \
   --source=custo_fixo \
   --data-ativacao=DATA_DA_ATIVACAO \
   --validar-preflight-operacional \
@@ -283,7 +286,7 @@ Esse comando gera a evidencia de validacao da janela e tambem retorna um
 checklist com os comandos seguintes ja preenchidos com `--diretorio-evidencias`.
 
 ```bash
-python manage.py monitorar_janela_canonical_first \
+python manage.py tenant_command monitorar_janela_canonical_first --schema=<schema-do-tenant> \
   --source=custo_fixo \
   --data-ativacao=DATA_DA_ATIVACAO \
   --exigir-canonical-first \
@@ -305,7 +308,7 @@ Depois do monitor, salve tambem a auditoria da fonte de escrita no mesmo
 diretorio de evidencias:
 
 ```bash
-python manage.py auditar_fonte_escrita_baixas \
+python manage.py tenant_command auditar_fonte_escrita_baixas --schema=<schema-do-tenant> \
   --source=custo_fixo \
   --data-ativacao=DATA_DA_ATIVACAO \
   --write-model-source=canonicalFirst \
@@ -323,7 +326,7 @@ A auditoria gera `pm03-auditoria-fonte-escrita.json` e
 Por fim, preserve a auditoria de totais do mesmo recorte operacional:
 
 ```bash
-python manage.py auditar_totais_negocio \
+python manage.py tenant_command auditar_totais_negocio --schema=<schema-do-tenant> \
   --falhar-com-divergencia \
   --validar-valores-editaveis \
   --falhar-com-valores-editaveis \
@@ -481,15 +484,17 @@ No servidor, depois de configurar o `.env` com PostgreSQL:
 
 ```bash
 source venv/bin/activate
-python manage.py migrate
-python manage.py loaddata ~/backup_dados.json
-python manage.py verificar_consistencia_financeira --corrigir
+python manage.py migrate_schemas --plan
+python manage.py migrate_schemas --shared
+python manage.py migrate_schemas
+python manage.py tenant_command loaddata --schema=<schema-do-tenant> ~/backup_dados.json
+python manage.py tenant_command verificar_consistencia_financeira --schema=<schema-do-tenant> --corrigir
 ```
 
 Depois confira:
 
 ```bash
-python manage.py verificar_consistencia_financeira
+python manage.py tenant_command verificar_consistencia_financeira --schema=<schema-do-tenant>
 python manage.py check --deploy
 ```
 
@@ -497,16 +502,18 @@ python manage.py check --deploy
 
 ```bash
 source venv/bin/activate
-python manage.py migrate
+python manage.py migrate_schemas --plan
+python manage.py migrate_schemas --shared
+python manage.py migrate_schemas
 python manage.py collectstatic --noinput
-python manage.py verificar_consistencia_financeira
+python manage.py tenant_command verificar_consistencia_financeira --schema=<schema-do-tenant>
 python manage.py check --deploy
 ```
 
 Se a auditoria encontrar divergencias antigas:
 
 ```bash
-python manage.py verificar_consistencia_financeira --corrigir
+python manage.py tenant_command verificar_consistencia_financeira --schema=<schema-do-tenant> --corrigir
 ```
 
 ## 6. Testar com Gunicorn
@@ -571,10 +578,12 @@ cd /caminho/do/projeto/rhsaas
 git pull
 source venv/bin/activate
 pip install -r requirements.txt
-python manage.py migrate
+python manage.py migrate_schemas --plan
+python manage.py migrate_schemas --shared
+python manage.py migrate_schemas
 python manage.py collectstatic --noinput
-python manage.py validar_preflight_deploy_financeiro --falhar
-python manage.py auditar_totais_negocio --falhar-com-divergencia --validar-valores-editaveis --falhar-com-valores-editaveis
+python manage.py tenant_command validar_preflight_deploy_financeiro --schema=<schema-do-tenant> --falhar
+python manage.py tenant_command auditar_totais_negocio --schema=<schema-do-tenant> --falhar-com-divergencia --validar-valores-editaveis --falhar-com-valores-editaveis
 python manage.py check --deploy
 sudo systemctl restart rhsaas
 ```
@@ -592,7 +601,7 @@ Se o pre-flight apontar divergencia entre `credor_cadastro` e o alias textual
 `credor` das dividas FCF, revise o relatorio JSON e rode primeiro em dry-run:
 
 ```bash
-python manage.py sincronizar_credores_dividas_fcf --json
+python manage.py tenant_command sincronizar_credores_dividas_fcf --schema=<schema-do-tenant> --json
 ```
 
 No JSON, `pendingCount` mostra quantas pendencias de credor foram encontradas;
@@ -602,8 +611,8 @@ Use `--limit` apenas com valor maior ou igual a zero.
 Depois de revisar, aplique somente se o resultado estiver coerente:
 
 ```bash
-python manage.py sincronizar_credores_dividas_fcf --aplicar --falhar-com-pendencia
-python manage.py validar_preflight_deploy_financeiro --falhar
+python manage.py tenant_command sincronizar_credores_dividas_fcf --schema=<schema-do-tenant> --aplicar --falhar-com-pendencia
+python manage.py tenant_command validar_preflight_deploy_financeiro --schema=<schema-do-tenant> --falhar
 ```
 
 Esse comando corrige apenas `credor_cadastro`/`credor` e nao salva a divida pelo
@@ -615,9 +624,9 @@ Se o pre-flight apontar pendencia de entrada FCF automatica de divida, revise
 o relatorio e use o comando existente de sincronizacao:
 
 ```bash
-python manage.py sincronizar_entradas_fcf_dividas --json --falhar-com-pendencia
-python manage.py sincronizar_entradas_fcf_dividas --aplicar --json --falhar-com-pendencia
-python manage.py validar_preflight_deploy_financeiro --falhar
+python manage.py tenant_command sincronizar_entradas_fcf_dividas --schema=<schema-do-tenant> --json --falhar-com-pendencia
+python manage.py tenant_command sincronizar_entradas_fcf_dividas --schema=<schema-do-tenant> --aplicar --json --falhar-com-pendencia
+python manage.py tenant_command validar_preflight_deploy_financeiro --schema=<schema-do-tenant> --falhar
 ```
 
 Nos comandos de sincronizacao FCF, `--limit` controla apenas quantos itens
@@ -709,51 +718,50 @@ npx --yes pnpm@10.33.4 run build
 Se o deploy foi feito depois de restaurar um backup antigo ou de importar dados, rode primeiro a sincronizacao operacional:
 
 ```bash
-python manage.py verificar_integridade_valores_editaveis --corrigir --falhar-com-inconsistencia
-python manage.py sincronizar_despesas_eventos
-python manage.py sincronizar_lancamentos_financeiros --aplicar
-python manage.py sincronizar_modelagem_financeira_canonica --aplicar
-python manage.py validar_preflight_deploy_financeiro --falhar
+python manage.py tenant_command verificar_integridade_valores_editaveis --schema=<schema-do-tenant> --corrigir --falhar-com-inconsistencia
+python manage.py tenant_command sincronizar_despesas_eventos --schema=<schema-do-tenant>
+python manage.py tenant_command sincronizar_lancamentos_financeiros --schema=<schema-do-tenant> --aplicar
+python manage.py tenant_command sincronizar_modelagem_financeira_canonica --schema=<schema-do-tenant> --aplicar
+python manage.py tenant_command validar_preflight_deploy_financeiro --schema=<schema-do-tenant> --falhar
 ```
 
-## 10. Backup mensal automatico
+## 10. Backup mensal por tenant
 
-O projeto tem o comando:
+No modelo `django-tenants`, `backup_banco_mensal` e um comando operacional de
+tenant. Nunca o execute diretamente nem com o schema `public`: o guardrail do
+comando rejeita esse contexto. Execute-o sempre por `tenant_command`, indicando
+explicitamente o schema do tenant:
 
 ```bash
-python manage.py backup_banco_mensal
+python manage.py tenant_command backup_banco_mensal --schema=<schema-do-tenant>
 ```
 
-Ele gera arquivos em `backups/db/`, so cria um novo backup quando os dados mudaram desde o ultimo backup e mantem os 3 backups mais recentes.
-
-Para agendar todo dia 1 as 03:00:
-
-```bash
-crontab -e
-```
-
-Adicione, ajustando o caminho do projeto:
-
-```cron
-0 3 1 * * cd /caminho/do/projeto/rhsaas && /caminho/do/projeto/rhsaas/venv/bin/python manage.py backup_banco_mensal >> /caminho/do/projeto/rhsaas/backups/backup.log 2>&1
-```
+Ele grava os artefatos desse tenant em `backups/tenants/<schema-do-tenant>/db/`,
+so cria um novo backup quando os dados mudaram desde o ultimo backup e mantem os
+3 backups mais recentes.
 
 Para criar manualmente mesmo sem alteracao:
 
 ```bash
-python manage.py backup_banco_mensal --force
+python manage.py tenant_command backup_banco_mensal --schema=<schema-do-tenant> --force
 ```
 
 Para manter outra quantidade:
 
 ```bash
-python manage.py backup_banco_mensal --manter 6
+python manage.py tenant_command backup_banco_mensal --schema=<schema-do-tenant> --manter 6
 ```
 
-O download fica disponivel para superusuarios em:
+Este runbook nao cria nem instala cron ou timer para backups. Uma automacao
+futura deve ser tenant-aware: enumerar tenants autorizados fora do schema
+`public`, executar um `tenant_command` isolado por schema e registrar sucesso ou
+falha por tenant. Ela nao pode executar `backup_banco_mensal` diretamente nem
+usar um loop no schema `public`.
+
+O download fica disponivel para superusuarios do tenant em:
 
 ```text
 /backups/
 ```
 
-Nessa mesma tela, superusuarios tambem podem usar o botao **Gerar backup manual** para criar um backup imediatamente antes de uma manutencao, deploy ou alteracao importante. O backup manual usa a mesma pasta `backups/db/`, gera o `.json` e o `.meta.json`, e fica disponivel para download na propria lista.
+Nessa mesma tela, superusuarios tambem podem usar o botao **Gerar backup manual** para criar um backup imediatamente antes de uma manutencao, deploy ou alteracao importante. O backup manual usa a mesma pasta tenant-scoped, gera o `.json` e o `.meta.json`, e fica disponivel para download na propria lista do tenant.
