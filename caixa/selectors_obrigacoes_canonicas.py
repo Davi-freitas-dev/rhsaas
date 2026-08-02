@@ -12,6 +12,7 @@ from .selectors_obrigacoes import (
     STATUS_VENCIDO,
 )
 from .services_dimensoes_operacionais import serializar_dimensao_operacional_financeira
+from .security_salarios import ids_custos_salariais
 from .utils_contratos import montar_filtro_evento_ou_orcamento_por_contrato_visual
 from .utils_financeiros import quantizar_moeda
 
@@ -82,6 +83,9 @@ def _aplicar_filtros_canonicos(query, filtros):
     nature = filtros.get("nature") or filtros.get("natureza")
     status = filtros.get("status") or filtros.get("settlementStatus") or filtros.get("situacao")
     sources = filtros.get("sources") or []
+
+    if filtros.get("_exclude_salary"):
+        query = query.exclude(custo_fixo_id__in=ids_custos_salariais())
 
     if data_inicial:
         query = query.filter(data_vencimento__gte=data_inicial)

@@ -21,6 +21,11 @@ from caixa.models_dividas import Credor, DividaFinanceira
 from caixa.models_fcf import FinanciamentoMovimentacao
 from caixa.models_fci import Investimento
 from caixa.models_servico import EventoCustoServico
+from caixa.security_salarios import (
+    filtrar_custos_fixos_por_salario,
+    filtrar_lancamentos_por_salario,
+    filtrar_obrigacoes_por_salario,
+)
 from caixa.tenant_files import recadastro_dir_for_schema
 from caixa.utils_financeiros import decimal_zero
 from tenancy.command_guards import ensure_tenant_schema
@@ -127,7 +132,12 @@ def montar_pacote_recadastro_manual_pm06(output_files=None):
         )
         .order_by("data_inicio", "id")
     )
-    custos_fixos = list(CustoFixo.objects.order_by("data_vencimento", "id"))
+    custos_fixos = list(
+        filtrar_custos_fixos_por_salario(
+            CustoFixo.objects.order_by("data_vencimento", "id"),
+            excluir=True,
+        )
+    )
     dividas = list(
         DividaFinanceira.objects.select_related(
             "credor_cadastro",
@@ -257,8 +267,14 @@ def montar_fora_do_escopo():
         "despesasManuaisCount": DespesaOperacional.objects.filter(
             origem=DespesaOperacional.ORIGEM_MANUAL
         ).count(),
-        "obrigacoesFinanceirasCount": ObrigacaoFinanceira.objects.count(),
-        "lancamentosFinanceirosCount": LancamentoFinanceiro.objects.count(),
+        "obrigacoesFinanceirasCount": filtrar_obrigacoes_por_salario(
+            ObrigacaoFinanceira.objects.all(),
+            excluir=True,
+        ).count(),
+        "lancamentosFinanceirosCount": filtrar_lancamentos_por_salario(
+            LancamentoFinanceiro.objects.all(),
+            excluir=True,
+        ).count(),
         "fciInvestmentsCount": Investimento.objects.count(),
         "warning": (
             "Itens fora do pacote nao sao restaurados como fonte primaria. "

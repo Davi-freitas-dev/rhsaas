@@ -32,6 +32,13 @@ from caixa.models_pagamentos import (
     PagamentoEventoCustoServico,
 )
 from caixa.models_servico import EventoCustoServico
+from caixa.security_salarios import (
+    filtrar_alocacoes_baixa_por_salario,
+    filtrar_baixas_por_salario,
+    filtrar_custos_fixos_por_salario,
+    filtrar_lancamentos_por_salario,
+    filtrar_obrigacoes_por_salario,
+)
 from caixa.serializers_obrigacoes import (
     formatar_status_leitura_obrigacoes,
     montar_payload_obrigacoes_financeiras_api,
@@ -563,12 +570,16 @@ def _auditar_totais_financeiros():
 
 
 def _auditar_ledger():
-    realizados = LancamentoFinanceiro.objects.filter(status=STATUS_REALIZADO)
+    todos = filtrar_lancamentos_por_salario(
+        LancamentoFinanceiro.objects.all(),
+        excluir=True,
+    )
+    realizados = todos.filter(status=STATUS_REALIZADO)
     entradas = _somar(realizados.filter(tipo=TIPO_FLUXO_ENTRADA), "valor")
     saidas = _somar(realizados.filter(tipo=TIPO_FLUXO_SAIDA), "valor")
 
     return {
-        "count": LancamentoFinanceiro.objects.count(),
+        "count": todos.count(),
         "realizedCount": realizados.count(),
         "realizedInflowAmount": _moeda(entradas),
         "realizedOutflowAmount": _moeda(saidas),
@@ -593,10 +604,13 @@ def _auditar_ledger_fluxo(queryset, fluxo):
 
 
 def _totais_basicos(modelo, planned_field, realized_field, extra_fields=None):
-    planned = _somar(modelo.objects.all(), planned_field)
-    realized = _somar(modelo.objects.all(), realized_field) if realized_field else None
+    queryset = modelo.objects.all()
+    if modelo is CustoFixo:
+        queryset = filtrar_custos_fixos_por_salario(queryset, excluir=True)
+    planned = _somar(queryset, planned_field)
+    realized = _somar(queryset, realized_field) if realized_field else None
     dados = {
-        "count": modelo.objects.count(),
+        "count": queryset.count(),
         "plannedAmount": _moeda(planned),
     }
     if realized is not None:
@@ -604,7 +618,7 @@ def _totais_basicos(modelo, planned_field, realized_field, extra_fields=None):
         dados["pendingGrossAmount"] = _moeda(planned - realized)
 
     for chave, campo in (extra_fields or {}).items():
-        dados[chave] = _moeda(_somar(modelo.objects.all(), campo))
+        dados[chave] = _moeda(_somar(queryset, campo))
 
     return dados
 
@@ -655,7 +669,10 @@ def _totais_pagamentos(modelo):
 
 
 def _totais_obrigacoes_canonicas():
-    queryset = ObrigacaoFinanceira.objects.all()
+    queryset = filtrar_obrigacoes_por_salario(
+        ObrigacaoFinanceira.objects.all(),
+        excluir=True,
+    )
     return {
         "count": queryset.count(),
         "plannedAmount": _moeda(_somar(queryset, "valor_previsto")),
@@ -666,7 +683,10 @@ def _totais_obrigacoes_canonicas():
 
 
 def _totais_baixas_canonicas():
-    queryset = BaixaFinanceira.objects.all()
+    queryset = filtrar_baixas_por_salario(
+        BaixaFinanceira.objects.all(),
+        excluir=True,
+    )
     entradas = _somar(queryset.filter(tipo=TIPO_FLUXO_ENTRADA), "valor_total")
     saidas = _somar(queryset.filter(tipo=TIPO_FLUXO_SAIDA), "valor_total")
     return {
@@ -678,7 +698,10 @@ def _totais_baixas_canonicas():
 
 
 def _totais_alocacoes_canonicas():
-    queryset = BaixaFinanceiraAlocacao.objects.all()
+    queryset = filtrar_alocacoes_baixa_por_salario(
+        BaixaFinanceiraAlocacao.objects.all(),
+        excluir=True,
+    )
     return {
         "count": queryset.count(),
         "allocatedAmount": _moeda(_somar(queryset, "valor_alocado")),
@@ -689,7 +712,10 @@ def _totais_alocacoes_canonicas():
 
 
 def _contagem(modelo):
-    return {"count": modelo.objects.count()}
+    queryset = modelo.objects.all()
+    if modelo is CustoFixo:
+        queryset = filtrar_custos_fixos_por_salario(queryset, excluir=True)
+    return {"count": queryset.count()}
 
 
 def _somar(queryset, campo):

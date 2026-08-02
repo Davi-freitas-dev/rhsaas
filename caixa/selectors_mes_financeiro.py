@@ -25,6 +25,7 @@ from .constants_financeiros import (
 )
 from .models import DespesaOperacional, ReceitaOperacional
 from .models_custo_fixo import CustoFixo
+from .security_salarios import filtrar_custos_fixos_por_salario
 from .models_dividas import ParcelaDivida
 from .models_fcf import FinanciamentoMovimentacao
 from .models_fci import Investimento
@@ -98,7 +99,10 @@ def montar_contexto_mes_financeiro(filtros):
         investimentos_entrada,
         financiamentos_entrada,
     )
-    saldo_inicial = calcular_saldo_inicial_fluxo_caixa(filtros.get("data_inicial"))
+    saldo_inicial = calcular_saldo_inicial_fluxo_caixa(
+        filtros.get("data_inicial"),
+        excluir_salarios=filtros.get("_exclude_salary", False),
+    )
     movimentacoes = montar_movimentacoes_mes(
         receitas,
         contas_a_pagar,
@@ -140,7 +144,10 @@ def montar_contexto_mes_financeiro(filtros):
 
 def calcular_caixa_disponivel_mes(filtros, totais_fluxos_caixa=None):
     data_referencia = normalizar_data_referencia_caixa(filtros.get("data_final"))
-    saldo_acumulado = saldo_caixa_disponivel(data_referencia)
+    saldo_acumulado = saldo_caixa_disponivel(
+        data_referencia,
+        excluir_salarios=filtros.get("_exclude_salary", False),
+    )
     saldo = (
         totais_fluxos_caixa["caixa_final_mes"]
         if totais_fluxos_caixa is not None
@@ -362,7 +369,7 @@ def montar_opcoes_filtros_mes_financeiro():
 
 
 def buscar_movimentos_mes(filtros):
-    querysets = criar_querysets_movimentos_mes()
+    querysets = criar_querysets_movimentos_mes(filtros)
     querysets = aplicar_filtros_periodo_movimentos_mes(querysets, filtros)
     querysets = aplicar_filtros_relacionais_movimentos_mes(querysets, filtros)
     querysets = aplicar_filtros_status_movimentos_mes(querysets, filtros)
@@ -371,7 +378,8 @@ def buscar_movimentos_mes(filtros):
     return materializar_movimentos_mes(querysets)
 
 
-def criar_querysets_movimentos_mes():
+def criar_querysets_movimentos_mes(filtros=None):
+    filtros = filtros or {}
     return {
         "receitas": ReceitaOperacional.objects.select_related(
             "cliente",
@@ -389,7 +397,10 @@ def criar_querysets_movimentos_mes():
             "evento__cliente",
             "evento__orcamento",
         ),
-        "custos_fixos": CustoFixo.objects.filter(ativo=True),
+        "custos_fixos": filtrar_custos_fixos_por_salario(
+            CustoFixo.objects.filter(ativo=True),
+            excluir=filtros.get("_exclude_salary", False),
+        ),
         "investimentos": Investimento.objects.select_related(
             "evento",
             "evento__cliente",

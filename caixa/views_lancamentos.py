@@ -34,7 +34,7 @@ def api_lancamentos_financeiros(request):
     if not request.user.has_perm(FINANCIAL_LEDGER_PERMISSION):
         return drf_response_from_json_response(api_permission_denied_response())
 
-    payload = montar_payload_lancamentos_financeiros_api(request.GET)
+    payload = montar_payload_lancamentos_financeiros_api(request.GET, request.user)
     return drf_response_from_json_response(
         api_no_store_json_response(
             payload,

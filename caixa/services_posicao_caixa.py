@@ -18,7 +18,10 @@ def montar_posicao_caixa_periodo(filtros, totais_movimentacoes=None):
     data_referencia = data_final_efetiva.isoformat() if data_final_efetiva else None
     data_saldo_inicial = _data_saldo_inicial(data_inicial, data_atual)
     saldo_inicial = (
-        _saldo_efetivo_lancamentos_ate(data_saldo_inicial)
+        _saldo_efetivo_lancamentos_ate(
+            data_saldo_inicial,
+            excluir_salarios=filtros_dashboard.get("_exclude_salary", False),
+        )
         if data_saldo_inicial
         else quantizar_moeda(0)
     )
@@ -35,8 +38,14 @@ def montar_posicao_caixa_periodo(filtros, totais_movimentacoes=None):
         entradas_efetivas - saidas_efetivas
     )
     caixa_final = quantizar_moeda(saldo_inicial + resultado_realizado_periodo)
-    caixa_acumulado_ate_data = _saldo_efetivo_lancamentos_ate(data_final_efetiva)
-    caixa_disponivel_atual = _saldo_efetivo_lancamentos_ate(data_atual)
+    caixa_acumulado_ate_data = _saldo_efetivo_lancamentos_ate(
+        data_final_efetiva,
+        excluir_salarios=filtros_dashboard.get("_exclude_salary", False),
+    )
+    caixa_disponivel_atual = _saldo_efetivo_lancamentos_ate(
+        data_atual,
+        excluir_salarios=filtros_dashboard.get("_exclude_salary", False),
+    )
 
     return {
         "initialCashAmount": saldo_inicial,
@@ -80,6 +89,7 @@ def _filtros_lancamentos_periodo(filtros, data_inicial, data_final_efetiva):
         "eventId": filtros.get("evento_id"),
         "clientId": filtros.get("cliente_id"),
         "contractCode": filtros.get("contrato_codigo"),
+        "_exclude_salary": filtros.get("_exclude_salary", False),
     }
 
     if data_inicial:
@@ -95,8 +105,11 @@ def _filtros_lancamentos_periodo(filtros, data_inicial, data_final_efetiva):
     }
 
 
-def _saldo_efetivo_lancamentos_ate(data_limite):
-    filtros = {"status": STATUS_REALIZADO}
+def _saldo_efetivo_lancamentos_ate(data_limite, *, excluir_salarios=False):
+    filtros = {
+        "status": STATUS_REALIZADO,
+        "_exclude_salary": excluir_salarios,
+    }
     if data_limite:
         filtros["data_final"] = data_limite.isoformat()
 
@@ -123,6 +136,7 @@ def normalizar_filtros_posicao_caixa(filtros):
             "periodo_rapido",
             "quickPeriod",
         ),
+        "_exclude_salary": bool(filtros.get("_exclude_salary")),
     }
 
 

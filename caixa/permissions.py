@@ -32,12 +32,34 @@ CHANGE_CLIENT_PERMISSION = "caixa.change_cliente"
 VIEW_SERVICE_PERMISSION = "caixa.view_servico"
 ADD_SERVICE_PERMISSION = "caixa.add_servico"
 CHANGE_SERVICE_PERMISSION = "caixa.change_servico"
+VIEW_SERVER_PERMISSION = "caixa.view_servidor"
+ADD_SERVER_PERMISSION = "caixa.add_servidor"
+CHANGE_SERVER_PERMISSION = "caixa.change_servidor"
+DELETE_SERVER_PERMISSION = "caixa.delete_servidor"
+VIEW_SERVER_SALARY_PERMISSION = "caixa.view_salario_servidor"
+CHANGE_SERVER_SALARY_PERMISSION = "caixa.change_salario_servidor"
+VIEW_SERVER_SENSITIVE_DATA_PERMISSION = "caixa.view_dados_sensiveis_servidor"
+VIEW_SERVER_PARTICIPATION_PERMISSION = "caixa.view_participacaoservidorevento"
+VIEW_SERVER_COSTS_PERMISSION = "caixa.view_custos_servidor"
+MANAGE_SERVER_PARTICIPATION_PERMISSION = "caixa.manage_participacao_servidor"
+CHANGE_SERVER_DISTRIBUTED_VALUE_PERMISSION = "caixa.change_valor_distribuido_servidor"
+RECALCULATE_SERVER_COSTS_PERMISSION = "caixa.recalculate_custos_servidor"
+VIEW_SERVER_APPROPRIATION_PERMISSION = "caixa.view_apropriacao_servidor"
 VIEW_FINANCIAL_CONFIGURATION_PERMISSION = "caixa.view_configuracaofinanceira"
 ADD_FINANCIAL_CONFIGURATION_PERMISSION = "caixa.add_configuracaofinanceira"
 CHANGE_FINANCIAL_CONFIGURATION_PERMISSION = "caixa.change_configuracaofinanceira"
 VIEW_FIXED_COST_PERMISSION = "caixa.view_custofixo"
 ADD_FIXED_COST_PERMISSION = "caixa.add_custofixo"
 CHANGE_FIXED_COST_PERMISSION = "caixa.change_custofixo"
+VIEW_RECURRING_COST_PLAN_PERMISSION = "caixa.view_planocustorecorrente"
+ADD_RECURRING_COST_PLAN_PERMISSION = "caixa.add_planocustorecorrente"
+CHANGE_RECURRING_COST_PLAN_PERMISSION = "caixa.change_planocustorecorrente"
+MATERIALIZE_RECURRING_COST_PLAN_PERMISSION = (
+    "caixa.materialize_planocustorecorrente"
+)
+VIEW_RECURRING_COST_AUDIT_PERMISSION = (
+    "caixa.view_auditoria_custos_recorrentes"
+)
 VIEW_EVENT_SERVICE_COST_PERMISSION = "caixa.view_eventocustoservico"
 CHANGE_EVENT_SERVICE_COST_PERMISSION = "caixa.change_eventocustoservico"
 VIEW_EVENT_EXTRA_COST_PERMISSION = "caixa.view_eventocustoextra"
@@ -77,6 +99,18 @@ PERMISSION_PROFILES = {
         "view_servico",
         "add_servico",
         "change_servico",
+        "view_servidor",
+        "add_servidor",
+        "change_servidor",
+        "view_salario_servidor",
+        "change_salario_servidor",
+        "view_dados_sensiveis_servidor",
+        "view_participacaoservidorevento",
+        "view_custos_servidor",
+        "manage_participacao_servidor",
+        "change_valor_distribuido_servidor",
+        "recalculate_custos_servidor",
+        "view_apropriacao_servidor",
         "view_configuracaofinanceira",
         "add_configuracaofinanceira",
         "change_configuracaofinanceira",
@@ -90,6 +124,10 @@ PERMISSION_PROFILES = {
         "view_custofixo",
         "add_custofixo",
         "change_custofixo",
+        "view_planocustorecorrente",
+        "add_planocustorecorrente",
+        "change_planocustorecorrente",
+        "materialize_planocustorecorrente",
         "view_investimento",
         "add_investimento",
         "change_investimento",
@@ -128,6 +166,13 @@ PERMISSION_PROFILES = {
     "Operacional": [
         "view_cliente",
         "view_servico",
+        "view_servidor",
+        "add_servidor",
+        "change_servidor",
+        "view_participacaoservidorevento",
+        "view_custos_servidor",
+        "manage_participacao_servidor",
+        "recalculate_custos_servidor",
         "view_configuracaofinanceira",
         "view_orcamento",
         "view_orcamentoitem",

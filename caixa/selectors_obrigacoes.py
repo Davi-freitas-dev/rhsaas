@@ -15,6 +15,7 @@ from .constants_financeiros import (
 )
 from .models import DespesaOperacional, LancamentoFinanceiro, ReceitaOperacional
 from .models_custo_fixo import CustoFixo
+from .security_salarios import filtrar_custos_fixos_por_salario
 from .models_custos_extras import EventoCustoExtra
 from .models_dividas import ParcelaDivida
 from .models_fcf import FinanciamentoMovimentacao
@@ -593,6 +594,10 @@ def _itens_custos_fixos(filtros):
         return []
 
     query = CustoFixo.objects.filter(ativo=True)
+    query = filtrar_custos_fixos_por_salario(
+        query,
+        excluir=filtros.get("_exclude_salary", False),
+    )
     query = _aplicar_periodo(query, "data_vencimento", filtros)
 
     return [

@@ -21,8 +21,16 @@ def validar_valor_pagamento_positivo(valor_pagamento):
     return valor_pagamento > ZERO_DECIMAL
 
 
-def saldo_caixa_disponivel(data_limite=None, pagamento_original=None):
-    saldo = total_entradas_caixa(data_limite) - total_saidas_caixa(data_limite)
+def saldo_caixa_disponivel(
+    data_limite=None,
+    pagamento_original=None,
+    *,
+    excluir_salarios=False,
+):
+    saldo = total_entradas_caixa(data_limite) - total_saidas_caixa(
+        data_limite,
+        excluir_salarios=excluir_salarios,
+    )
     saldo += valor_pagamento_original_no_periodo(pagamento_original, data_limite)
     return quantizar_moeda(saldo)
 
@@ -142,10 +150,13 @@ def total_entradas_caixa(data_limite=None):
     return quantizar_moeda(total)
 
 
-def total_saidas_caixa(data_limite=None):
+def total_saidas_caixa(data_limite=None, *, excluir_salarios=False):
     total = Decimal("0.00")
     total += total_despesas_manuais_e_pagamentos_custos_servico(data_limite)
-    total += total_custos_fixos_pagos(data_limite)
+    total += total_custos_fixos_pagos(
+        data_limite,
+        excluir_salarios=excluir_salarios,
+    )
     total += total_investimentos_saida_realizados(data_limite)
     total += total_financiamentos_saida_realizados(data_limite)
     total += total_pagamentos_parcelas(data_limite)
@@ -262,10 +273,15 @@ def despesa_candidata_custo_servico_legado(despesa):
     )
 
 
-def total_custos_fixos_pagos(data_limite=None):
+def total_custos_fixos_pagos(data_limite=None, *, excluir_salarios=False):
     from .models_custo_fixo import CustoFixo
+    from .security_salarios import filtrar_custos_fixos_por_salario
 
     custos_fixos = CustoFixo.objects.filter(valor_pago__gt=ZERO_DECIMAL)
+    custos_fixos = filtrar_custos_fixos_por_salario(
+        custos_fixos,
+        excluir=excluir_salarios,
+    )
     if data_limite:
         custos_fixos = custos_fixos.filter(
             filtro_data_efetiva("data_pagamento", "data_vencimento", data_limite)

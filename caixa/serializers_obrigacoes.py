@@ -1,4 +1,5 @@
 import csv
+import json
 from io import StringIO
 from decimal import Decimal, InvalidOperation
 
@@ -26,6 +27,10 @@ from .services_modelagem_canonica import (
     verificar_paridade_modelagem_financeira_canonica,
 )
 from .services_posicao_caixa import montar_posicao_caixa_periodo
+from .security_salarios import (
+    filtrar_itens_obrigacoes_salariais,
+    usuario_pode_ver_salarios,
+)
 from .utils_contratos import normalizar_codigo_contrato_visual
 from .utils_financeiros import quantizar_moeda
 from .utils_periodos import resolver_intervalo_periodo_canonico
@@ -163,7 +168,12 @@ PERMISSOES_ACAO_PAGAMENTO_OBRIGACOES = {
 
 def montar_payload_obrigacoes_financeiras_api(params, usuario=None):
     filtros = normalizar_filtros_obrigacoes(params)
+    filtros["_exclude_salary"] = not usuario_pode_ver_salarios(usuario)
     itens, fonte_dados = listar_obrigacoes_com_fonte(filtros)
+    itens = filtrar_itens_obrigacoes_salariais(
+        itens,
+        excluir=filtros["_exclude_salary"],
+    )
     status_leitura = serializar_read_model_status_obrigacoes(fonte_dados)
     total_registros = len(itens)
     limit = normalizar_inteiro(filtros.get("limit"), LIMITE_PADRAO, 1, LIMITE_MAXIMO)
@@ -2008,7 +2018,18 @@ def montar_exportacao_obrigacoes_financeiras_csv(params, usuario=None):
         raise ValidationError({"format": "Formato de exportacao nao suportado."})
 
     filtros = normalizar_filtros_obrigacoes(params)
+    filtros["_exclude_salary"] = not usuario_pode_ver_salarios(usuario)
     itens, fonte_dados = listar_obrigacoes_com_fonte(filtros)
+    itens = filtrar_itens_obrigacoes_salariais(
+        itens,
+        excluir=filtros["_exclude_salary"],
+    )
+    filtros_serializados = serializar_filtros_obrigacoes(filtros)
+    filtros_aplicados = json.dumps(
+        filtros_serializados,
+        ensure_ascii=False,
+        sort_keys=True,
+    )
     if export_scope == "payments":
         contrato_baixa = serializar_contrato_baixa_obrigacoes_usuario(usuario)
         candidates = listar_payment_queue_candidates(
@@ -2020,13 +2041,17 @@ def montar_exportacao_obrigacoes_financeiras_csv(params, usuario=None):
             candidates,
             params.get("queueFilter"),
         )
-        headers, rows = linhas_csv_exportacao_pagamentos(candidates)
+        headers, rows = linhas_csv_exportacao_pagamentos(
+            candidates,
+            filtros_aplicados,
+        )
     else:
         headers, rows = linhas_csv_exportacao_obrigacoes(
             itens,
             export_scope,
             filtros,
             fonte_dados,
+            filtros_aplicados,
         )
 
     return {
@@ -2048,6 +2073,7 @@ def linhas_csv_exportacao_obrigacoes(
     export_scope,
     filtros,
     fonte_dados,
+    filtros_aplicados,
 ):
     if export_scope in {"revenues", "expenses"}:
         headers = [
@@ -2064,6 +2090,7 @@ def linhas_csv_exportacao_obrigacoes(
             "realizado",
             "pendente",
             "fluxo",
+            "filtros_aplicados",
         ]
         return headers, [
             [
@@ -2080,6 +2107,7 @@ def linhas_csv_exportacao_obrigacoes(
                 csv_decimal(item["realized_amount"]),
                 csv_decimal(item["pending_amount"]),
                 item.get("cash_flow_group") or "",
+                filtros_aplicados,
             ]
             for item in itens
         ]
@@ -2108,6 +2136,7 @@ def linhas_csv_exportacao_obrigacoes(
         "diagnostico_conciliacao",
         "base_realizada",
         "read_model",
+        "filtros_aplicados",
     ]
     realized_basis = filtros.get("realizedAmountBasis") or "originState"
     read_model = fonte_dados.get("actual") or ""
@@ -2138,12 +2167,13 @@ def linhas_csv_exportacao_obrigacoes(
             or "",
             realized_basis,
             item.get("read_model_source") or read_model,
+            filtros_aplicados,
         ]
         for item in itens
     ]
 
 
-def linhas_csv_exportacao_pagamentos(candidates):
+def linhas_csv_exportacao_pagamentos(candidates, filtros_aplicados):
     headers = [
         "obrigacao",
         "descricao",
@@ -2165,6 +2195,7 @@ def linhas_csv_exportacao_pagamentos(candidates):
         "suporta_descricao_pagamento",
         "suporta_ajustes",
         "suporta_baixa_saldo",
+        "filtros_aplicados",
     ]
     rows = []
     for candidate in candidates:
@@ -2191,6 +2222,7 @@ def linhas_csv_exportacao_pagamentos(candidates):
                 csv_bool(candidate["supportsPaymentDescription"]),
                 csv_bool(candidate["supportsAdjustments"]),
                 csv_bool(candidate["supportsWriteOff"]),
+                filtros_aplicados,
             ]
         )
     return headers, rows

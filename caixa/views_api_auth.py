@@ -32,6 +32,7 @@ from .permissions import (
     ADD_FINANCIAL_INVESTMENT_PERMISSION,
     CHANGE_FINANCIAL_INVESTMENT_PERMISSION,
     ADD_FIXED_COST_PERMISSION,
+    ADD_SERVER_PERMISSION,
     ADD_SERVICE_PERMISSION,
     CHANGE_BUDGET_PERMISSION,
     CHANGE_CLIENT_PERMISSION,
@@ -43,6 +44,9 @@ from .permissions import (
     CHANGE_FIXED_COST_PERMISSION,
     CHANGE_REVENUE_PERMISSION,
     CHANGE_SERVICE_PERMISSION,
+    CHANGE_SERVER_DISTRIBUTED_VALUE_PERMISSION,
+    CHANGE_SERVER_PERMISSION,
+    CHANGE_SERVER_SALARY_PERMISSION,
     DASHBOARD_PERMISSION,
     FINANCIAL_CREDITORS_PERMISSION,
     FINANCIAL_DEBT_INSTALLMENTS_PERMISSION,
@@ -54,6 +58,7 @@ from .permissions import (
     PAY_DEBT_INSTALLMENT_PERMISSION,
     PAY_EVENT_EXTRA_COST_PERMISSION,
     PAY_EVENT_SERVICE_COST_PERMISSION,
+    DELETE_SERVER_PERMISSION,
     VIEW_CLIENT_PERMISSION,
     VIEW_BUDGET_PERMISSION,
     VIEW_EVENT_EXTRA_COST_PERMISSION,
@@ -63,6 +68,14 @@ from .permissions import (
     VIEW_FIXED_COST_PERMISSION,
     VIEW_REVENUE_PERMISSION,
     VIEW_SERVICE_PERMISSION,
+    VIEW_SERVER_APPROPRIATION_PERMISSION,
+    VIEW_SERVER_COSTS_PERMISSION,
+    VIEW_SERVER_PARTICIPATION_PERMISSION,
+    VIEW_SERVER_PERMISSION,
+    VIEW_SERVER_SALARY_PERMISSION,
+    VIEW_SERVER_SENSITIVE_DATA_PERMISSION,
+    MANAGE_SERVER_PARTICIPATION_PERMISSION,
+    RECALCULATE_SERVER_COSTS_PERMISSION,
     can_approve_budget,
     is_platform_operator,
     is_tenant_administrator,
@@ -130,6 +143,31 @@ def _user_payload(user):
         "canViewServices": user.has_perm(VIEW_SERVICE_PERMISSION),
         "canAddService": user.has_perm(ADD_SERVICE_PERMISSION),
         "canChangeService": user.has_perm(CHANGE_SERVICE_PERMISSION),
+        "canViewServers": user.has_perm(VIEW_SERVER_PERMISSION),
+        "canViewServerParticipations": user.has_perm(
+            VIEW_SERVER_PARTICIPATION_PERMISSION
+        ),
+        "canAddServer": user.has_perm(ADD_SERVER_PERMISSION),
+        "canChangeServer": user.has_perm(CHANGE_SERVER_PERMISSION),
+        "canDeleteServer": user.has_perm(DELETE_SERVER_PERMISSION),
+        "canViewServerSalary": user.has_perm(VIEW_SERVER_SALARY_PERMISSION),
+        "canChangeServerSalary": user.has_perm(CHANGE_SERVER_SALARY_PERMISSION),
+        "canViewServerSensitiveData": user.has_perm(
+            VIEW_SERVER_SENSITIVE_DATA_PERMISSION
+        ),
+        "canViewServerCosts": user.has_perm(VIEW_SERVER_COSTS_PERMISSION),
+        "canManageServerParticipation": user.has_perm(
+            MANAGE_SERVER_PARTICIPATION_PERMISSION
+        ),
+        "canChangeServerDistributedValue": user.has_perm(
+            CHANGE_SERVER_DISTRIBUTED_VALUE_PERMISSION
+        ),
+        "canRecalculateServerCosts": user.has_perm(
+            RECALCULATE_SERVER_COSTS_PERMISSION
+        ),
+        "canViewServerAppropriation": user.has_perm(
+            VIEW_SERVER_APPROPRIATION_PERMISSION
+        ),
         "canViewFinancialConfigurations": user.has_perm(
             VIEW_FINANCIAL_CONFIGURATION_PERMISSION
         ),

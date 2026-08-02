@@ -56,6 +56,12 @@ from .views_configuracoes_financeiras_api import (
     api_configuracoes_financeiras,
 )
 from .views_custos_fixos_api import api_custo_fixo_detalhe, api_custos_fixos
+from .views_planos_custos_recorrentes_api import (
+    api_materializar_custos_recorrentes,
+    api_plano_custo_recorrente_detalhe,
+    api_planos_custos_recorrentes,
+    api_projecoes_custos_recorrentes,
+)
 from .views_despesas_api import api_despesa_detalhe
 from .views_eventos_api import api_evento_detalhe, api_eventos
 from .views_orcamentos_api import (
@@ -65,6 +71,14 @@ from .views_orcamentos_api import (
 )
 from .views_receitas_api import api_receita_detalhe
 from .views_servicos_api import api_servico_detalhe, api_servicos
+from .views_servidores_api import api_servidor_detalhe, api_servidores
+from .views_participacoes_servidores_api import (
+    api_participacao_detalhe,
+    api_participacoes_evento,
+    api_recalcular_participacoes_evento,
+    api_restaurar_calculo_participacao,
+)
+from .views_custos_servidores_api import api_custos_por_servidor
 from .views_mes_financeiro import api_mes_financeiro, mes_financeiro
 from .views_pagamentos import (
     pagamentos,
@@ -207,6 +221,37 @@ urlpatterns = [
     ),
     path("api/servicos/", api_servicos, name="api_servicos"),
     path("api/servicos/<int:pk>/", api_servico_detalhe, name="api_servico_detalhe"),
+    path("api/servidores/", api_servidores, name="api_servidores"),
+    path(
+        "api/servidores/<int:pk>/",
+        api_servidor_detalhe,
+        name="api_servidor_detalhe",
+    ),
+    path(
+        "api/eventos/<int:evento_id>/servidores/",
+        api_participacoes_evento,
+        name="api_participacoes_evento",
+    ),
+    path(
+        "api/eventos/<int:evento_id>/servidores/recalcular/",
+        api_recalcular_participacoes_evento,
+        name="api_recalcular_participacoes_evento",
+    ),
+    path(
+        "api/participacoes-servidores/<int:pk>/",
+        api_participacao_detalhe,
+        name="api_participacao_detalhe",
+    ),
+    path(
+        "api/participacoes-servidores/<int:pk>/restaurar-calculo/",
+        api_restaurar_calculo_participacao,
+        name="api_restaurar_calculo_participacao",
+    ),
+    path(
+        "api/custos-por-servidor/",
+        api_custos_por_servidor,
+        name="api_custos_por_servidor",
+    ),
     path("api/orcamentos/", api_orcamentos, name="api_orcamentos"),
     path(
         "api/orcamentos/<int:pk>/",
@@ -219,6 +264,26 @@ urlpatterns = [
         name="api_aprovar_orcamento",
     ),
     path("api/custos-fixos/", api_custos_fixos, name="api_custos_fixos"),
+    path(
+        "api/planos-custos-recorrentes/",
+        api_planos_custos_recorrentes,
+        name="api_planos_custos_recorrentes",
+    ),
+    path(
+        "api/planos-custos-recorrentes/<int:pk>/",
+        api_plano_custo_recorrente_detalhe,
+        name="api_plano_custo_recorrente_detalhe",
+    ),
+    path(
+        "api/projecoes-custos-recorrentes/",
+        api_projecoes_custos_recorrentes,
+        name="api_projecoes_custos_recorrentes",
+    ),
+    path(
+        "api/materializacoes-custos-recorrentes/",
+        api_materializar_custos_recorrentes,
+        name="api_materializar_custos_recorrentes",
+    ),
     path(
         "api/custos-fixos/<int:pk>/",
         api_custo_fixo_detalhe,

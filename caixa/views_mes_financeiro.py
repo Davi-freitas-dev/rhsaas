@@ -16,6 +16,7 @@ from .permissions import (
 )
 from .serializers_mes_financeiro import montar_payload_mes_financeiro_api
 from .utils_request import filtros_texto
+from .security_salarios import usuario_pode_ver_salarios
 
 
 FILTROS_MES_FINANCEIRO_CANONICOS = [
@@ -59,9 +60,9 @@ def api_mes_financeiro(request):
     ):
         return drf_response_from_json_response(api_permission_denied_response())
 
-    payload = montar_payload_mes_financeiro_api(
-        filtros_mes_financeiro_api(request)
-    )
+    filtros = filtros_mes_financeiro_api(request)
+    filtros["_exclude_salary"] = not usuario_pode_ver_salarios(request.user)
+    payload = montar_payload_mes_financeiro_api(filtros)
     return drf_response_from_json_response(
         api_no_store_json_response(
             payload,

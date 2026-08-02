@@ -141,9 +141,32 @@ from .models_dividas import Credor, DividaFinanceira, ParcelaDivida, PagamentoPa
 from .models_fcf import FinanciamentoMovimentacao
 from .models_fci import Investimento
 from .models_servico import EventoCustoServico
-from .models_custo_fixo import CustoFixo
+from .models_custo_fixo import (
+    AuditoriaCustoRecorrente,
+    CustoFixo,
+    PlanoCustoRecorrente,
+)
 from .models_custos_extras import EventoCustoExtra, OrcamentoCustoExtra
+from .models_servidores import (
+    HistoricoSalarialServidor,
+    ParticipacaoServidorEvento,
+    Servidor,
+    ServidorEventoDiaTrabalhado,
+    ServidorServico,
+)
+from .permissions import (
+    VIEW_SERVER_SALARY_PERMISSION,
+    VIEW_SERVER_SENSITIVE_DATA_PERMISSION,
+)
 from .services_cadastros import aprovar_orcamento
+from .security_salarios import (
+    filtrar_alocacoes_baixa_por_salario,
+    filtrar_baixas_por_salario,
+    filtrar_custos_fixos_por_salario,
+    filtrar_lancamentos_por_salario,
+    filtrar_obrigacoes_por_salario,
+    usuario_pode_ver_salarios,
+)
 
 
 class AuditoriaAdmin(admin.ModelAdmin):
@@ -563,6 +586,30 @@ class EventoAdmin(AuditoriaFormsetMixin, admin.ModelAdmin):
             formfield.label = "Contrato"
         return formfield
 
+    def save_model(self, request, obj, form, change):
+        if not change:
+            obj._history_user = request.user
+            return super().save_model(request, obj, form, change)
+
+        # A edição administrativa do período segue o mesmo lock de Evento da
+        # API e das participações; o Admin não pode reabrir a corrida entre
+        # intervalo e escala diária.
+        from .services_participacoes_servidores import atualizar_evento_com_periodo
+
+        campos = {
+            campo: getattr(obj, campo)
+            for campo in form.changed_data
+            if campo in obj._meta._forward_fields_map
+        }
+        if campos:
+            salvo = atualizar_evento_com_periodo(
+                obj,
+                valores=campos,
+                usuario=request.user,
+            )
+            for campo in campos:
+                setattr(obj, campo, getattr(salvo, campo))
+
     def has_delete_permission(self, request, obj=None):
         if obj and obj.orcamento_id:
             return False
@@ -642,6 +689,12 @@ class LancamentoFinanceiroAdmin(SimpleHistoryAdmin, AuditoriaAdmin):
     def valor_lancamento_admin(self, obj):
         return obj.valor
 
+    def get_queryset(self, request):
+        return filtrar_lancamentos_por_salario(
+            super().get_queryset(request),
+            request.user,
+        )
+
 
 class BaixaFinanceiraAlocacaoInline(admin.TabularInline):
     model = BaixaFinanceiraAlocacao
@@ -654,6 +707,12 @@ class BaixaFinanceiraAlocacaoInline(admin.TabularInline):
         "valor_desconto",
         "observacao",
     )
+
+    def get_queryset(self, request):
+        return filtrar_alocacoes_baixa_por_salario(
+            super().get_queryset(request),
+            request.user,
+        )
 
 
 @admin.register(ObrigacaoFinanceira)
@@ -693,6 +752,12 @@ class ObrigacaoFinanceiraAdmin(SimpleHistoryAdmin, AuditoriaAdmin):
         "criado_por",
         "atualizado_por",
     )
+
+    def get_queryset(self, request):
+        return filtrar_obrigacoes_por_salario(
+            super().get_queryset(request),
+            request.user,
+        )
 
 
 @admin.register(BaixaFinanceira)
@@ -736,6 +801,12 @@ class BaixaFinanceiraAdmin(SimpleHistoryAdmin, AuditoriaAdmin):
         "atualizado_por",
     )
 
+    def get_queryset(self, request):
+        return filtrar_baixas_por_salario(
+            super().get_queryset(request),
+            request.user,
+        )
+
 
 @admin.register(BaixaFinanceiraAlocacao)
 class BaixaFinanceiraAlocacaoAdmin(admin.ModelAdmin):
@@ -753,6 +824,12 @@ class BaixaFinanceiraAlocacaoAdmin(admin.ModelAdmin):
         "obrigacao__chave_origem",
     )
     readonly_fields = ("criado_em", "atualizado_em")
+
+    def get_queryset(self, request):
+        return filtrar_alocacoes_baixa_por_salario(
+            super().get_queryset(request),
+            request.user,
+        )
 
 
 @admin.register(ReceitaOperacional)
@@ -1151,6 +1228,28 @@ class EventoCustoServicoAdmin(SimpleHistoryAdmin, AuditoriaAdmin):
     )
     search_fields = ("evento__numero", "evento__nome_evento", "servico__nome")
     inlines = [PagamentoEventoCustoServicoInline]
+
+    def get_readonly_fields(self, request, obj=None):
+        campos = list(super().get_readonly_fields(request, obj))
+        if obj is not None:
+            campos.extend(("evento", "servico"))
+        return tuple(dict.fromkeys(campos))
+
+    def delete_model(self, request, obj):
+        # `EventoCustoServico.delete()` aplica o lock de Evento e bloqueia a
+        # remoção de uma fonte ainda usada no rateio.
+        obj._history_user = request.user
+        obj.delete()
+
+    def delete_queryset(self, request, queryset):
+        # O bulk delete padrão contorna Model.delete(); processar cada custo
+        # preserva a mesma regra transacional da API e do orçamento. A
+        # transação externa garante que uma fonte protegida encontrada no
+        # meio da seleção reverta as exclusões anteriores.
+        with transaction.atomic():
+            for obj in queryset.order_by("evento_id", "servico_id", "pk"):
+                obj._history_user = request.user
+                obj.delete()
 @admin.register(PagamentoEventoCustoServico)
 class PagamentoEventoCustoServicoAdmin(SimpleHistoryAdmin, AuditoriaAdmin):
     form = PagamentoEventoCustoServicoAdminForm
@@ -1782,5 +1881,351 @@ class CustoFixoAdmin(AuditoriaAdmin):
     def save_model(self, request, obj, form, change):
         super().save_model(request, obj, form, change)
 
-        if not change:
-            obj.gerar_recorrencias()
+    def get_queryset(self, request):
+        return filtrar_custos_fixos_por_salario(
+            super().get_queryset(request),
+            request.user,
+        )
+
+    def get_readonly_fields(self, request, obj=None):
+        readonly = list(super().get_readonly_fields(request, obj))
+        if obj is None:
+            readonly.extend(["recorrente", "quantidade_meses"])
+        if obj and (
+            obj.plano_recorrente_id
+            or obj.origem_recorrencia in {"plano", "salario"}
+        ):
+            readonly.extend(campo.name for campo in self.model._meta.fields)
+        return tuple(dict.fromkeys(readonly))
+
+    def has_delete_permission(self, request, obj=None):
+        if obj is None:
+            return False
+        if obj.plano_recorrente_id or obj.origem_recorrencia == "salario":
+            return False
+        return super().has_delete_permission(request, obj)
+
+
+@admin.register(PlanoCustoRecorrente)
+class PlanoCustoRecorrenteAdmin(SimpleHistoryAdmin, AuditoriaAdmin):
+    list_display = (
+        "descricao",
+        "origem",
+        "categoria",
+        "data_inicio",
+        "data_fim",
+        "dia_vencimento",
+        "data_autorizacao_materializacao",
+        "ativo",
+    )
+    list_filter = ("origem", "categoria", "ativo", "data_inicio", "data_fim")
+    search_fields = ("descricao", "observacao", "servidor__nome")
+    readonly_fields = (
+        "criado_em",
+        "atualizado_em",
+        "criado_por",
+        "atualizado_por",
+    )
+
+    def get_queryset(self, request):
+        queryset = super().get_queryset(request)
+        if not usuario_pode_ver_salarios(request.user):
+            queryset = queryset.exclude(origem=PlanoCustoRecorrente.ORIGEM_SALARIO)
+        return queryset
+
+    def get_readonly_fields(self, request, obj=None):
+        return tuple(campo.name for campo in self.model._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+class ServidorServicoInline(admin.TabularInline):
+    model = ServidorServico
+    extra = 0
+    can_delete = False
+    fields = (
+        "servico",
+        "ativo",
+        "criado_por",
+        "atualizado_por",
+        "criado_em",
+        "atualizado_em",
+    )
+    readonly_fields = fields
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(Servidor)
+class ServidorAdmin(SimpleHistoryAdmin, AuditoriaAdmin):
+    list_display = (
+        "nome",
+        "tipo_documento",
+        "documento_mascarado_admin",
+        "tipo_vinculo",
+        "ativo",
+        "atualizado_em",
+    )
+    list_filter = ("ativo", "tipo_vinculo", "tipo_documento")
+    search_fields = ("nome", "documento", "email", "telefone")
+    inlines = (ServidorServicoInline,)
+    readonly_fields = (
+        "tipo_vinculo",
+        "salario_mensal",
+        "criado_em",
+        "atualizado_em",
+        "criado_por",
+        "atualizado_por",
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def get_readonly_fields(self, request, obj=None):
+        return self.get_fields(request, obj)
+
+    def get_fields(self, request, obj=None):
+        campos = [campo.name for campo in self.model._meta.fields]
+        if not request.user.has_perm(VIEW_SERVER_SENSITIVE_DATA_PERMISSION):
+            campos = [
+                campo
+                for campo in campos
+                if campo
+                not in {
+                    "documento",
+                    "telefone",
+                    "email",
+                    "data_nascimento",
+                    "endereco",
+                    "observacoes",
+                }
+            ]
+        if not request.user.has_perm(VIEW_SERVER_SALARY_PERMISSION):
+            campos = [
+                campo
+                for campo in campos
+                if campo
+                not in {
+                    "salario_mensal",
+                    "data_inicio_contrato",
+                    "data_fim_contrato",
+                    "dia_pagamento_salario",
+                    "data_autorizacao_custo_salarial",
+                }
+            ]
+        return tuple(campos)
+
+    def get_exclude(self, request, obj=None):
+        return ()
+
+    def get_search_fields(self, request):
+        if request.user.has_perm(VIEW_SERVER_SENSITIVE_DATA_PERMISSION):
+            return self.search_fields
+        return ("nome",)
+
+    def history_view(self, request, object_id, extra_context=None):
+        if not (
+            request.user.has_perm(VIEW_SERVER_SENSITIVE_DATA_PERMISSION)
+            and request.user.has_perm(VIEW_SERVER_SALARY_PERMISSION)
+        ):
+            raise PermissionDenied
+        return super().history_view(request, object_id, extra_context)
+
+    @admin.display(description="Documento")
+    def documento_mascarado_admin(self, obj):
+        return obj.documento_mascarado
+
+
+@admin.register(ServidorServico)
+class ServidorServicoAdmin(SimpleHistoryAdmin, AuditoriaAdmin):
+    list_display = ("servidor", "servico", "ativo", "criado_em")
+    list_filter = ("ativo", "servico")
+    search_fields = ("servidor__nome", "servico__nome")
+    readonly_fields = (
+        "servidor",
+        "servico",
+        "ativo",
+        "criado_em",
+        "atualizado_em",
+        "criado_por",
+        "atualizado_por",
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(HistoricoSalarialServidor)
+class HistoricoSalarialServidorAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
+    list_display = ("servidor_nome_snapshot", "valor", "data_inicio", "data_fim")
+    list_filter = ("data_inicio", "data_fim")
+    search_fields = ("servidor_nome_snapshot", "servidor__nome")
+    readonly_fields = [
+        campo.name for campo in HistoricoSalarialServidor._meta.fields
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_view_permission(self, request, obj=None):
+        return request.user.has_perm(VIEW_SERVER_SALARY_PERMISSION)
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ParticipacaoServidorEvento)
+class ParticipacaoServidorEventoAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
+    list_display = (
+        "servidor_nome_exibicao",
+        "evento",
+        "servico_nome_snapshot",
+        "tipo_vinculo",
+        "valor_calculado",
+        "valor_final",
+        "valor_editado_manualmente",
+    )
+    list_filter = (
+        "tipo_vinculo",
+        "valor_editado_manualmente",
+        "evento__status",
+        "servico",
+    )
+    search_fields = (
+        "servidor_nome_snapshot",
+        "servico_nome_snapshot",
+        "evento__numero",
+        "evento__nome_evento",
+    )
+    readonly_fields = [
+        campo.name for campo in ParticipacaoServidorEvento._meta.fields
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        # Toda mutação de participação precisa passar pelo serviço transacional
+        # (escala, rateio, locks, Demo policy e auditoria). O Admin é somente
+        # leitura para não abrir um atalho que contorne essas invariantes.
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        actions.pop("delete_selected", None)
+        return actions
+
+    def get_exclude(self, request, obj=None):
+        campos = list(super().get_exclude(request, obj) or [])
+        if not request.user.has_perm(VIEW_SERVER_SALARY_PERMISSION):
+            campos.append("salario_mensal_referencia")
+        if not request.user.has_perm(VIEW_SERVER_SENSITIVE_DATA_PERMISSION):
+            campos.append("servidor_identificador_snapshot")
+        return campos
+
+
+@admin.register(ServidorEventoDiaTrabalhado)
+class ServidorEventoDiaTrabalhadoAdmin(admin.ModelAdmin):
+    list_display = (
+        "participacao",
+        "data",
+        "quantidade_horas",
+        "criado_em",
+        "atualizado_em",
+    )
+    list_filter = ("data", "participacao__evento__status")
+    search_fields = (
+        "participacao__servidor_nome_snapshot",
+        "participacao__evento__numero",
+        "participacao__evento__nome_evento",
+        "participacao__servico_nome_snapshot",
+    )
+    readonly_fields = [
+        campo.name for campo in ServidorEventoDiaTrabalhado._meta.fields
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(AuditoriaCustoRecorrente)
+class AuditoriaCustoRecorrenteAdmin(admin.ModelAdmin):
+    list_display = (
+        "identificador_tecnico",
+        "tipo_evento",
+        "origem",
+        "plano_id",
+        "competencia",
+        "status",
+        "codigo_motivo",
+        "occurrences_count",
+        "last_occurred_at",
+    )
+    list_filter = (
+        "tipo_evento",
+        "origem",
+        "status",
+        "codigo_motivo",
+    )
+    search_fields = (
+        "identificador_tecnico",
+        "correlation_id",
+    )
+    readonly_fields = tuple(
+        campo.name for campo in AuditoriaCustoRecorrente._meta.fields
+    )
+
+    @staticmethod
+    def _pode_ver(request):
+        return request.user.has_perm(
+            "caixa.view_auditoria_custos_recorrentes"
+        )
+
+    def has_module_permission(self, request):
+        return self._pode_ver(request)
+
+    def has_view_permission(self, request, obj=None):
+        return self._pode_ver(request)
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def get_queryset(self, request):
+        if not self._pode_ver(request):
+            return super().get_queryset(request).none()
+        return super().get_queryset(request)

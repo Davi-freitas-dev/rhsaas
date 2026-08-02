@@ -24,6 +24,7 @@ from .models import (
     ObrigacaoFinanceira,
 )
 from .models_custo_fixo import CustoFixo
+from .security_salarios import filtrar_custos_fixos_por_salario
 from .models_custos_extras import EventoCustoExtra
 from .models_dividas import PagamentoParcelaDivida, ParcelaDivida
 from .models_fcf import FinanciamentoMovimentacao
@@ -264,7 +265,10 @@ def liquidar_custo_fixo(source_id, payload, usuario):
 
     with transaction.atomic():
         try:
-            custo_fixo = CustoFixo.objects.select_for_update().get(pk=source_id)
+            custo_fixo = filtrar_custos_fixos_por_salario(
+                CustoFixo.objects.select_for_update(),
+                usuario,
+            ).get(pk=source_id)
         except (TypeError, ValueError, CustoFixo.DoesNotExist) as exc:
             raise ObrigacaoFinanceiraNaoEncontrada(
                 {"sourceId": "Obrigação financeira não encontrada."}

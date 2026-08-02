@@ -11,14 +11,16 @@ from .services_dimensoes_operacionais import serializar_dimensao_operacional_fin
 from .utils_financeiros import quantizar_moeda
 from .utils_contratos import normalizar_codigo_contrato_visual
 from .utils_periodos import resolver_intervalo_periodo_canonico
+from .security_salarios import usuario_pode_ver_salarios
 
 
 LIMITE_PADRAO = 100
 LIMITE_MAXIMO = 200
 
 
-def montar_payload_lancamentos_financeiros_api(params):
+def montar_payload_lancamentos_financeiros_api(params, usuario=None):
     filtros = normalizar_filtros_lancamentos(params)
+    filtros["_exclude_salary"] = not usuario_pode_ver_salarios(usuario)
     queryset = (
         filtrar_lancamentos_financeiros(filtros)
         .select_related(

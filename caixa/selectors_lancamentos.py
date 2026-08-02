@@ -4,6 +4,7 @@ from django.db.models import Q, Sum
 
 from .constants_financeiros import TIPO_FLUXO_ENTRADA, TIPO_FLUXO_SAIDA
 from .models import LancamentoFinanceiro, ORIGENS_LANCAMENTO_FINANCEIRO
+from .security_salarios import ids_custos_salariais
 from .utils_contratos import (
     montar_filtro_evento_ou_orcamento_por_contrato_visual,
     resolver_codigo_contrato_visual_parametros,
@@ -27,6 +28,8 @@ FILTROS_ORIGEM_OBRIGACAO_LEDGER = {
 def filtrar_lancamentos_financeiros(filtros=None):
     filtros = filtros or {}
     queryset = LancamentoFinanceiro.objects.all()
+    if filtros.get("_exclude_salary"):
+        queryset = queryset.exclude(custo_fixo_id__in=ids_custos_salariais())
     if _filtro_operacional_invalido(filtros):
         return queryset.none()
 

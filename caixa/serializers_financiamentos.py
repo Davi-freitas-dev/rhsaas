@@ -369,7 +369,7 @@ def serializar_parcela_financiamento(parcela, *, pode_pagar_parcela=False):
             parcela,
             pode_pagar_parcela=pode_pagar_parcela,
         ),
-        **demo_object_flags(parcela),
+        **demo_object_flags(parcela, allow_lazy=False),
         **serializar_dimensao_operacional(divida),
     }
 
@@ -485,7 +485,7 @@ def serializar_movimentacao_financiamento(movimentacao):
         "descricao_divida": divida_origem.descricao if divida_origem else "",
         "dias_atraso": dias_atraso,
         "overdueDays": dias_atraso,
-        **demo_object_flags(movimentacao),
+        **demo_object_flags(movimentacao, allow_lazy=False),
         **serializar_dimensao_operacional(movimentacao),
     }
 

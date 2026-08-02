@@ -30,6 +30,7 @@ from .utils_periodos import (
 )
 from .utils_contratos import normalizar_codigo_contrato_visual
 from .utils_request import normalizar_data_iso
+from .security_salarios import usuario_pode_ver_salarios
 
 
 STATUS_FRONTEND_DASHBOARD = {valor for valor, _rotulo in STATUS_DASHBOARD_FILTRO}
@@ -64,8 +65,10 @@ def api_dashboard_financial_overview(request):
     if not request.user.has_perm(DASHBOARD_PERMISSION):
         return drf_response_from_json_response(api_permission_denied_response())
 
+    filtros = filtros_dashboard_financial_overview(request)
+    filtros["_exclude_salary"] = not usuario_pode_ver_salarios(request.user)
     payload = montar_payload_dashboard_financial_overview_api(
-        filtros_dashboard_financial_overview(request),
+        filtros,
         request.session,
     )
     return drf_response_from_json_response(
@@ -95,8 +98,10 @@ def api_custos_por_evento(request):
     if not request.user.has_perm(DASHBOARD_PERMISSION):
         return drf_response_from_json_response(api_permission_denied_response())
 
+    filtros = filtros_dashboard_financial_overview(request)
+    filtros["_exclude_salary"] = not usuario_pode_ver_salarios(request.user)
     payload = montar_payload_custos_por_evento_api(
-        filtros_dashboard_financial_overview(request),
+        filtros,
         request.session,
     )
     return drf_response_from_json_response(

@@ -11,6 +11,7 @@ from .constants_eventos import STATUS_EVENTOS_ABERTOS
 from .constants_financeiros import STATUS_CANCELADO, STATUS_PAGO, STATUS_REALIZADO
 from .models import DespesaOperacional, ReceitaOperacional
 from .models_custo_fixo import CustoFixo
+from .security_salarios import filtrar_custos_fixos_por_salario
 from .models_custos_extras import EventoCustoExtra
 from .models_dividas import ParcelaDivida
 from .models_fcf import FinanciamentoMovimentacao
@@ -60,6 +61,7 @@ def resolver_filtros_dashboard(params, session):
         "contrato_codigo": filtros["contrato_codigo"],
         "status": filtros["status"],
         "periodo_rapido": filtros["periodo_rapido"],
+        "_exclude_salary": bool(params.get("_exclude_salary")),
     }
 
 
@@ -76,7 +78,10 @@ def querysets_dashboard_filtrados(filtros):
             "evento__orcamento",
             "origem_custo_extra",
         ).prefetch_related("evento__custos_servicos").all(),
-        "custos_fixos": CustoFixo.objects.filter(ativo=True),
+        "custos_fixos": filtrar_custos_fixos_por_salario(
+            CustoFixo.objects.filter(ativo=True),
+            excluir=filtros.get("_exclude_salary", False),
+        ),
         "investimentos": Investimento.objects.select_related(
             "evento",
             "evento__orcamento",

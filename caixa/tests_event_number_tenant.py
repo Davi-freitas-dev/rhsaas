@@ -94,7 +94,7 @@ class EventNumberTenantTests(MultiTenantTestCase):
     def test_aprova_orcamento_com_numero_de_30_caracteres(self):
         self._assert_aprova_numero(30, "C")
 
-    def test_reaprovacao_nao_duplica_evento_nem_movimentacoes(self):
+    def test_reaprovacao_e_rejeitada_sem_duplicar_evento_nem_movimentacoes(self):
         numero = "R" * 30
         orcamento_id = self._criar_orcamento(self.primary_schema, numero)
 
@@ -109,9 +109,9 @@ class EventNumberTenantTests(MultiTenantTestCase):
                 "obrigacoes": ObrigacaoFinanceira.objects.filter(evento=primeiro_evento).count(),
             }
 
-            segundo_evento = orcamento.aprovar_e_gerar_evento()
+            with self.assertRaises(ValidationError):
+                orcamento.aprovar_e_gerar_evento()
 
-            self.assertEqual(segundo_evento.pk, primeiro_evento.pk)
             self.assertEqual(
                 contagens,
                 {

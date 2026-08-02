@@ -11,6 +11,7 @@ from caixa.models_dividas import PagamentoParcelaDivida, ParcelaDivida
 from caixa.models_fcf import FinanciamentoMovimentacao
 from caixa.models_fci import Investimento
 from caixa.models_pagamentos import PagamentoEventoCustoExtra, PagamentoEventoCustoServico
+from caixa.security_salarios import filtrar_custos_fixos_por_salario
 from caixa.selectors_mes_financeiro import montar_contexto_mes_financeiro
 from caixa.services_validacao_pagamentos import (
     pagamentos_custos_servico_legado,
@@ -380,8 +381,11 @@ def listar_despesas_manuais_pagas(data_limite):
 
 
 def listar_custos_fixos_pagos(data_limite):
-    custos = CustoFixo.objects.filter(valor_pago__gt=ZERO_DECIMAL).filter(
-        filtro_data_efetiva("data_pagamento", "data_vencimento", data_limite)
+    custos = filtrar_custos_fixos_por_salario(
+        CustoFixo.objects.filter(valor_pago__gt=ZERO_DECIMAL).filter(
+            filtro_data_efetiva("data_pagamento", "data_vencimento", data_limite)
+        ),
+        excluir=True,
     )
     return [
         item_caixa(

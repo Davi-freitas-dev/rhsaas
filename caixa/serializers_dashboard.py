@@ -9,6 +9,8 @@ from django.utils import timezone
 from .models import DespesaOperacional, Evento
 from .models_custo_fixo import CustoFixo
 from .models_fci import Investimento
+from .models_servidores import ParticipacaoServidorEvento, Servidor
+from .models_servico import EventoCustoServico
 from .constants_nomenclatura import montar_metadados_nomenclatura_financeira
 from .selectors_dashboard_contexto import STATUS_DASHBOARD_FILTRO
 from .selectors_dashboard import montar_contexto_custos_por_evento, montar_dados_dashboard
@@ -25,12 +27,14 @@ from .serializers_dimensoes_operacionais import (
     serializar_opcoes_entidades_operacionais,
 )
 from .serializers_lancamentos import serializar_totais
+from .serializers_participacoes_servidores import serializar_dias_trabalhados
 from .serializers_obrigacoes import (
     listar_obrigacoes_com_fonte_leitura_visual,
     normalizar_filtros_obrigacoes,
 )
 from .services_dimensoes_operacionais import serializar_dimensao_operacional_financeira
 from .services_posicao_caixa import montar_posicao_caixa_periodo
+from .services_custos_recorrentes import resumir_completude_materializacao
 from .utils_financeiros import decimal_zero, quantizar_moeda
 from .utils_fluxos_caixa import calcular_saldo_inicial_fluxo_caixa, normalizar_fluxo_caixa
 from .utils_moeda import formatar_moeda_br
@@ -118,6 +122,28 @@ def montar_payload_dashboard_financial_overview_api(filtros, session):
         filtros_dashboard,
         totais_movimentacoes,
     )
+    if any(
+        filtros_dashboard.get(campo)
+        for campo in ("evento_id", "cliente_id", "contrato_codigo")
+    ):
+        completude_financeira = {
+            "assessed": False,
+            "complete": False,
+            "status": "notAssessed",
+            "reason": "ENTITY_FILTER_EXCLUDES_RECURRING_COSTS",
+            "excludedSalaryData": bool(
+                filtros_dashboard.get("_exclude_salary")
+            ),
+        }
+    else:
+        completude_financeira = resumir_completude_materializacao(
+            inicio=filtros_dashboard.get("data_inicial"),
+            fim=filtros_dashboard.get("data_final"),
+            excluir_salarios=filtros_dashboard.get(
+                "_exclude_salary",
+                False,
+            ),
+        )
 
     total_despesa_prevista = decimal_para_numero(
         totais_movimentacoes["total_saida_movimentacoes_prevista"]
@@ -196,6 +222,7 @@ def montar_payload_dashboard_financial_overview_api(filtros, session):
             "currency": "BRL",
             "nomenclature": montar_metadados_nomenclatura_financeira(),
             "cashFlowSemantics": serializar_semantica_fluxo_caixa_dashboard(),
+            "financialCompleteness": completude_financeira,
         },
     }
 
@@ -218,6 +245,10 @@ def montar_contas_vencidas_all_time_dashboard(filtros_dashboard):
         "clientId": filtros_dashboard.get("cliente_id", ""),
     }
     filtros_obrigacoes = normalizar_filtros_obrigacoes(params)
+    filtros_obrigacoes["_exclude_salary"] = filtros_dashboard.get(
+        "_exclude_salary",
+        False,
+    )
     itens, fonte_dados = listar_obrigacoes_com_fonte_leitura_visual(
         filtros_obrigacoes
     )
@@ -255,6 +286,22 @@ def montar_payload_custos_por_evento_api(filtros, session):
         )
         for grupo in grupos_raw
     ]
+    distribuicoes = _distribuicoes_servidores_por_evento(
+        [grupo["eventId"] for grupo in grupos]
+    )
+    for grupo in grupos:
+        distribuicao = distribuicoes.get(grupo["eventId"], {})
+        grupo["serverDistribution"] = distribuicao.get("services", [])
+        grupo["distributedServerCostAmount"] = decimal_para_numero(
+            distribuicao.get("distributed", Decimal("0.00"))
+        )
+        grupo["serverDistributionDifferenceAmount"] = decimal_para_numero(
+            distribuicao.get("difference", Decimal("0.00"))
+        )
+        grupo["managerialAppropriationAmount"] = 0.0
+        grupo["financialRealServerCostAmount"] = grupo[
+            "distributedServerCostAmount"
+        ]
 
     return {
         "data": {
@@ -320,6 +367,104 @@ def montar_payload_custos_por_evento_api(filtros, session):
             },
         }
     }
+
+
+def _distribuicoes_servidores_por_evento(eventos_ids):
+    if not eventos_ids:
+        return {}
+    custos = list(
+        EventoCustoServico.objects.filter(evento_id__in=eventos_ids)
+        .select_related("servico")
+        .order_by("evento_id", "servico__nome", "id")
+    )
+    participacoes = (
+        ParticipacaoServidorEvento.objects.filter(evento_id__in=eventos_ids)
+        .select_related("servidor", "evento", "servico")
+        .prefetch_related("dias_trabalhados")
+        .order_by("evento_id", "servico_nome_snapshot", "id")
+    )
+    por_evento = {}
+    por_servico = {}
+    for custo in custos:
+        evento = por_evento.setdefault(
+            custo.evento_id,
+            {"services": [], "distributed": Decimal("0.00"), "difference": Decimal("0.00")},
+        )
+        total = quantizar_moeda(custo.valor_diarias)
+        chave = (custo.evento_id, custo.servico_id)
+        servico = {
+            "serviceId": custo.servico_id,
+            "serviceName": custo.servico.nome,
+            "serviceCostAmount": decimal_para_numero(total),
+            "distributedAmount": Decimal("0.00"),
+            "differenceAmount": Decimal("0.00"),
+            "monthlyServerCount": 0,
+            "managerialAppropriationAmount": 0.0,
+            "participants": [],
+            "_total": total,
+        }
+        por_servico[chave] = servico
+        evento["services"].append(servico)
+
+    for item in participacoes:
+        evento = por_evento.setdefault(
+            item.evento_id,
+            {"services": [], "distributed": Decimal("0.00"), "difference": Decimal("0.00")},
+        )
+        chave = (item.evento_id, item.servico_id)
+        servico = por_servico.get(chave)
+        if servico is None:
+            total = Decimal("0.00")
+            servico = {
+                "serviceId": item.servico_id,
+                "serviceName": item.servico_nome_snapshot,
+                "serviceCostAmount": decimal_para_numero(total),
+                "distributedAmount": Decimal("0.00"),
+                "differenceAmount": Decimal("0.00"),
+                "monthlyServerCount": 0,
+                "managerialAppropriationAmount": 0.0,
+                "participants": [],
+                "_total": total,
+            }
+            por_servico[chave] = servico
+            evento["services"].append(servico)
+        mensalista = item.tipo_vinculo == Servidor.VINCULO_MENSALISTA
+        valor_real = Decimal("0.00") if mensalista else item.valor_final
+        servico["distributedAmount"] += valor_real
+        if mensalista:
+            servico["monthlyServerCount"] += 1
+        dias_trabalhados = serializar_dias_trabalhados(item)
+        servico["participants"].append(
+            {
+                "participationId": item.id,
+                "serverId": item.servidor_id,
+                "serverName": item.servidor_nome_snapshot,
+                "serverDeleted": item.servidor_id is None,
+                "linkType": item.tipo_vinculo,
+                "days": item.quantidade_dias,
+                "hours": decimal_para_numero(item.quantidade_horas),
+                "workedDays": dias_trabalhados,
+                "workDatesProvided": bool(dias_trabalhados),
+                "calculatedAmount": decimal_para_numero(item.valor_calculado),
+                "finalAmount": decimal_para_numero(item.valor_final),
+                "manuallyEdited": item.valor_editado_manualmente,
+                "financialRealCost": decimal_para_numero(valor_real),
+                "managerialAppropriation": 0.0,
+            }
+        )
+
+    for evento in por_evento.values():
+        for servico in evento["services"]:
+            distribuido = quantizar_moeda(servico["distributedAmount"])
+            diferenca = quantizar_moeda(servico["_total"] - distribuido)
+            servico["distributedAmount"] = decimal_para_numero(distribuido)
+            servico["differenceAmount"] = decimal_para_numero(diferenca)
+            servico.pop("_total")
+            evento["distributed"] += distribuido
+            evento["difference"] += diferenca
+        evento["distributed"] = quantizar_moeda(evento["distributed"])
+        evento["difference"] = quantizar_moeda(evento["difference"])
+    return por_evento
 
 
 def _eventos_info_custos_por_evento(grupos):
@@ -566,6 +711,7 @@ def data_mais_recente_antes_do_periodo(filtros_dashboard, data_inicial):
         "contrato_codigo": filtros_dashboard.get("contrato_codigo", ""),
         "status": filtros_dashboard.get("status", ""),
         "periodo_rapido": "",
+        "_exclude_salary": filtros_dashboard.get("_exclude_salary", False),
     }
     querysets = querysets_dashboard_filtrados(filtros_busca)
     datas = [
@@ -1220,7 +1366,8 @@ def movimentacao_eh_fluxo_operacional(movimentacao):
 def montar_evolucao_caixa(movimentacoes, filtros_dashboard):
     receitas_despesas = montar_receitas_despesas_por_mes(movimentacoes, filtros_dashboard)
     saldo = calcular_saldo_inicial_fluxo_caixa(
-        filtros_dashboard.get("data_inicial")
+        filtros_dashboard.get("data_inicial"),
+        excluir_salarios=filtros_dashboard.get("_exclude_salary", False),
     )
     evolucao = []
 

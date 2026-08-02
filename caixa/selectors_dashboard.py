@@ -55,7 +55,8 @@ def montar_dados_dashboard(params, session):
         totais_financeiros["hoje"],
     )
     saldo_inicial = calcular_saldo_inicial_fluxo_caixa(
-        filtros_dashboard.get("data_inicial")
+        filtros_dashboard.get("data_inicial"),
+        excluir_salarios=filtros_dashboard.get("_exclude_salary", False),
     )
     totais_movimentacoes = montar_movimentacoes_dashboard(
         querysets["receitas"],

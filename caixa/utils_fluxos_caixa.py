@@ -100,7 +100,12 @@ def calcular_totais_fluxos_caixa(movimentacoes, saldo_inicial=Decimal("0.00")):
     }
 
 
-def calcular_saldo_inicial_fluxo_caixa(data_inicial, saldo_inicial_configurado=None):
+def calcular_saldo_inicial_fluxo_caixa(
+    data_inicial,
+    saldo_inicial_configurado=None,
+    *,
+    excluir_salarios=False,
+):
     if saldo_inicial_configurado is not None:
         return quantizar_moeda(decimal_zero(saldo_inicial_configurado))
 
@@ -110,7 +115,10 @@ def calcular_saldo_inicial_fluxo_caixa(data_inicial, saldo_inicial_configurado=N
 
     from .services_validacao_pagamentos import saldo_caixa_disponivel
 
-    return saldo_caixa_disponivel(data_periodo - timedelta(days=1))
+    return saldo_caixa_disponivel(
+        data_periodo - timedelta(days=1),
+        excluir_salarios=excluir_salarios,
+    )
 
 
 def normalizar_data_fluxo_caixa(valor):

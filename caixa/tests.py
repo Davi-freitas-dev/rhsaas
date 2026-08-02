@@ -1,3 +1,4 @@
+import csv
 import importlib
 import hashlib
 import json
@@ -4391,7 +4392,7 @@ class OrcamentoItemTests(TenantScopedTestCase):
             despesa.valor_previsto for despesa in evento.despesas.all()
         ])
 
-    def test_reaprovar_orcamento_atualiza_custo_extra_sem_duplicar(self):
+    def test_reaprovar_orcamento_e_rejeitado_sem_alterar_custo_extra(self):
         OrcamentoItem.objects.create(
             orcamento=self.orcamento,
             servico=self.servico,
@@ -4411,14 +4412,15 @@ class OrcamentoItemTests(TenantScopedTestCase):
         custo_orcamento.valor_previsto = Decimal("150.00")
         custo_orcamento.descricao = "Materiais extras atualizados"
         custo_orcamento.save()
-        self.orcamento.aprovar_e_gerar_evento()
+        with self.assertRaises(ValidationError):
+            self.orcamento.aprovar_e_gerar_evento()
 
         custos_evento = EventoCustoExtra.objects.filter(evento=evento)
         custo_evento = custos_evento.get()
 
         self.assertEqual(custos_evento.count(), 1)
-        self.assertEqual(custo_evento.descricao, "Materiais extras atualizados")
-        self.assertEqual(custo_evento.valor_previsto, Decimal("150.00"))
+        self.assertEqual(custo_evento.descricao, "Materiais extras")
+        self.assertEqual(custo_evento.valor_previsto, Decimal("120.00"))
 
     def test_excluir_custo_extra_do_orcamento_remove_copia_sem_movimento(self):
         OrcamentoItem.objects.create(
@@ -5515,6 +5517,19 @@ class PermissoesTests(TenantScopedTestCase):
             "canViewServices": False,
             "canAddService": False,
             "canChangeService": False,
+            "canViewServers": False,
+            "canViewServerParticipations": False,
+            "canAddServer": False,
+            "canChangeServer": False,
+            "canDeleteServer": False,
+            "canViewServerSalary": False,
+            "canChangeServerSalary": False,
+            "canViewServerSensitiveData": False,
+            "canViewServerCosts": False,
+            "canManageServerParticipation": False,
+            "canChangeServerDistributedValue": False,
+            "canRecalculateServerCosts": False,
+            "canViewServerAppropriation": False,
             "canViewFinancialConfigurations": False,
             "canAddFinancialConfiguration": False,
             "canChangeFinancialConfiguration": False,
@@ -5531,6 +5546,7 @@ class PermissoesTests(TenantScopedTestCase):
             "canAddFinancialCreditor": False,
             "canViewFinancialInvestments": False,
             "canAddFinancialInvestment": False,
+            "canChangeFinancialInvestment": False,
             "canAddFinancialFinancingMovement": False,
             "canViewFinancialLedger": False,
             "canViewFinancialObligations": False,
@@ -6201,6 +6217,19 @@ class PermissoesTests(TenantScopedTestCase):
             "canViewServices": False,
             "canAddService": False,
             "canChangeService": False,
+            "canViewServers": False,
+            "canViewServerParticipations": False,
+            "canAddServer": False,
+            "canChangeServer": False,
+            "canDeleteServer": False,
+            "canViewServerSalary": False,
+            "canChangeServerSalary": False,
+            "canViewServerSensitiveData": False,
+            "canViewServerCosts": False,
+            "canManageServerParticipation": False,
+            "canChangeServerDistributedValue": False,
+            "canRecalculateServerCosts": False,
+            "canViewServerAppropriation": False,
             "canViewFinancialConfigurations": False,
             "canAddFinancialConfiguration": False,
             "canChangeFinancialConfiguration": False,
@@ -6217,6 +6246,7 @@ class PermissoesTests(TenantScopedTestCase):
             "canAddFinancialCreditor": False,
             "canViewFinancialInvestments": True,
             "canAddFinancialInvestment": False,
+            "canChangeFinancialInvestment": False,
             "canAddFinancialFinancingMovement": False,
             "canViewFinancialLedger": True,
             "canViewFinancialObligations": True,
@@ -9006,6 +9036,8 @@ class FiltrosHtmlTests(TenantScopedTestCase):
                 "overtimeHourlyRate",
                 "createdAt",
                 "updatedAt",
+                "isSeed",
+                "isReadOnly",
             },
         )
         self.assertEqual(payload["id"], servico.id)
@@ -9030,6 +9062,8 @@ class FiltrosHtmlTests(TenantScopedTestCase):
             payload["overtimeHourlyRate"],
             f"{servico.valor_hora_extra:.2f}",
         )
+        self.assertFalse(payload["isSeed"])
+        self.assertFalse(payload["isReadOnly"])
 
     def _assert_json_no_store(self, response):
         self.assertEqual(response["Content-Type"], "application/json")
@@ -9938,7 +9972,17 @@ class FiltrosHtmlTests(TenantScopedTestCase):
                 "currency",
                 "nomenclature",
                 "cashFlowSemantics",
+                "financialCompleteness",
             },
+        )
+        self.assertTrue(
+            {
+                "assessed",
+                "complete",
+                "status",
+                "reason",
+                "excludedSalaryData",
+            }.issubset(payload["meta"]["financialCompleteness"])
         )
 
     def _rotas_obrigacoes_financeiras(self):
@@ -10572,6 +10616,8 @@ class FiltrosHtmlTests(TenantScopedTestCase):
                 "displayName",
                 "createdAt",
                 "updatedAt",
+                "isSeed",
+                "isReadOnly",
             },
         )
         self.assertEqual(payload["id"], cliente.id)
@@ -10586,6 +10632,8 @@ class FiltrosHtmlTests(TenantScopedTestCase):
         self.assertEqual(payload["notes"], cliente.observacoes)
         self.assertEqual(payload["isActive"], cliente.ativo)
         self.assertEqual(payload["displayName"], str(cliente))
+        self.assertFalse(payload["isSeed"])
+        self.assertFalse(payload["isReadOnly"])
 
     def _custo_fixo_payload_api(self, **overrides):
         payload = {
@@ -10631,9 +10679,23 @@ class FiltrosHtmlTests(TenantScopedTestCase):
                 "generatedAutomatically",
                 "recordType",
                 "recordTypeLabel",
+                "kind",
+                "origin",
+                "planId",
+                "competence",
+                "serverId",
+                "serverReferenceId",
+                "source",
+                "projectedAmount",
+                "forecastAmount",
+                "readOnly",
+                "canEdit",
+                "canPay",
                 "isOverdue",
                 "createdAt",
                 "updatedAt",
+                "isSeed",
+                "isReadOnly",
             },
         )
         self.assertEqual(payload["id"], custo_fixo.id)
@@ -10655,13 +10717,45 @@ class FiltrosHtmlTests(TenantScopedTestCase):
         self.assertEqual(payload["settlementReason"], custo_fixo.motivo_baixa)
         self.assertEqual(payload["notes"], custo_fixo.observacao)
         self.assertEqual(payload["isActive"], custo_fixo.ativo)
-        self.assertEqual(payload["isRecurring"], custo_fixo.recorrente)
+        self.assertEqual(payload["isRecurring"], custo_fixo.eh_recorrente)
         self.assertEqual(payload["monthsCount"], custo_fixo.quantidade_meses)
         self.assertEqual(payload["parentId"], custo_fixo.custo_pai_id)
         self.assertEqual(
             payload["generatedAutomatically"],
             custo_fixo.gerado_automaticamente,
         )
+        salarial = custo_fixo.origem_recorrencia == "salario"
+        self.assertEqual(payload["kind"], "occurrence")
+        self.assertEqual(payload["origin"], custo_fixo.origem_recorrencia)
+        self.assertEqual(payload["planId"], custo_fixo.plano_recorrente_id)
+        self.assertEqual(
+            payload["competence"],
+            custo_fixo.competencia.isoformat() if custo_fixo.competencia else "",
+        )
+        self.assertEqual(payload["serverId"], custo_fixo.servidor_salario_id)
+        self.assertEqual(
+            payload["serverReferenceId"],
+            custo_fixo.servidor_salario_id,
+        )
+        self.assertEqual(
+            payload["source"],
+            "salaryHistory"
+            if salarial
+            else "recurringPlan" if custo_fixo.plano_recorrente_id else "fixedCost",
+        )
+        self.assertEqual(payload["projectedAmount"], "0.00")
+        self.assertEqual(
+            payload["forecastAmount"],
+            f"{custo_fixo.valor_pendente_pagamento:.2f}",
+        )
+        self.assertEqual(payload["readOnly"], salarial)
+        self.assertEqual(payload["canEdit"], not salarial)
+        self.assertEqual(
+            payload["canPay"],
+            custo_fixo.status not in {"pago", "cancelado"},
+        )
+        self.assertFalse(payload["isSeed"])
+        self.assertFalse(payload["isReadOnly"])
 
     def _assert_django_404_padrao(self, response):
         self.assertEqual(response.status_code, 404)
@@ -10714,7 +10808,7 @@ class FiltrosHtmlTests(TenantScopedTestCase):
 
     def _csv_export_rows(self, response):
         content = response.content.decode("utf-8-sig")
-        return [line.split(";") for line in content.splitlines()]
+        return list(csv.reader(StringIO(content), delimiter=";"))
 
     def _assert_exportacao_obrigacoes_csv_response(self, response, filename):
         self.assertEqual(response.status_code, 200, response.content[:200])
@@ -10803,6 +10897,8 @@ class FiltrosHtmlTests(TenantScopedTestCase):
                 "displayName",
                 "createdAt",
                 "updatedAt",
+                "isSeed",
+                "isReadOnly",
             },
         )
         self.assertEqual(data["clients"][0]["id"], cliente_alvo.id)
@@ -10810,6 +10906,8 @@ class FiltrosHtmlTests(TenantScopedTestCase):
         self.assertEqual(data["clients"][0]["tradeName"], "Canonico")
         self.assertEqual(data["clients"][0]["personType"], "PJ")
         self.assertEqual(data["clients"][0]["document"], "12.345.678/0001-91")
+        self.assertFalse(data["clients"][0]["isSeed"])
+        self.assertFalse(data["clients"][0]["isReadOnly"])
         self.assertEqual(data["summary"]["total"], 1)
         self.assertEqual(
             set(data["summary"]),
@@ -12110,6 +12208,7 @@ class FiltrosHtmlTests(TenantScopedTestCase):
             set(data),
             {
                 "fixedCosts",
+                "projections",
                 "groups",
                 "summary",
                 "filters",
@@ -12120,6 +12219,7 @@ class FiltrosHtmlTests(TenantScopedTestCase):
         )
         self.assertEqual(data["meta"], {"source": "backend"})
         self.assertEqual(data["permissions"], {"canCreate": False, "canUpdate": False})
+        self.assertEqual(data["projections"], [])
         self.assertEqual(
             [item["id"] for item in data["fixedCosts"]],
             [custo_mais_antigo.id, custo_mais_recente.id],
@@ -12141,25 +12241,47 @@ class FiltrosHtmlTests(TenantScopedTestCase):
                 "plannedAmount",
                 "paidAmount",
                 "pendingPaymentAmount",
+                "realizedAmount",
+                "materializedPlannedAmount",
+                "projectedAmount",
+                "forecastAmount",
                 "total",
                 "overdueCount",
             },
         )
         self.assertEqual(data["groups"][0]["category"], "sistema")
         self.assertEqual(data["groups"][0]["total"], 2)
+        self.assertEqual(data["groups"][0]["realizedAmount"], "50.00")
+        self.assertEqual(data["groups"][0]["materializedPlannedAmount"], "300.00")
+        self.assertEqual(data["groups"][0]["projectedAmount"], "0.00")
+        self.assertEqual(data["groups"][0]["forecastAmount"], "250.00")
         self.assertEqual(
             set(data["summary"]),
             {
                 "plannedAmount",
                 "paidAmount",
+                "realizedAmount",
+                "materializedPlannedAmount",
                 "pendingPaymentAmount",
+                "projectedAmount",
+                "forecastAmount",
                 "total",
+                "materializedCount",
+                "projectedCount",
+                "blockedProjectionCount",
                 "manualCount",
                 "automaticCount",
                 "overdueCount",
             },
         )
         self.assertEqual(data["summary"]["total"], 2)
+        self.assertEqual(data["summary"]["realizedAmount"], "50.00")
+        self.assertEqual(data["summary"]["materializedPlannedAmount"], "300.00")
+        self.assertEqual(data["summary"]["projectedAmount"], "0.00")
+        self.assertEqual(data["summary"]["forecastAmount"], "250.00")
+        self.assertEqual(data["summary"]["materializedCount"], 2)
+        self.assertEqual(data["summary"]["projectedCount"], 0)
+        self.assertEqual(data["summary"]["blockedProjectionCount"], 0)
         self.assertEqual(data["summary"]["manualCount"], 2)
         self.assertEqual(data["summary"]["automaticCount"], 0)
         filtros = data["filters"]
@@ -12341,7 +12463,10 @@ class FiltrosHtmlTests(TenantScopedTestCase):
                 self.assertIn(campo, payload["errors"])
 
     def test_api_custos_fixos_criacao_sucesso_preserva_shape_recorrencia_e_sincronizacoes(self):
-        criar_entrada_caixa_teste(valor=Decimal("1000.00"), data=date(2026, 6, 1))
+        competencia = timezone.localdate().replace(day=1)
+        data_vencimento = competencia.replace(day=20)
+        data_fim_esperada = adicionar_meses(competencia, 3) - timedelta(days=1)
+        criar_entrada_caixa_teste(valor=Decimal("1000.00"), data=competencia)
         url = reverse("caixa:api_custos_fixos")
         usuario_add = self._usuario_com_permissoes_caixa(
             "custos-fixos-criacao",
@@ -12358,42 +12483,57 @@ class FiltrosHtmlTests(TenantScopedTestCase):
                     description="Custo Recorrente API",
                     category="sistema",
                     plannedAmount="120.00",
-                    paidAmount="40.00",
-                    dueDate="2026-06-20",
-                    paymentDate="2026-06-21",
-                    notes="Pagamento parcial inicial.",
+                    paidAmount="0.00",
+                    dueDate=data_vencimento.isoformat(),
+                    paymentDate="",
+                    notes="Plano recorrente sem baixa inicial.",
                     isRecurring=True,
                     monthsCount=3,
+                    authorizedMaterializationDate=competencia.isoformat(),
                 )
             ),
             content_type="application/json",
             HTTP_X_CSRFTOKEN=csrf_token,
+            HTTP_IDEMPOTENCY_KEY="da14fa5d-30bc-4c32-b5b7-364cd3f832fb",
         )
 
         self.assertEqual(response.status_code, 201, response.content[:200])
         self._assert_json_no_store(response)
         data = response.json()["data"]
-        self.assertEqual(set(data), {"fixedCost", "message"})
-        self.assertEqual(data["message"], "Custo fixo cadastrado com sucesso.")
+        self.assertEqual(
+            set(data),
+            {"fixedCost", "recurringPlan", "materialization", "message"},
+        )
+        self.assertEqual(response["Idempotency-Replayed"], "false")
+        self.assertEqual(data["message"], "Plano recorrente cadastrado com sucesso.")
         custo_fixo = CustoFixo.objects.get(
             descricao="Custo Recorrente API",
-            gerado_automaticamente=False,
+            gerado_automaticamente=True,
         )
         custo_fixo.refresh_from_db()
         self._assert_custo_fixo_api_fields(data["fixedCost"], custo_fixo)
+        plano = custo_fixo.plano_recorrente
+        self.assertIsNotNone(plano)
+        self.assertEqual(data["recurringPlan"]["id"], plano.id)
+        self.assertEqual(data["recurringPlan"]["description"], plano.descricao)
+        self.assertEqual(data["recurringPlan"]["startDate"], competencia.isoformat())
+        self.assertEqual(data["recurringPlan"]["endDate"], data_fim_esperada.isoformat())
+        self.assertEqual(
+            data["recurringPlan"]["authorizedMaterializationDate"],
+            competencia.isoformat(),
+        )
+        self.assertEqual(data["materialization"]["status"], "created")
+        self.assertEqual(data["materialization"]["fixedCostId"], custo_fixo.id)
         self.assertEqual(custo_fixo.criado_por, usuario_add)
         self.assertEqual(custo_fixo.atualizado_por, usuario_add)
-        self.assertEqual(custo_fixo.status, "parcial")
-        self.assertEqual(custo_fixo.custos_filhos.count(), 2)
-        self.assertEqual(CustoFixo.objects.filter(descricao="Custo Recorrente API").count(), 3)
-        lancamento = LancamentoFinanceiro.objects.get(custo_fixo=custo_fixo)
+        self.assertEqual(custo_fixo.status, "pendente")
+        self.assertEqual(custo_fixo.plano_recorrente_id, plano.id)
+        self.assertEqual(CustoFixo.objects.filter(plano_recorrente=plano).count(), 1)
+        self.assertFalse(LancamentoFinanceiro.objects.filter(custo_fixo=custo_fixo).exists())
         obrigacao = ObrigacaoFinanceira.objects.get(custo_fixo=custo_fixo)
-        baixa = BaixaFinanceira.objects.get(custo_fixo=custo_fixo)
-        self.assertEqual(lancamento.valor, Decimal("40.00"))
-        self.assertEqual(lancamento.data_lancamento, date(2026, 6, 21))
         self.assertEqual(obrigacao.valor_previsto, Decimal("120.00"))
-        self.assertEqual(obrigacao.valor_realizado, Decimal("40.00"))
-        self.assertEqual(baixa.valor_total, Decimal("40.00"))
+        self.assertEqual(obrigacao.valor_realizado, Decimal("0.00"))
+        self.assertFalse(BaixaFinanceira.objects.filter(custo_fixo=custo_fixo).exists())
 
     def test_api_custos_fixos_metodos_nao_permitidos_preservam_405(self):
         url = reverse("caixa:api_custos_fixos")
@@ -13358,6 +13498,11 @@ class FiltrosHtmlTests(TenantScopedTestCase):
                 "extraCostBreakdown",
                 "manualCostBreakdown",
                 "items",
+                "serverDistribution",
+                "distributedServerCostAmount",
+                "serverDistributionDifferenceAmount",
+                "managerialAppropriationAmount",
+                "financialRealServerCostAmount",
             },
         )
         self.assertEqual(grupo["eventId"], evento.id)
@@ -13378,6 +13523,25 @@ class FiltrosHtmlTests(TenantScopedTestCase):
         self.assertEqual(grupo["transportAmount"], 10.0)
         self.assertEqual(grupo["extraCostAmount"], 40.0)
         self.assertEqual(grupo["manualCostAmount"], 15.0)
+        self.assertEqual(grupo["distributedServerCostAmount"], 0.0)
+        self.assertEqual(grupo["serverDistributionDifferenceAmount"], 100.0)
+        self.assertEqual(grupo["managerialAppropriationAmount"], 0.0)
+        self.assertEqual(grupo["financialRealServerCostAmount"], 0.0)
+        self.assertEqual(
+            grupo["serverDistribution"],
+            [
+                {
+                    "serviceId": servico.id,
+                    "serviceName": "Servico Shape Custos",
+                    "serviceCostAmount": 100.0,
+                    "distributedAmount": 0.0,
+                    "differenceAmount": 100.0,
+                    "monthlyServerCount": 0,
+                    "managerialAppropriationAmount": 0.0,
+                    "participants": [],
+                }
+            ],
+        )
 
         for breakdown_name in [
             "serviceCostBreakdown",
@@ -13749,6 +13913,8 @@ class FiltrosHtmlTests(TenantScopedTestCase):
                 "notes",
                 "createdAt",
                 "updatedAt",
+                "isSeed",
+                "isReadOnly",
             },
         )
         self.assertEqual(payload["extraCost"]["id"], custo_extra.id)
@@ -13769,6 +13935,8 @@ class FiltrosHtmlTests(TenantScopedTestCase):
         self.assertEqual(payload["extraCost"]["pendingPaymentAmount"], "123.45")
         self.assertEqual(payload["extraCost"]["dueDate"], "2026-06-21")
         self.assertEqual(payload["extraCost"]["notes"], "Criado pelo Next.js")
+        self.assertFalse(payload["extraCost"]["isSeed"])
+        self.assertFalse(payload["extraCost"]["isReadOnly"])
         self.assertTrue(payload["extraCost"]["createdAt"])
         self.assertTrue(payload["extraCost"]["updatedAt"])
         self.assertEqual(custo_extra.evento, evento)
@@ -19637,6 +19805,7 @@ class FiltrosHtmlTests(TenantScopedTestCase):
             "diagnostico_conciliacao",
             "base_realizada",
             "read_model",
+            "filtros_aplicados",
         ]
         colunas_receitas_despesas = [
             "item",
@@ -19652,6 +19821,7 @@ class FiltrosHtmlTests(TenantScopedTestCase):
             "realizado",
             "pendente",
             "fluxo",
+            "filtros_aplicados",
         ]
 
         response_obligations = self.client.get(
@@ -19758,6 +19928,7 @@ class FiltrosHtmlTests(TenantScopedTestCase):
                 "suporta_descricao_pagamento",
                 "suporta_ajustes",
                 "suporta_baixa_saldo",
+                "filtros_aplicados",
             ],
         )
         self.assertEqual(len(rows) - 1, 3)
@@ -19766,7 +19937,13 @@ class FiltrosHtmlTests(TenantScopedTestCase):
         self.assertNotIn("queueOffset", rows[0])
         self.assertNotIn("limit", rows[0])
         self.assertNotIn("offset", rows[0])
-        self.assertNotIn("filtros_aplicados", rows[0])
+        self.assertIn("filtros_aplicados", rows[0])
+        filtros_aplicados = json.loads(rows[1][rows[0].index("filtros_aplicados")])
+        self.assertEqual(filtros_aplicados["queueFilter"], "overdue")
+        self.assertNotIn("queueLimit", filtros_aplicados)
+        self.assertNotIn("queueOffset", filtros_aplicados)
+        self.assertNotIn("limit", filtros_aplicados)
+        self.assertNotIn("offset", filtros_aplicados)
 
     def test_exportacao_obrigacoes_preserva_erros_json_de_validacao(self):
         url = reverse("caixa:api_exportar_obrigacoes_financeiras")
@@ -19894,11 +20071,21 @@ class FiltrosHtmlTests(TenantScopedTestCase):
         self.assertIn("Receita export dentro", linhas_receitas)
         self.assertNotIn("Receita export fora", linhas_receitas)
         self.assertNotIn("Despesa export dentro", linhas_receitas)
-        self.assertNotIn("filtros_aplicados", linhas_receitas)
+        linhas_csv_receitas = self._csv_export_rows(response_receitas)
+        self.assertIn("filtros_aplicados", linhas_csv_receitas[0])
+        filtros_receitas = json.loads(
+            linhas_csv_receitas[1][linhas_csv_receitas[0].index("filtros_aplicados")]
+        )
+        self.assertEqual(filtros_receitas["obligationType"], "receber")
         self.assertEqual(response_despesas.status_code, 200, response_despesas.content)
         self.assertIn("Despesa export dentro", linhas_despesas)
         self.assertNotIn("Receita export dentro", linhas_despesas)
-        self.assertNotIn("filtros_aplicados", linhas_despesas)
+        linhas_csv_despesas = self._csv_export_rows(response_despesas)
+        self.assertIn("filtros_aplicados", linhas_csv_despesas[0])
+        filtros_despesas = json.loads(
+            linhas_csv_despesas[1][linhas_csv_despesas[0].index("filtros_aplicados")]
+        )
+        self.assertEqual(filtros_despesas["source"], "despesa_operacional")
 
     def test_exportacao_receitas_e_despesas_completa_ignora_paginacao_e_teto_300(
         self,
@@ -20238,8 +20425,12 @@ class FiltrosHtmlTests(TenantScopedTestCase):
             "actionHints",
             "readModelSource",
             "dataSource",
+            "isSeed",
+            "isReadOnly",
         }
         self.assertEqual(set(data["item"]), item_keys)
+        self.assertFalse(data["item"]["isSeed"])
+        self.assertFalse(data["item"]["isReadOnly"])
         self.assertEqual(
             set(data["item"]["actionHints"]),
             {"primary", "admin", "actions"},
@@ -23825,6 +24016,10 @@ class FiltrosHtmlTests(TenantScopedTestCase):
                 "backup_create",
                 "backup_download",
                 "export_csv",
+                "demo_lease",
+                "demo_lease_resume",
+                "demo_exchange",
+                "demo_status",
             },
         )
         self.assertNotIn("senha-cache", saida_json.getvalue())
@@ -47590,6 +47785,7 @@ class OrcamentosHoraTenantTests(TenantScopedTestCase):
                 "add_orcamento",
                 "add_orcamentoitem",
                 "change_orcamento",
+                "change_orcamentoitem",
             ],
         )
         self.usuario.user_permissions.set(permissoes)
@@ -48451,6 +48647,7 @@ class OrcamentosApiTests(TenantScopedTestCase):
                 "add_orcamento",
                 "add_orcamentoitem",
                 "change_orcamento",
+                "change_orcamentoitem",
             ],
         )
         self.usuario.user_permissions.set(permissoes)
@@ -48581,6 +48778,8 @@ class OrcamentosApiTests(TenantScopedTestCase):
                 "approvedEventId",
                 "createdAt",
                 "updatedAt",
+                "isSeed",
+                "isReadOnly",
             },
         )
         self.assertEqual(
@@ -48614,6 +48813,8 @@ class OrcamentosApiTests(TenantScopedTestCase):
                 "taxAmount",
                 "profitAmount",
                 "saleAmount",
+                "isSeed",
+                "isReadOnly",
             },
         )
         if budget["extraCosts"]:
@@ -48628,8 +48829,17 @@ class OrcamentosApiTests(TenantScopedTestCase):
                     "dueDate",
                     "notes",
                     "eventExtraCostId",
+                    "isSeed",
+                    "isReadOnly",
                 },
             )
+        self.assertFalse(budget["isSeed"])
+        self.assertFalse(budget["isReadOnly"])
+        self.assertFalse(budget["items"][0]["isSeed"])
+        self.assertFalse(budget["items"][0]["isReadOnly"])
+        if budget["extraCosts"]:
+            self.assertFalse(budget["extraCosts"][0]["isSeed"])
+            self.assertFalse(budget["extraCosts"][0]["isReadOnly"])
 
     def _assert_list_payload_shape(self, payload):
         self.assertEqual(
@@ -49227,6 +49437,7 @@ class OrcamentosApiTests(TenantScopedTestCase):
         usuario_com_permissao = self._usuario_com_permissoes(
             "api-orcamento-detalhe-put-erros",
             "change_orcamento",
+            "change_orcamentoitem",
         )
         client_com_permissao.force_login(usuario_com_permissao)
         token_com_permissao = self._csrf_token(client_com_permissao)
@@ -49383,6 +49594,7 @@ class OrcamentosApiTests(TenantScopedTestCase):
         usuario = self._usuario_com_permissoes(
             "api-orcamento-detalhe-put-sucesso",
             "change_orcamento",
+            "change_orcamentoitem",
         )
         client.force_login(usuario)
         csrf_token = self._csrf_token(client)
@@ -50126,7 +50338,7 @@ class OrcamentosApiTests(TenantScopedTestCase):
             payload["message"],
             (
                 "Contrato ORC-API-APROVAR-JSON-INVALIDO aprovado. "
-                "Evento ORC-API-APROVAR-JSON-INVALIDO gerado/atualizado."
+                "Evento ORC-API-APROVAR-JSON-INVALIDO gerado."
             ),
         )
         self.assertEqual(orcamento_json_invalido.status, "aprovado")
@@ -50169,8 +50381,7 @@ class OrcamentosApiTests(TenantScopedTestCase):
             response.json(),
             {
                 "detail": (
-                    "Não foi possível aprovar o orçamento. "
-                    "Tente novamente ou contate o suporte."
+                    "Não é possível aprovar um orçamento sem itens."
                 ),
             },
         )
@@ -50178,7 +50389,7 @@ class OrcamentosApiTests(TenantScopedTestCase):
         self.assertEqual(orcamento.status, "rascunho")
         self.assertFalse(Evento.objects.filter(orcamento=orcamento).exists())
 
-    def test_api_aprovar_orcamento_reaprovacao_nao_duplica_evento(self):
+    def test_api_aprovar_orcamento_reaprovacao_e_rejeitada_sem_duplicar_evento(self):
         orcamento = self._criar_orcamento_com_item_e_custo_extra(
             numero="ORC-API-APROVAR-REAPROVAR"
         )
@@ -50194,15 +50405,25 @@ class OrcamentosApiTests(TenantScopedTestCase):
 
         response_primeira = client.post(url, HTTP_X_CSRFTOKEN=csrf_token)
         evento_id = response_primeira.json()["data"]["event"]["id"]
+        evento = Evento.objects.get(pk=evento_id)
+        contagens = {
+            "eventos": Evento.objects.filter(orcamento=orcamento).count(),
+            "custos_servico": EventoCustoServico.objects.filter(evento=evento).count(),
+            "custos_extras": EventoCustoExtra.objects.filter(evento=evento).count(),
+        }
         response_segunda = client.post(url, HTTP_X_CSRFTOKEN=csrf_token)
 
         self.assertEqual(response_primeira.status_code, 200)
-        self.assertEqual(response_segunda.status_code, 200)
-        self.assertEqual(Evento.objects.filter(orcamento=orcamento).count(), 1)
-        self.assertEqual(response_segunda.json()["data"]["event"]["id"], evento_id)
-        evento = Evento.objects.get(pk=evento_id)
-        self.assertEqual(EventoCustoServico.objects.filter(evento=evento).count(), 1)
-        self.assertEqual(EventoCustoExtra.objects.filter(evento=evento).count(), 1)
+        self.assertEqual(response_segunda.status_code, 400)
+        self.assertIn("rascunho ou enviados", response_segunda.json()["detail"])
+        self.assertEqual(
+            contagens,
+            {
+                "eventos": Evento.objects.filter(orcamento=orcamento).count(),
+                "custos_servico": EventoCustoServico.objects.filter(evento=evento).count(),
+                "custos_extras": EventoCustoExtra.objects.filter(evento=evento).count(),
+            },
+        )
 
     def test_api_aprovar_orcamento_metodos_nao_permitidos_preservam_405_e_allow(self):
         orcamento = self._criar_orcamento_com_item_e_custo_extra(
@@ -50401,6 +50622,8 @@ class EventosApiTests(TenantScopedTestCase):
                 "realizedProfitAmount",
                 "createdAt",
                 "updatedAt",
+                "isSeed",
+                "isReadOnly",
             },
         )
         self.assertEqual(
@@ -50457,6 +50680,8 @@ class EventosApiTests(TenantScopedTestCase):
         self.assertEqual(payload["events"][0]["contract"], "API-001")
         self.assertEqual(payload["events"][0]["clientDisplayName"], str(self.cliente))
         self.assertEqual(payload["events"][0]["plannedResultAmount"], "700.00")
+        self.assertFalse(payload["events"][0]["isSeed"])
+        self.assertFalse(payload["events"][0]["isReadOnly"])
         self.assertEqual(payload["filters"]["search"], "Encontrado")
         self.assertEqual(payload["filters"]["busca"], "Encontrado")
         self.assertEqual(payload["filters"]["status"], "confirmado")
@@ -50803,6 +51028,8 @@ class EventosApiTests(TenantScopedTestCase):
                 "realizedProfitAmount",
                 "createdAt",
                 "updatedAt",
+                "isSeed",
+                "isReadOnly",
             },
         )
         self.assertEqual(event_payload["id"], evento.id)
@@ -50819,6 +51046,8 @@ class EventosApiTests(TenantScopedTestCase):
         self.assertEqual(event_payload["plannedRevenueAmount"], "1000.00")
         self.assertEqual(event_payload["realizedCostAmount"], "250.00")
         self.assertEqual(event_payload["plannedResultAmount"], "700.00")
+        self.assertFalse(event_payload["isSeed"])
+        self.assertFalse(event_payload["isReadOnly"])
         self.assertEqual(
             data["permissions"],
             {"canView": True, "canUpdate": False, "canManageInAdmin": False},
@@ -51040,9 +51269,13 @@ class ReceitasApiTests(TenantScopedTestCase):
                 "contractLabel",
                 "createdAt",
                 "updatedAt",
+                "isSeed",
+                "isReadOnly",
             },
         )
         self.assertEqual(payload["id"], receita.id)
+        self.assertFalse(payload["isSeed"])
+        self.assertFalse(payload["isReadOnly"])
         self.assertEqual(payload["description"], receita.descricao)
         self.assertEqual(payload["plannedAmount"], f"{receita.valor_previsto:.2f}")
         self.assertEqual(payload["receivedAmount"], f"{receita.valor_recebido:.2f}")
@@ -51592,6 +51825,8 @@ class DespesasApiTests(TenantScopedTestCase):
                 "contractLabel",
                 "createdAt",
                 "updatedAt",
+                "isSeed",
+                "isReadOnly",
             },
         )
         self.assertEqual(payload["id"], despesa.id)
@@ -51623,6 +51858,8 @@ class DespesasApiTests(TenantScopedTestCase):
         self.assertEqual(payload["eventNumber"], despesa.evento.numero)
         self.assertEqual(payload["clientId"], despesa.evento.cliente_id)
         self.assertEqual(payload["clientName"], despesa.evento.cliente.nome_razao_social)
+        self.assertFalse(payload["isSeed"])
+        self.assertFalse(payload["isReadOnly"])
         self.assertIn("T", payload["createdAt"])
         self.assertIn("T", payload["updatedAt"])
 
