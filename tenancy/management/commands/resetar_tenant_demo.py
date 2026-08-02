@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from django.conf import settings
+from django.contrib.auth.models import Permission
 from django.contrib.sessions.models import Session
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection, transaction
@@ -17,6 +18,18 @@ from django_tenants.utils import (
 
 from caixa.tenant_files import artifacts_root_for_schema
 from caixa.demo_seed import validate_demo_seed_readiness
+from caixa.models_custo_fixo import (
+    AuditoriaCustoRecorrente,
+    PlanoCustoRecorrente,
+    RequisicaoIdempotenteRecorrencia,
+)
+from caixa.models_servidores import (
+    HistoricoSalarialServidor,
+    ParticipacaoServidorEvento,
+    Servidor,
+    ServidorEventoDiaTrabalhado,
+    ServidorServico,
+)
 from tenancy.command_guards import (
     ensure_demo_pool_reset_confirmation,
     ensure_demo_pool_schema,
@@ -35,7 +48,46 @@ REQUIRED_TENANT_TABLES = (
     "django_migrations",
     "auth_user",
     "auth_group",
+    "auth_permission",
     "django_session",
+    Servidor._meta.db_table,
+    ServidorServico._meta.db_table,
+    HistoricoSalarialServidor._meta.db_table,
+    ParticipacaoServidorEvento._meta.db_table,
+    ServidorEventoDiaTrabalhado._meta.db_table,
+    PlanoCustoRecorrente._meta.db_table,
+    AuditoriaCustoRecorrente._meta.db_table,
+    RequisicaoIdempotenteRecorrencia._meta.db_table,
+)
+REQUIRED_TENANT_CONSTRAINTS = (
+    "ck_servidor_salario_vinculo",
+    "uq_servidor_documento_ci",
+    "uq_hist_salario_inicio",
+    "uq_part_servidor_evento_serv",
+    "uq_part_servidor_dia_trab",
+    "ck_part_trabalho_pos",
+    "ck_part_manual_motivo",
+    "uq_custo_fixo_plano_comp",
+    "ck_custo_fixo_plano_comp",
+    "uq_plano_salario_servidor",
+    "uq_idempotencia_rec_escopo_chave",
+)
+REQUIRED_TENANT_PERMISSION_CODENAMES = (
+    "view_servidor",
+    "view_salario_servidor",
+    "change_salario_servidor",
+    "view_dados_sensiveis_servidor",
+    "view_participacaoservidorevento",
+    "view_custos_servidor",
+    "manage_participacao_servidor",
+    "change_valor_distribuido_servidor",
+    "recalculate_custos_servidor",
+    "view_apropriacao_servidor",
+    "view_planocustorecorrente",
+    "add_planocustorecorrente",
+    "change_planocustorecorrente",
+    "materialize_planocustorecorrente",
+    "view_auditoria_custos_recorrentes",
 )
 DEMO_RESET_LOCK_PREFIX = "rhsaas:demo-reset:"
 
@@ -271,6 +323,29 @@ class Command(BaseCommand):
                 f"Schema {schema_name} foi recriado sem tabelas essenciais."
             )
 
+        missing_constraints = [
+            constraint_name
+            for constraint_name in REQUIRED_TENANT_CONSTRAINTS
+            if not self._tenant_constraint_or_index_exists(schema_name, constraint_name)
+        ]
+        if missing_constraints:
+            raise CommandError(
+                f"Schema {schema_name} foi recriado sem constraints obrigatÃ³rias."
+            )
+
+        with schema_context(schema_name):
+            existing_permissions = set(
+                Permission.objects.filter(
+                    content_type__app_label="caixa",
+                    codename__in=REQUIRED_TENANT_PERMISSION_CODENAMES,
+                ).values_list("codename", flat=True)
+            )
+        missing_permissions = set(REQUIRED_TENANT_PERMISSION_CODENAMES) - existing_permissions
+        if missing_permissions:
+            raise CommandError(
+                f"Schema {schema_name} foi recriado sem permissÃµes obrigatÃ³rias."
+            )
+
     def _tenant_table_exists(self, schema_name, table_name):
         with connection.cursor() as cursor:
             cursor.execute(
@@ -284,6 +359,34 @@ class Command(BaseCommand):
                 )
                 """,
                 [schema_name, table_name],
+            )
+            return bool(cursor.fetchone()[0])
+
+    def _tenant_constraint_or_index_exists(self, schema_name, constraint_name):
+        """Aceita constraints SQL e índices que implementam unicidade parcial.
+
+        PostgreSQL materializa ``UniqueConstraint(condition=...)`` como índice
+        parcial, não como entrada em ``pg_constraint``. Ambos representam uma
+        invariante obrigatória e precisam existir depois da recriação da Demo.
+        """
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                select exists(
+                    select 1
+                    from pg_constraint pgc
+                    join pg_namespace namespace
+                      on namespace.oid = pgc.connamespace
+                    where namespace.nspname = %s
+                      and pgc.conname = %s
+                    union all
+                    select 1
+                    from pg_indexes
+                    where schemaname = %s
+                      and indexname = %s
+                )
+                """,
+                [schema_name, constraint_name, schema_name, constraint_name],
             )
             return bool(cursor.fetchone()[0])
 

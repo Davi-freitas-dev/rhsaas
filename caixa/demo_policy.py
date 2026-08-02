@@ -20,6 +20,8 @@ DEMO_SEED_PARENT_FIELDS = {
     "despesaoperacional": ("evento",),
     "eventocustoservico": ("evento",),
     "eventocustoextra": ("evento",),
+    "participacaoservidorevento": ("evento",),
+    "servidoreventodiatrabalhado": ("participacao",),
     "pagamentoeventocustoservico": ("custo_servico",),
     "pagamentoeventocustoextra": ("custo_extra",),
     "dividafinanceira": ("evento",),
@@ -78,7 +80,7 @@ def is_applicable_demo_schema(schema_name=None):
     return suffix.isdigit() and 1 <= int(suffix) <= 10
 
 
-def is_demo_seed_object(obj, *, _visited=None):
+def is_demo_seed_object(obj, *, _visited=None, allow_lazy=True):
     if obj is None or not hasattr(obj, "_meta"):
         return False
 
@@ -92,11 +94,23 @@ def is_demo_seed_object(obj, *, _visited=None):
         return bool(getattr(obj, "demo_seed_key", None))
 
     for field_name in DEMO_SEED_PARENT_FIELDS.get(obj._meta.model_name, ()):
-        try:
-            parent = getattr(obj, field_name, None)
-        except ObjectDoesNotExist:
-            parent = None
-        if parent is not None and is_demo_seed_object(parent, _visited=visited):
+        if allow_lazy:
+            try:
+                parent = getattr(obj, field_name, None)
+            except ObjectDoesNotExist:
+                parent = None
+        else:
+            state = getattr(obj, "_state", None)
+            parent = (
+                state.fields_cache.get(field_name)
+                if state is not None
+                else getattr(obj, field_name, None)
+            )
+        if parent is not None and is_demo_seed_object(
+            parent,
+            _visited=visited,
+            allow_lazy=allow_lazy,
+        ):
             return True
     return False
 
@@ -112,8 +126,8 @@ def assert_demo_write_allowed(user, obj=None, *, operation="write"):
         raise PermissionDenied(DEMO_WRITE_DENIED_MESSAGE)
 
 
-def demo_object_flags(obj):
-    is_seed = is_demo_seed_object(obj)
+def demo_object_flags(obj, *, allow_lazy=True):
+    is_seed = is_demo_seed_object(obj, allow_lazy=allow_lazy)
     return {
         "isSeed": is_seed,
         "isReadOnly": is_seed,

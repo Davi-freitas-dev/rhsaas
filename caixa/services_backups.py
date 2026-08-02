@@ -38,23 +38,24 @@ def criar_backup_banco(force=False, manter=3):
     agora = timezone.localtime()
     mes_referencia = agora.strftime("%Y-%m")
 
-    with NamedTemporaryFile(
-        "w+b",
-        suffix=".json",
-        dir=pasta_temporarios,
-        delete=False,
-    ) as temporario:
-        caminho_temporario = Path(temporario.name)
-
+    caminho_temporario = None
     try:
-        call_command(
-            "dumpdata",
-            natural_foreign=True,
-            natural_primary=True,
-            indent=2,
-            output=str(caminho_temporario),
-            verbosity=0,
-        )
+        with NamedTemporaryFile(
+            "w",
+            suffix=".json",
+            encoding="utf-8",
+            dir=pasta_temporarios,
+            delete=False,
+        ) as temporario:
+            caminho_temporario = Path(temporario.name)
+            call_command(
+                "dumpdata",
+                natural_foreign=True,
+                natural_primary=True,
+                indent=2,
+                stdout=temporario,
+                verbosity=0,
+            )
 
         conteudo = caminho_temporario.read_bytes()
         hash_atual = hash_conteudo(conteudo)
@@ -103,7 +104,7 @@ def criar_backup_banco(force=False, manter=3):
             "mensagem": f"Backup criado: {destino}",
         }
     finally:
-        if caminho_temporario.exists():
+        if caminho_temporario and caminho_temporario.exists():
             caminho_temporario.unlink()
 
 

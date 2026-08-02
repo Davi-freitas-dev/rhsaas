@@ -159,6 +159,10 @@ class DemoPublicFlowTests(MultiTenantTestCase):
         self.assertFalse(exchange_payload["user"]["isSuperuser"])
         self.assertTrue(exchange_payload["user"]["canViewDashboard"])
         self.assertFalse(exchange_payload["user"]["canManageBackups"])
+        self.assertFalse(exchange_payload["user"]["canViewServers"])
+        self.assertFalse(exchange_payload["user"]["canViewServerParticipations"])
+        self.assertFalse(exchange_payload["user"]["canViewServerCosts"])
+        self.assertFalse(exchange_payload["user"]["canViewServerSalary"])
 
         session_response = tenant_client.get("/api/auth/session/")
         self.assertEqual(session_response.status_code, 200)
@@ -185,6 +189,10 @@ class DemoPublicFlowTests(MultiTenantTestCase):
             )
             self.assertFalse(user.user_permissions.exists())
             self.assertFalse(user.has_perm("caixa.delete_cliente"))
+            self.assertFalse(user.has_perm("caixa.view_servidor"))
+            self.assertFalse(user.has_perm("caixa.view_participacaoservidorevento"))
+            self.assertFalse(user.has_perm("caixa.view_planocustorecorrente"))
+            self.assertFalse(user.has_perm("caixa.materialize_planocustorecorrente"))
 
     def test_token_e_de_uso_unico_e_vinculado_ao_tenant(self):
         _client, lease_response = self._lease()

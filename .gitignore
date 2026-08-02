@@ -94,7 +94,6 @@ coverage.xml
 pytest.ini
 conftest.py
 caixa/factories.py
-caixa/test_*.py
 
 # Jupyter Notebook
 .ipynb_checkpoints

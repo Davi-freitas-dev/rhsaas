@@ -1,9 +1,10 @@
 from contextlib import contextmanager
 from datetime import date
+import uuid
 
 from django.contrib.auth import get_user_model
 from django.db import connection
-from django.test import Client, override_settings
+from django.test import Client, TransactionTestCase, override_settings
 from django.urls import clear_url_caches
 from django_tenants.test.cases import FastTenantTestCase, TenantTestCase
 from django_tenants.utils import get_public_schema_name, schema_context
@@ -258,3 +259,53 @@ class MultiTenantTestCase(TenantTestCase):
                 data_inicio=date(2026, 1, 1),
                 data_fim=date(2026, 1, 1),
             )
+
+
+class TenantTransactionTestCase(TransactionTestCase):
+    """Base tenant sem atomic externo para cenários com conexões concorrentes."""
+
+    tenant_name = "Tenant Transaction Tests"
+
+    def setUp(self):
+        super().setUp()
+        schema_name = f"tenant_tx_{uuid.uuid4().hex[:12]}"
+        domain_name = f"{schema_name}.testserver"
+        connection.set_schema_to_public()
+        self.tenant = Tenant(schema_name=schema_name, name=self.tenant_name)
+        self.tenant.save(verbosity=0)
+        self.domain = Domain.objects.create(
+            tenant=self.tenant,
+            domain=domain_name,
+            is_primary=True,
+        )
+        self.primary_tenant = self.tenant
+        self.primary_tenant_domain = self.domain
+        self.add_allowed_host(domain_name)
+        connection.set_tenant(self.tenant)
+
+    def tearDown(self):
+        domain_name = getattr(getattr(self, "domain", None), "domain", None)
+        try:
+            connection.set_schema_to_public()
+            tenant = getattr(self, "tenant", None)
+            if tenant and Tenant.objects.filter(pk=tenant.pk).exists():
+                tenant.delete(force_drop=True)
+        finally:
+            if domain_name:
+                self.remove_allowed_host(domain_name)
+            connection.set_schema_to_public()
+            super().tearDown()
+
+    @staticmethod
+    def add_allowed_host(host):
+        from django.conf import settings
+
+        if host not in settings.ALLOWED_HOSTS:
+            settings.ALLOWED_HOSTS += [host]
+
+    @staticmethod
+    def remove_allowed_host(host):
+        from django.conf import settings
+
+        if host in settings.ALLOWED_HOSTS:
+            settings.ALLOWED_HOSTS.remove(host)

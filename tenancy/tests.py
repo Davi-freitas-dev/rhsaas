@@ -117,12 +117,21 @@ class TenantIsolationInfrastructureTests(MultiTenantTestCase):
     def test_cria_dois_tenants_e_dominios(self):
         self.switch_to_public()
 
+        schemas_esperados = {"tenant_a", "tenant_b"}
         self.assertEqual(
-            set(Tenant.objects.values_list("schema_name", flat=True)),
-            {"tenant_a", "tenant_b"},
+            set(
+                Tenant.objects.filter(
+                    schema_name__in=schemas_esperados,
+                ).values_list("schema_name", flat=True)
+            ),
+            schemas_esperados,
         )
         self.assertEqual(
-            set(Domain.objects.values_list("domain", flat=True)),
+            set(
+                Domain.objects.filter(
+                    tenant__schema_name__in=schemas_esperados,
+                ).values_list("domain", flat=True)
+            ),
             {"tenant-a.localhost", "tenant-b.localhost"},
         )
 
@@ -989,7 +998,15 @@ class ResetarTenantDemoCommandTests(TransactionTestCase):
         self.assertEqual(slot.assigned_email, "demo2@example.com")
         with schema_context("demo2"):
             self.assertTrue(get_user_model().objects.filter(username="demo-user").exists())
-            self.assertEqual(Cliente.objects.count(), 1)
+            self.assertEqual(Cliente.objects.count(), 2)
+            self.assertEqual(
+                Cliente.objects.filter(demo_seed_key__isnull=False).count(),
+                1,
+            )
+            self.assertEqual(
+                Cliente.objects.filter(demo_seed_key__isnull=True).count(),
+                1,
+            )
             self.assertTrue(Session.objects.filter(session_key="sessao-demo2-dry-run").exists())
 
     def test_slot_ocupado_e_recusado(self):
@@ -1002,6 +1019,16 @@ class ResetarTenantDemoCommandTests(TransactionTestCase):
             DemoTenantSlot.objects.get(slot_code="demo2").status,
             DemoTenantSlot.Status.OCUPADO,
         )
+
+    def test_validacao_do_reset_aceita_unicidades_parciais_postgresql(self):
+        self._prepare_occupied_slot("demo2")
+
+        from tenancy.management.commands.resetar_tenant_demo import Command
+
+        # As unicidades condicionais das fases F1, F2 e F4 são índices parciais
+        # em PostgreSQL. A validação precisa aceitá-las sem deixar de conferir
+        # tabelas, constraints convencionais e permissões obrigatórias.
+        Command()._validate_recreated_schema("demo2")
 
     def test_slot_expirado_pode_ser_resetado_e_remove_dados_sessoes_e_usuario(self):
         self._prepare_occupied_slot("demo2")
@@ -1132,7 +1159,15 @@ class ResetarTenantDemoCommandTests(TransactionTestCase):
         )
         with schema_context("demo3"):
             self.assertTrue(get_user_model().objects.filter(username="demo-user").exists())
-            self.assertEqual(Cliente.objects.count(), 1)
+            self.assertEqual(Cliente.objects.count(), 2)
+            self.assertEqual(
+                Cliente.objects.filter(demo_seed_key__isnull=False).count(),
+                1,
+            )
+            self.assertEqual(
+                Cliente.objects.filter(demo_seed_key__isnull=True).count(),
+                1,
+            )
             self.assertTrue(Session.objects.filter(session_key="sessao-demo3-isolamento").exists())
 
     def test_falha_simulada_na_recriacao_deixa_slot_bloqueado(self):

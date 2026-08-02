@@ -34,7 +34,10 @@ class ConfiguredCorsMiddleware:
                 "true" if getattr(settings, "CORS_ALLOW_CREDENTIALS", False) else "false"
             )
             response["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-            response["Access-Control-Allow-Headers"] = "Content-Type, X-CSRFToken"
+            response["Access-Control-Allow-Headers"] = (
+                "Content-Type, X-CSRFToken, Idempotency-Key"
+            )
+            response["Access-Control-Expose-Headers"] = "Idempotency-Replayed"
             _append_vary_origin(response)
 
         return response
