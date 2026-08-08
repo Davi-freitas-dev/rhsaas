@@ -598,7 +598,27 @@ class DemoSeedProtectionTests(MultiTenantTestCase):
             expected = set(PERMISSION_PROFILES["Demo Publica"])
             actual = set(group.permissions.values_list("codename", flat=True))
             self.assertEqual(actual, expected)
-            self.assertEqual(len(actual), 41)
+            self.assertEqual(len(actual), 57)
+            self.assertTrue(
+                {
+                    "view_servidor",
+                    "add_servidor",
+                    "change_servidor",
+                    "view_salario_servidor",
+                    "change_salario_servidor",
+                    "view_dados_sensiveis_servidor",
+                    "view_participacaoservidorevento",
+                    "view_custos_servidor",
+                    "manage_participacao_servidor",
+                    "change_valor_distribuido_servidor",
+                    "recalculate_custos_servidor",
+                    "view_apropriacao_servidor",
+                    "view_planocustorecorrente",
+                    "add_planocustorecorrente",
+                    "change_planocustorecorrente",
+                    "materialize_planocustorecorrente",
+                }.issubset(actual)
+            )
             self.assertFalse(any(name.startswith("delete_") for name in actual))
             forbidden = {
                 "add_receitaoperacional",
