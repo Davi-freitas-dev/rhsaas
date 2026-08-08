@@ -367,19 +367,29 @@ class Orcamento(models.Model):
         prefetched_cache = getattr(self, "_prefetched_objects_cache", None)
         if prefetched_cache is not None:
             prefetched_cache.pop("itens", None)
+            prefetched_cache.pop("custos_extras", None)
 
         itens = self.itens.all()
+        total_custos_extras = decimal_zero(
+            self.custos_extras.aggregate(total=models.Sum("valor_previsto"))["total"]
+        )
 
         subtotal_custos = Decimal("0.00")
         total_impostos = Decimal("0.00")
-        total_lucro = Decimal("0.00")
         total_venda = Decimal("0.00")
 
         for item in itens:
             subtotal_custos += item.custo_total
             total_impostos += item.valor_imposto
-            total_lucro += item.lucro
             total_venda += item.preco_venda
+
+        total_venda += total_custos_extras
+        total_lucro = (
+            total_venda
+            - subtotal_custos
+            - total_custos_extras
+            - total_impostos
+        )
 
         self.subtotal_custos = quantizar_moeda(subtotal_custos)
         self.total_impostos = quantizar_moeda(total_impostos)

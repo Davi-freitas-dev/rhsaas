@@ -194,6 +194,8 @@ from .services_pagamentos_custos_extras import (
     registrar_pagamento_custo_extra_com_lock,
 )
 from .services_pagamentos_servico import registrar_pagamento_custo_servico_com_lock
+from .services_valores_editaveis import auditar_integridade_valores_editaveis
+from .utils_financeiros import quantizar_moeda
 from .utils_request import filtros_texto, normalizar_data_iso, normalizar_mes_iso
 
 
@@ -3912,6 +3914,40 @@ class OrcamentoItemTests(TenantScopedTestCase):
         self.assertEqual(self.orcamento.total_lucro, Decimal("241.20"))
         self.assertEqual(self.orcamento.total_venda, Decimal("1107.91"))
 
+    def test_recalcular_totais_repassa_custo_extra_e_preserva_lucro(self):
+        item = OrcamentoItem.objects.create(
+            orcamento=self.orcamento,
+            servico=self.servico,
+            horas_por_dia=8,
+            quantidade_dias=1,
+            quantidade_pessoas=1,
+        )
+        custo_extra = OrcamentoCustoExtra.objects.create(
+            orcamento=self.orcamento,
+            categoria="logistica",
+            descricao="Frete repassado",
+            valor_previsto=Decimal("180.00"),
+            data_vencimento=date(2026, 5, 1),
+        )
+
+        self.orcamento.recalcular_totais()
+        self.orcamento.refresh_from_db()
+
+        gasto_total = quantizar_moeda(
+            self.orcamento.subtotal_custos
+            + custo_extra.valor_previsto
+            + self.orcamento.total_impostos
+        )
+        self.assertEqual(
+            self.orcamento.total_venda,
+            quantizar_moeda(item.preco_venda + custo_extra.valor_previsto),
+        )
+        self.assertEqual(
+            self.orcamento.total_lucro,
+            quantizar_moeda(self.orcamento.total_venda - gasto_total),
+        )
+        self.assertEqual(self.orcamento.total_lucro, item.lucro)
+
     def test_diaria_continua_aplicando_meia_diaria(self):
         item = OrcamentoItem.objects.create(
             orcamento=self.orcamento,
@@ -4344,7 +4380,7 @@ class OrcamentoItemTests(TenantScopedTestCase):
         self.assertEqual(self.orcamento.total_venda, novo_item.preco_venda)
 
     def test_aprovar_orcamento_copia_custos_extras_para_evento(self):
-        OrcamentoItem.objects.create(
+        item = OrcamentoItem.objects.create(
             orcamento=self.orcamento,
             servico=self.servico,
             horas_por_dia=8,
@@ -4388,6 +4424,23 @@ class OrcamentoItemTests(TenantScopedTestCase):
             Decimal("0.00"),
         )
         self.assertEqual(evento.custo_total_previsto, custo_previsto_operacional)
+        self.assertEqual(
+            self.orcamento.total_venda,
+            quantizar_moeda(item.preco_venda + custo_orcamento.valor_previsto),
+        )
+        self.assertEqual(evento.valor_total_previsto, self.orcamento.total_venda)
+        self.assertEqual(evento.lucro_previsto, self.orcamento.total_lucro)
+        self.assertEqual(
+            self.orcamento.total_lucro,
+            quantizar_moeda(
+                self.orcamento.total_venda - evento.custo_total_previsto
+            ),
+        )
+        integridade = auditar_integridade_valores_editaveis(
+            escopos=["orcamento"],
+            object_ids=[self.orcamento.id],
+        )
+        self.assertTrue(integridade["consistent"], integridade["issues"])
         self.assertIn(Decimal("180.00"), [
             despesa.valor_previsto for despesa in evento.despesas.all()
         ])
@@ -49747,7 +49800,21 @@ class OrcamentosApiTests(TenantScopedTestCase):
         self.assertEqual(payload["budget"]["clientName"], "Cliente API Orcamento")
         self.assertEqual(orcamento.itens.count(), 1)
         self.assertEqual(orcamento.custos_extras.count(), 1)
-        self.assertGreater(orcamento.total_venda, Decimal("0.00"))
+        item = orcamento.itens.get()
+        custo_extra = orcamento.custos_extras.get()
+        gasto_total = quantizar_moeda(
+            orcamento.subtotal_custos
+            + custo_extra.valor_previsto
+            + orcamento.total_impostos
+        )
+        self.assertEqual(
+            orcamento.total_venda,
+            quantizar_moeda(item.preco_venda + custo_extra.valor_previsto),
+        )
+        self.assertEqual(
+            orcamento.total_lucro,
+            quantizar_moeda(orcamento.total_venda - gasto_total),
+        )
         self.assertEqual(payload["budget"]["items"][0]["peopleCount"], 2)
         self.assertEqual(payload["budget"]["items"][0]["billingUnitUsed"], "diaria")
         self.assertEqual(payload["budget"]["items"][0]["unitRateUsed"], "100.00")

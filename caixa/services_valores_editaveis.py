@@ -91,6 +91,7 @@ def auditar_integridade_valores_editaveis(limit=20, escopos=None, object_ids=Non
     if "orcamento" in filtros["escopos"]:
         orcamentos = Orcamento.objects.filter(status="aprovado").prefetch_related(
             "itens__servico",
+            "custos_extras",
             "evento__custos_servicos__pagamentos",
             "evento__receitas",
         ).order_by("id")
@@ -714,17 +715,28 @@ def _auditar_custos_servico_orcamento(orcamento, evento, resultado, limit):
 
 def _totais_orcamento_por_itens(orcamento):
     itens = list(orcamento.itens.all())
+    total_custos_extras = quantizar_moeda(
+        sum((custo.valor_previsto for custo in orcamento.custos_extras.all()), ZERO)
+    )
+    subtotal_custos = quantizar_moeda(
+        sum((item.custo_total for item in itens), ZERO)
+    )
+    total_impostos = quantizar_moeda(
+        sum((item.valor_imposto for item in itens), ZERO)
+    )
+    total_venda = quantizar_moeda(
+        sum((item.preco_venda for item in itens), ZERO) + total_custos_extras
+    )
     return {
-        "subtotal_custos": quantizar_moeda(
-            sum((item.custo_total for item in itens), ZERO)
+        "subtotal_custos": subtotal_custos,
+        "total_impostos": total_impostos,
+        "total_lucro": quantizar_moeda(
+            total_venda
+            - subtotal_custos
+            - total_custos_extras
+            - total_impostos
         ),
-        "total_impostos": quantizar_moeda(
-            sum((item.valor_imposto for item in itens), ZERO)
-        ),
-        "total_lucro": quantizar_moeda(sum((item.lucro for item in itens), ZERO)),
-        "total_venda": quantizar_moeda(
-            sum((item.preco_venda for item in itens), ZERO)
-        ),
+        "total_venda": total_venda,
     }
 
 
