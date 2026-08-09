@@ -23,7 +23,7 @@ from django.utils import timezone
 from django_tenants.utils import get_public_schema_name, schema_context, schema_exists
 from rest_framework.throttling import SimpleRateThrottle
 
-from config.client_ip import get_axes_client_ip
+from config.client_ip import get_axes_client_ip, get_client_network_identifier
 from caixa.models import Cliente, ReceitaOperacional
 from caixa.permissions import is_platform_operator, is_tenant_administrator
 from caixa.tenant_files import backup_dir_for_schema
@@ -91,12 +91,80 @@ class AxesClientIpCallableTests(SimpleTestCase):
 
         self.assertEqual(get_axes_client_ip(request), "127.0.0.1")
 
+    @override_settings(AXES_TRUSTED_PROXY_REMOTE_ADDRS=["127.0.0.1"])
+    def test_usa_cf_connecting_ip_quando_x_real_ip_e_cloudflare(self):
+        request = self.request(
+            REMOTE_ADDR="127.0.0.1",
+            HTTP_X_REAL_IP="172.64.10.20",
+            HTTP_CF_CONNECTING_IP="203.0.113.22",
+        )
+
+        self.assertEqual(get_axes_client_ip(request), "203.0.113.22")
+
+    @override_settings(AXES_TRUSTED_PROXY_REMOTE_ADDRS=["127.0.0.1"])
+    def test_ignora_cf_connecting_ip_fora_de_proxy_cloudflare(self):
+        request = self.request(
+            REMOTE_ADDR="127.0.0.1",
+            HTTP_X_REAL_IP="198.51.100.10",
+            HTTP_CF_CONNECTING_IP="203.0.113.22",
+        )
+
+        self.assertEqual(get_axes_client_ip(request), "198.51.100.10")
+
+    @override_settings(AXES_TRUSTED_PROXY_REMOTE_ADDRS=["127.0.0.1"])
+    def test_cf_connecting_ip_invalido_faz_fallback_para_x_real_ip(self):
+        request = self.request(
+            REMOTE_ADDR="127.0.0.1",
+            HTTP_X_REAL_IP="172.64.10.20",
+            HTTP_CF_CONNECTING_IP="not-an-ip",
+        )
+
+        self.assertEqual(get_axes_client_ip(request), "172.64.10.20")
+
     def test_settings_apontam_axes_para_callable_e_lockout_combinado(self):
         self.assertEqual(
             settings.AXES_CLIENT_IP_CALLABLE,
             "config.client_ip.get_axes_client_ip",
         )
         self.assertEqual(settings.AXES_LOCKOUT_PARAMETERS, [["username", "ip_address"]])
+
+
+class ClientNetworkIdentifierTests(SimpleTestCase):
+    def request(self, remote_addr):
+        return SimpleNamespace(META={"REMOTE_ADDR": remote_addr})
+
+    def test_ipv4_preserva_endereco_publico(self):
+        self.assertEqual(
+            get_client_network_identifier(self.request("203.0.113.20")),
+            "203.0.113.20",
+        )
+
+    def test_ipv6_agrega_dispositivos_do_mesmo_prefixo_64(self):
+        first = get_client_network_identifier(
+            self.request("2001:db8:abcd:42::10")
+        )
+        second = get_client_network_identifier(
+            self.request("2001:db8:abcd:42:ffff::20")
+        )
+
+        self.assertEqual(first, "2001:db8:abcd:42::/64")
+        self.assertEqual(second, first)
+
+    def test_ipv6_mantem_prefixos_64_distintos_isolados(self):
+        first = get_client_network_identifier(
+            self.request("2001:db8:abcd:42::10")
+        )
+        second = get_client_network_identifier(
+            self.request("2001:db8:abcd:43::10")
+        )
+
+        self.assertNotEqual(first, second)
+
+    def test_ipv4_mapeado_em_ipv6_reutiliza_identificador_ipv4(self):
+        self.assertEqual(
+            get_client_network_identifier(self.request("::ffff:203.0.113.20")),
+            "203.0.113.20",
+        )
 
 
 class TenantIsolationInfrastructureTests(MultiTenantTestCase):

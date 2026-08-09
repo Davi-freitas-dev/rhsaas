@@ -447,6 +447,61 @@ class DemoPublicFlowTests(MultiTenantTestCase):
         DEMO_PUBLIC_POOL_SLOTS=("demo2", "demo3", "demo4"),
         DEMO_MAX_ACTIVE_LEASES_PER_NETWORK=2,
     )
+    def test_mesmo_visitante_em_bordas_cloudflare_distintas_respeita_limite(self):
+        self._add_network_limit_slots()
+        cloudflare_edges = ("172.64.10.20", "104.16.20.30", "162.158.30.40")
+        clients = [
+            Client(
+                enforce_csrf_checks=True,
+                HTTP_HOST="demo1.api-demo-rh.taquiondev.com.br",
+                REMOTE_ADDR="127.0.0.1",
+                HTTP_X_REAL_IP=edge_ip,
+                HTTP_CF_CONNECTING_IP="203.0.113.51",
+            )
+            for edge_ip in cloudflare_edges
+        ]
+
+        responses = [self._lease(client)[1] for client in clients]
+
+        self.assertEqual(
+            [response.status_code for response in responses],
+            [201, 201, 429],
+        )
+        self.assertEqual(responses[2].json()["code"], "network_limit")
+        connection.set_schema_to_public()
+        self.assertEqual(
+            DemoTenantSlot.objects.filter(status=DemoTenantSlot.Status.OCUPADO).count(),
+            2,
+        )
+
+    @override_settings(
+        DEMO_PUBLIC_POOL_SLOTS=("demo2", "demo3", "demo4"),
+        DEMO_MAX_ACTIVE_LEASES_PER_NETWORK=2,
+    )
+    def test_tres_enderecos_ipv6_do_mesmo_prefixo_respeitam_network_limit(self):
+        self._add_network_limit_slots()
+        responses = [
+            self._lease(
+                self._public_client(remote_addr=f"2001:db8:abcd:42::{index}")
+            )[1]
+            for index in range(1, 4)
+        ]
+
+        self.assertEqual(
+            [response.status_code for response in responses],
+            [201, 201, 429],
+        )
+        self.assertEqual(responses[2].json()["code"], "network_limit")
+        connection.set_schema_to_public()
+        self.assertEqual(
+            DemoTenantSlot.objects.filter(status=DemoTenantSlot.Status.OCUPADO).count(),
+            2,
+        )
+
+    @override_settings(
+        DEMO_PUBLIC_POOL_SLOTS=("demo2", "demo3", "demo4"),
+        DEMO_MAX_ACTIVE_LEASES_PER_NETWORK=2,
+    )
     def test_lease_expirado_e_demo1_nao_contam_no_limite_de_rede(self):
         self._add_network_limit_slots()
         network_identifier = "203.0.113.52"

@@ -237,7 +237,15 @@ sudo systemctl status rhsaas-demo-pool-maintenance.service --no-pager
 
 ## Nginx e TLS
 
+Quando `api-demo-rh` e o wildcard estiverem com proxy ativo na Cloudflare, o
+Nginx deve restaurar o visitante por `CF-Connecting-IP` antes dos limites e do
+proxy para o Gunicorn. O arquivo versionado confia nesse header somente quando
+a conexao chega de uma faixa oficial da Cloudflare; acessos diretos nao podem
+forja-lo. As faixas devem ser conferidas periodicamente em
+`https://www.cloudflare.com/ips/`.
+
 ```bash
+sudo nginx -V 2>&1 | grep -- --with-http_realip_module
 sudo cp docs/deploy/demo-publica/nginx-api-demo-rh.conf \
   /etc/nginx/sites-available/rhsaas-demo
 sudo ln -s /etc/nginx/sites-available/rhsaas-demo \
@@ -245,6 +253,15 @@ sudo ln -s /etc/nginx/sites-available/rhsaas-demo \
 sudo nginx -t
 sudo systemctl reload nginx
 ```
+
+Sem essa restauracao, `$remote_addr` identifica uma borda da Cloudflare. A
+mesma rede pode entao receber hashes diferentes conforme a rota da CDN, e o
+limite `DEMO_MAX_ACTIVE_LEASES_PER_NETWORK` deixa de representar a rede real.
+No Django, IPv4 continua agrupado pelo endereco publico e IPv6 passa a ser
+agrupado pelo prefixo `/64`.
+
+Leases criados antes dessa correcao conservam o hash antigo ate expirarem ou
+serem resetados; validar a cota somente depois de encerrar esse estado legado.
 
 O certificado precisa conter os dois SANs:
 

@@ -31,7 +31,7 @@ from caixa.views_api_auth import (
     _user_payload,
     csrf_protect_drf_view,
 )
-from config.client_ip import get_axes_client_ip
+from config.client_ip import get_client_network_identifier
 
 from .demo_visitor import (
     DEMO_VISITOR_COOKIE_NAME,
@@ -81,7 +81,7 @@ def _visitor_identifier(request):
 
 
 def _network_identifier(request, visitor_identifier):
-    return get_axes_client_ip(request) or f"visitor:{visitor_identifier}"
+    return get_client_network_identifier(request) or f"visitor:{visitor_identifier}"
 
 
 def _set_visitor_cookie(response, visitor_identifier):
