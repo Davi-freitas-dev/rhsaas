@@ -229,6 +229,7 @@ def api_demo_status(request):
     return Response(
         {
             "enabled": bool(settings.DEMO_PUBLIC_LEASE_ENABLED),
+            "leaseDurationMinutes": settings.DEMO_LEASE_DURATION_MINUTES,
             "capacity": {
                 "total": status.total,
                 "available": status.available,
