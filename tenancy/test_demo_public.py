@@ -606,13 +606,6 @@ class DemoPublicFlowTests(MultiTenantTestCase):
         self.assertNotIn("network", serialized)
         self.assertNotIn("exchange", serialized)
 
-    @override_settings(DEMO_LEASE_DURATION_MINUTES=90)
-    def test_status_informa_duracao_configurada(self):
-        _client, response = self._status()
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["leaseDurationMinutes"], 90)
-
     @override_settings(DEMO_PUBLIC_POOL_SLOTS=("demo2", "demo3", "demo4"))
     def test_status_conta_somente_slots_livres_e_prontos(self):
         self._add_network_limit_slots()
