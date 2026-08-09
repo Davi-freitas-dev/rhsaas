@@ -1,10 +1,12 @@
+import json
+
 from django.apps import apps
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.management.base import BaseCommand, CommandError
 from django.db import IntegrityError, connection, transaction
 from django.db.models import Q
-from django.db.models.deletion import ProtectedError
+from django.db.models.deletion import Collector, ProtectedError, RestrictedError
 from django_tenants.utils import (
     get_public_schema_name,
     schema_context,
@@ -35,6 +37,12 @@ SEED_ENTRY_NAMES = (
     "budget",
 )
 SEED_ROOT_MODELS = (ConfiguracaoFinanceira, Cliente, Servico, Orcamento)
+LEGACY_IDENTITY_FIELDS = {
+    "client": ("cpf_cnpj",),
+    "daily_service": ("codigo",),
+    "hourly_service": ("codigo",),
+    "budget": ("numero",),
+}
 
 
 class Command(BaseCommand):
@@ -48,6 +56,14 @@ class Command(BaseCommand):
             "--dry-run",
             action="store_true",
             help="Valida e mostra as contagens sem alterar o tenant.",
+        )
+        parser.add_argument(
+            "--diagnostico",
+            action="store_true",
+            help=(
+                "Inspeciona seed keys, candidatos legados e referencias em uma "
+                "transacao PostgreSQL estritamente somente leitura."
+            ),
         )
         parser.add_argument(
             "--confirm",
@@ -73,6 +89,25 @@ class Command(BaseCommand):
 
         expected_confirmation = f"{CONFIRMATION_PREFIX} {schema_name}"
         dry_run = bool(options["dry_run"])
+        diagnostic = bool(options["diagnostico"])
+        if diagnostic and (dry_run or options.get("confirm")):
+            raise CommandError(
+                "--diagnostico nao pode ser combinado com --dry-run ou --confirm."
+            )
+        if diagnostic:
+            if connection.in_atomic_block:
+                raise CommandError(
+                    "--diagnostico exige execucao fora de uma transacao externa "
+                    "para impor READ ONLY no PostgreSQL."
+                )
+            with schema_context(schema_name), transaction.atomic():
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+                    )
+                self._write_diagnostic(schema_name)
+            return
+
         if not dry_run and options.get("confirm") != expected_confirmation:
             raise CommandError(
                 "Execucao exige confirmacao forte: "
@@ -156,6 +191,325 @@ class Command(BaseCommand):
                 )
             )
             return None
+
+    def _write_diagnostic(self, schema_name):
+        self.stdout.write("DIAGNOSTICO SOMENTE LEITURA")
+        self.stdout.write(f"schema={schema_name}")
+        self.stdout.write("transaction_read_only=sim")
+
+        expected_keys = sorted(DEMO_SEED_KEYS)
+        keyed_rows = []
+        for model in SEED_ROOT_MODELS:
+            for pk, seed_key in model._base_manager.exclude(
+                demo_seed_key__isnull=True
+            ).order_by("pk").values_list("pk", "demo_seed_key"):
+                keyed_rows.append(
+                    {
+                        "model": model._meta.label_lower,
+                        "id": pk,
+                        "seed_key": seed_key,
+                    }
+                )
+        actual_keys = sorted(
+            {row["seed_key"] for row in keyed_rows}, key=lambda value: str(value)
+        )
+        self._write_json("expected_seed_keys", expected_keys)
+        self._write_json("actual_seed_keys", actual_keys)
+        self._write_json(
+            "missing_seed_keys", sorted(set(expected_keys) - set(actual_keys))
+        )
+        self._write_json(
+            "unexpected_seed_keys", sorted(set(actual_keys) - set(expected_keys))
+        )
+        self.stdout.write(f"keyed_object_count={len(keyed_rows)}")
+        for row in keyed_rows:
+            self._write_json("keyed_object", row)
+
+        readiness = inspect_demo_seed_readiness()
+        self.stdout.write(
+            f"keyed_seed_validation={'valid' if readiness.ready else 'invalid'}"
+        )
+        for error in readiness.errors:
+            self.stdout.write(f"keyed_seed_error={error}")
+
+        exact_candidates = {}
+        exact_candidate_total = 0
+        for name, entry in DEMO_SEED_SPEC.items():
+            filters = self._legacy_filters(name, entry)
+            ids = list(
+                entry["model"]._base_manager.filter(**filters)
+                .order_by("pk")
+                .values_list("pk", flat=True)
+            )
+            exact_candidates[name] = ids
+            exact_candidate_total += len(ids)
+            status = (
+                "missing"
+                if not ids
+                else "unique"
+                if len(ids) == 1
+                else "ambiguous"
+            )
+            self._write_json(
+                "legacy_exact_candidate",
+                {
+                    "entry": name,
+                    "model": entry["model"]._meta.label_lower,
+                    "expected_seed_key": entry["key"],
+                    "status": status,
+                    "count": len(ids),
+                    "ids": ids,
+                    "classifies_as_seed": False,
+                },
+            )
+        self.stdout.write(f"legacy_exact_candidate_total={exact_candidate_total}")
+
+        self._write_identity_probes()
+        for name, ids in exact_candidates.items():
+            model = DEMO_SEED_SPEC[name]["model"]
+            for obj in model._base_manager.filter(pk__in=ids).order_by("pk"):
+                for reference in self._related_references(obj):
+                    self._write_json(
+                        "legacy_exact_candidate_reference",
+                        {
+                            "entry": name,
+                            "candidate_model": model._meta.label_lower,
+                            "candidate_id": obj.pk,
+                            **reference,
+                        },
+                    )
+
+        proven_seed = None
+        proven_by = "none"
+        if keyed_rows:
+            if readiness.ready:
+                proven_seed = readiness.objects
+                proven_by = "canonical_seed_keys"
+            else:
+                self.stdout.write("legacy_validation=not_used_seed_keys_exist")
+        elif exact_candidate_total == 0:
+            self.stdout.write("legacy_validation=no_exact_candidates")
+        else:
+            try:
+                legacy_matches = match_legacy_demo_seed()
+            except DemoSeedIntegrityError as exc:
+                self.stdout.write("legacy_validation=partial_or_ambiguous")
+                self.stdout.write(f"legacy_validation_error={exc}")
+            else:
+                proven_seed = {
+                    DEMO_SEED_SPEC[name]["key"]: obj
+                    for name, obj in legacy_matches.items()
+                }
+                proven_by = "exact_legacy_spec_and_relations"
+                self.stdout.write("legacy_validation=valid")
+
+        self.stdout.write(f"proven_seed_set={proven_by}")
+        if proven_seed is None:
+            self.stdout.write(
+                "blocking_reference_analysis=not_evaluated_unproven_seed_set"
+            )
+            return
+
+        blockers = self._blocking_references(proven_seed)
+        self.stdout.write(f"blocking_reference_count={len(blockers)}")
+        for blocker in blockers:
+            self._write_json("blocking_reference", blocker)
+
+    def _write_json(self, key, value):
+        print_value = json.dumps(
+            value,
+            ensure_ascii=True,
+            sort_keys=True,
+            default=str,
+        )
+        self.stdout.write(f"{key}={print_value}")
+
+    def _write_identity_probes(self):
+        for name, entry in DEMO_SEED_SPEC.items():
+            identity_fields = LEGACY_IDENTITY_FIELDS.get(name)
+            if not identity_fields:
+                self._write_json_line(
+                    "legacy_identity_probe",
+                    {
+                        "entry": name,
+                        "status": "unavailable_no_stable_legacy_identifier",
+                        "classifies_as_seed": False,
+                    },
+                )
+                continue
+
+            identity = {
+                field_name: entry["visible"][field_name]
+                for field_name in identity_fields
+            }
+            objects = list(
+                entry["model"]._base_manager.filter(**identity).order_by("pk")
+            )
+            self._write_json_line(
+                "legacy_identity_probe",
+                {
+                    "entry": name,
+                    "model": entry["model"]._meta.label_lower,
+                    "identity_fields": identity,
+                    "count": len(objects),
+                    "ids": [obj.pk for obj in objects],
+                    "status": "found" if objects else "missing",
+                    "classifies_as_seed": False,
+                },
+            )
+            expected = self._legacy_filters(name, entry)
+            for obj in objects:
+                mismatched_fields = [
+                    field_name
+                    for field_name, expected_value in expected.items()
+                    if getattr(obj, field_name) != expected_value
+                ]
+                self._write_json_line(
+                    "legacy_identity_object",
+                    {
+                        "entry": name,
+                        "model": obj._meta.label_lower,
+                        "id": obj.pk,
+                        "mismatched_exact_spec_fields": mismatched_fields,
+                    },
+                )
+
+    def _write_json_line(self, key, value):
+        self._write_json(key, value)
+
+    @staticmethod
+    def _legacy_filters(name, entry):
+        filters = dict(entry["visible"])
+        if name == "budget":
+            filters["status"] = "aprovado"
+        return filters
+
+    @staticmethod
+    def _related_references(obj):
+        references = []
+        for relation in obj._meta.related_objects:
+            field = relation.field
+            if getattr(field, "many_to_many", False) or not hasattr(field, "attname"):
+                continue
+            ids = list(
+                relation.related_model._base_manager.filter(
+                    **{field.attname: obj.pk}
+                )
+                .order_by("pk")
+                .values_list("pk", flat=True)
+            )
+            if not ids:
+                continue
+            references.append(
+                {
+                    "referencing_model": relation.related_model._meta.label_lower,
+                    "field": field.name,
+                    "on_delete": getattr(
+                        field.remote_field.on_delete,
+                        "__name__",
+                        str(field.remote_field.on_delete),
+                    ),
+                    "db_constraint": field.db_constraint,
+                    "count": len(ids),
+                    "ids": ids,
+                }
+            )
+        return references
+
+    @classmethod
+    def _blocking_references(cls, seed_objects):
+        budget = seed_objects[demo_seed_entry("budget")["key"]]
+        event = Evento.objects.filter(orcamento=budget).first()
+        planned = {
+            (obj._meta.label_lower, obj.pk) for obj in seed_objects.values()
+        }
+        blockers = []
+
+        if event is not None:
+            collector = Collector(using=connection.alias)
+            try:
+                collector.collect([event])
+            except (ProtectedError, RestrictedError) as exc:
+                protected_objects = getattr(
+                    exc,
+                    "protected_objects",
+                    getattr(exc, "restricted_objects", ()),
+                )
+                grouped = {}
+                for obj in protected_objects:
+                    grouped.setdefault(obj._meta.label_lower, []).append(obj.pk)
+                for model_label, ids in sorted(grouped.items()):
+                    blockers.append(
+                        {
+                            "kind": "event_delete_protected",
+                            "model": model_label,
+                            "ids": sorted(ids),
+                        }
+                    )
+                return blockers
+
+            for model, objects in collector.data.items():
+                planned.update(
+                    (model._meta.label_lower, obj.pk) for obj in objects
+                )
+            for queryset in collector.fast_deletes:
+                planned.update(
+                    (queryset.model._meta.label_lower, pk)
+                    for pk in queryset.values_list("pk", flat=True)
+                )
+
+        planned.update(
+            (OrcamentoItem._meta.label_lower, pk)
+            for pk in OrcamentoItem.objects.filter(orcamento=budget).values_list(
+                "pk", flat=True
+            )
+        )
+        planned.update(
+            (OrcamentoCustoExtra._meta.label_lower, pk)
+            for pk in OrcamentoCustoExtra.objects.filter(orcamento=budget).values_list(
+                "pk", flat=True
+            )
+        )
+
+        raw_targets = [
+            ("budget", budget),
+            (
+                "daily_service",
+                seed_objects[demo_seed_entry("daily_service")["key"]],
+            ),
+            (
+                "hourly_service",
+                seed_objects[demo_seed_entry("hourly_service")["key"]],
+            ),
+            ("client", seed_objects[demo_seed_entry("client")["key"]]),
+            (
+                "configuration",
+                seed_objects[demo_seed_entry("configuration")["key"]],
+            ),
+        ]
+        for entry_name, target in raw_targets:
+            for reference in cls._related_references(target):
+                model_label = reference["referencing_model"]
+                external_ids = [
+                    pk
+                    for pk in reference["ids"]
+                    if (model_label, pk) not in planned
+                ]
+                if not reference["db_constraint"] or not external_ids:
+                    continue
+                blockers.append(
+                    {
+                        "kind": "raw_delete_external_fk",
+                        "target_entry": entry_name,
+                        "target_model": target._meta.label_lower,
+                        "target_id": target.pk,
+                        "referencing_model": model_label,
+                        "field": reference["field"],
+                        "on_delete": reference["on_delete"],
+                        "ids": external_ids,
+                    }
+                )
+        return blockers
 
     @staticmethod
     def _lock_cleanup_tables():

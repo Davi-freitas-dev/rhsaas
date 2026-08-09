@@ -176,6 +176,16 @@ Se encontrar referencias de outros dados, reverte toda a transacao.
 Usuarios, grupos, permissoes, schema e Domain sao preservados. Repetir o
 comando depois da limpeza e seguro: ele informa que nao ha dados ficticios.
 
+Se o dry-run informar conjunto legado parcial ou ambiguo, nao execute a
+remocao. Colete primeiro o diagnostico estritamente somente leitura:
+
+```bash
+/opt/rhsaas/venv/bin/python manage.py remover_dados_ficticios_demo1 --diagnostico
+```
+
+O diagnostico usa uma transacao PostgreSQL `READ ONLY`, nao altera seed keys,
+historicos ou cache e nao classifica correspondencias parciais como seed.
+
 `preparar_demo_permanente` preserva a senha utilizavel do usuario existente e
 reaplica flags/grupo minimos, sem criar ou exigir seed. Se o dry-run informar
 `usuario_pronto=sim`, concluir com:

@@ -12,7 +12,7 @@ from django.contrib.sessions.models import Session
 from django.core.cache import cache
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.db import close_old_connections, connection
+from django.db import DatabaseError, close_old_connections, connection
 from django.test import Client, TransactionTestCase, override_settings
 from django.utils import timezone
 from django_tenants.utils import schema_context
@@ -1176,6 +1176,174 @@ class DemoPublicFlowTests(MultiTenantTestCase):
         self.assertEqual(slot.visitor_key_hash, "")
         with schema_context("demo2"):
             self.assertEqual(Cliente.objects.count(), 1)
+
+
+class Demo1DiagnosticCommandTests(TransactionTestCase):
+    reset_sequences = True
+
+    def setUp(self):
+        self._demo_settings = override_settings(
+            DEMO_PERMANENT_TENANT_SCHEMA="demo1",
+            DEMO_PUBLIC_POOL_SLOTS=("demo2",),
+        )
+        self._demo_settings.enable()
+        super().setUp()
+        self._cleanup_demo1()
+        connection.set_schema_to_public()
+        self.tenant = Tenant(schema_name="demo1", name="Demo 1")
+        self.tenant.save(verbosity=0)
+        Domain.objects.create(
+            tenant=self.tenant,
+            domain="demo1.api-demo-rh.taquiondev.com.br",
+            is_primary=True,
+        )
+        self._seed_existing_demo1_fixture()
+
+    def tearDown(self):
+        try:
+            self._cleanup_demo1()
+            super().tearDown()
+        finally:
+            self._demo_settings.disable()
+
+    @staticmethod
+    def _cleanup_demo1():
+        connection.set_schema_to_public()
+        for tenant in list(Tenant.objects.filter(schema_name="demo1")):
+            tenant.delete(force_drop=True)
+        connection.set_schema_to_public()
+
+    @staticmethod
+    def _seed_existing_demo1_fixture():
+        with patch(
+            "tenancy.services_demo_pool.ensure_demo_seed_schema",
+            return_value="demo1",
+        ):
+            return seed_demo_tenant("demo1")
+
+    def test_diagnostico_expoe_seed_legado_parcial_sem_alterar_dados(self):
+        with schema_context("demo1"):
+            for entry in DEMO_SEED_SPEC.values():
+                entry["model"].objects.update(demo_seed_key=None)
+            Servico.objects.filter(codigo="recepcao-demo-diaria").update(
+                nome="Servico legado alterado"
+            )
+            root_snapshot = {
+                model._meta.label_lower: list(
+                    model.objects.order_by("pk").values_list(
+                        "pk", "demo_seed_key"
+                    )
+                )
+                for model in (ConfiguracaoFinanceira, Cliente, Servico, Orcamento)
+            }
+            event_history_ids = set(
+                Evento.history.values_list("history_id", flat=True)
+            )
+
+        diagnostic_output = StringIO()
+        with patch.object(RemoveDemo1SeedCommand, "_remove_seed") as remove_seed:
+            with patch(
+                "tenancy.management.commands.remover_dados_ficticios_demo1."
+                "clear_demo_tenant_cache"
+            ) as clear_cache:
+                call_command(
+                    "remover_dados_ficticios_demo1",
+                    diagnostico=True,
+                    stdout=diagnostic_output,
+                    verbosity=0,
+                )
+
+        output = diagnostic_output.getvalue()
+        self.assertIn("DIAGNOSTICO SOMENTE LEITURA", output)
+        self.assertIn("transaction_read_only=sim", output)
+        self.assertIn("actual_seed_keys=[]", output)
+        self.assertIn('"entry": "daily_service"', output)
+        self.assertIn('"status": "missing"', output)
+        self.assertIn(
+            "legacy_validation_error=daily_service: esperado um candidato "
+            "legado exato, encontrados 0",
+            output,
+        )
+        self.assertIn('"mismatched_exact_spec_fields": ["nome"]', output)
+        self.assertIn("proven_seed_set=none", output)
+        self.assertIn(
+            "blocking_reference_analysis=not_evaluated_unproven_seed_set",
+            output,
+        )
+        remove_seed.assert_not_called()
+        clear_cache.assert_not_called()
+
+        with schema_context("demo1"):
+            self.assertEqual(
+                {
+                    model._meta.label_lower: list(
+                        model.objects.order_by("pk").values_list(
+                            "pk", "demo_seed_key"
+                        )
+                    )
+                    for model in (
+                        ConfiguracaoFinanceira,
+                        Cliente,
+                        Servico,
+                        Orcamento,
+                    )
+                },
+                root_snapshot,
+            )
+            self.assertEqual(
+                set(Evento.history.values_list("history_id", flat=True)),
+                event_history_ids,
+            )
+
+    def test_diagnostico_lista_referencia_externa_que_bloqueia_limpeza(self):
+        with schema_context("demo1"):
+            readiness = inspect_demo_seed_readiness()
+            common_budget = Orcamento.objects.create(
+                cliente=readiness.objects[DEMO_SEED_SPEC["client"]["key"]],
+                configuracao_financeira=readiness.objects[
+                    DEMO_SEED_SPEC["configuration"]["key"]
+                ],
+                numero="DEMO1-REFERENCIA-EXTERNA-001",
+                nome_evento="Referencia externa preservada",
+                data_evento=date(2026, 10, 4),
+            )
+
+        diagnostic_output = StringIO()
+        call_command(
+            "remover_dados_ficticios_demo1",
+            diagnostico=True,
+            stdout=diagnostic_output,
+            verbosity=0,
+        )
+
+        output = diagnostic_output.getvalue()
+        self.assertIn("proven_seed_set=canonical_seed_keys", output)
+        self.assertIn("blocking_reference_count=2", output)
+        self.assertIn('"kind": "raw_delete_external_fk"', output)
+        self.assertIn(f'"ids": [{common_budget.pk}]', output)
+        with schema_context("demo1"):
+            self.assertTrue(inspect_demo_seed_readiness().ready)
+            self.assertTrue(Orcamento.objects.filter(pk=common_budget.pk).exists())
+
+    def test_diagnostico_tem_read_only_imposto_pelo_postgresql(self):
+        def attempt_write(_command, _schema_name):
+            Cliente.objects.update(ativo=False)
+
+        with patch.object(
+            RemoveDemo1SeedCommand,
+            "_write_diagnostic",
+            autospec=True,
+            side_effect=attempt_write,
+        ):
+            with self.assertRaises(DatabaseError):
+                call_command(
+                    "remover_dados_ficticios_demo1",
+                    diagnostico=True,
+                    verbosity=0,
+                )
+
+        with schema_context("demo1"):
+            self.assertTrue(Cliente.objects.get().ativo)
 
 
 class DemoPublicConcurrencyTests(TransactionTestCase):
