@@ -14,8 +14,8 @@ enderecos IP completos ou dados pessoais de visitantes.
 - API de entrada: `https://api-demo-rh.taquiondev.com.br/api`;
 - schema de entrada legado/compativel: `rh_teste`;
 - metadata e autoridade de leases: schema `public`;
-- tenant permanente: `demo1`, sem `DemoTenantSlot`, lease, expiracao ou reset
-  automatico;
+- tenant permanente: `demo1`, sem dados ficticios, `DemoTenantSlot`, lease,
+  expiracao ou reset automatico;
 - vagas isoladas temporarias: `demo2...demo10`;
 - APIs das vagas: `https://demoN.api-demo-rh.taquiondev.com.br/api`;
 - autenticacao: token de troca de uso unico; somente o digest HMAC fica no
@@ -115,7 +115,8 @@ servidor.
 1. Publicar backend com a entrada ainda desligada.
 2. Instalar dependencias no venv e executar checks.
 3. Aplicar migration compartilhada e migrations de todos os tenants.
-4. Validar `demo1` permanente e provisionar nove slots (`demo2...demo10`).
+4. Remover o seed legado da `demo1`, validar seu usuario permanente e
+   provisionar nove slots (`demo2...demo10`).
 5. Instalar Gunicorn, Nginx e timer.
 6. Publicar o frontend.
 7. Fazer smoke test com entrada desligada.
@@ -146,6 +147,7 @@ Pool, primeiro em dry-run:
 ```bash
 /opt/rhsaas/venv/bin/python manage.py provisionar_pool_demo --slots=10 --dry-run
 /opt/rhsaas/venv/bin/python manage.py provisionar_pool_demo --slots=10
+/opt/rhsaas/venv/bin/python manage.py remover_dados_ficticios_demo1 --dry-run
 /opt/rhsaas/venv/bin/python manage.py preparar_demo_permanente --dry-run
 /opt/rhsaas/venv/bin/python manage.py manter_pool_demo --dry-run
 /opt/rhsaas/venv/bin/python manage.py shell -c \
@@ -158,9 +160,25 @@ remove apenas a linha de pool antiga de `demo1`, sem apagar schema, Domain,
 dados ou usuario. A ultima consulta deve listar exatamente `demo2` ate
 `demo10`, sem `demo1`.
 
-`preparar_demo_permanente` preserva a senha utilizavel do usuario existente,
-reaplica flags/grupo minimos e garante o seed idempotente. Se o dry-run
-informar `usuario_pronto=sim`, concluir com:
+Na primeira atualizacao para a `demo1` sem seed, gere antes um backup do tenant
+e execute a remocao com confirmacao forte:
+
+```bash
+/opt/rhsaas/venv/bin/python manage.py tenant_command backup_banco_mensal \
+  --schema=demo1 --force
+/opt/rhsaas/venv/bin/python manage.py remover_dados_ficticios_demo1 \
+  --confirm="REMOVER-DADOS-FICTICIOS demo1"
+```
+
+O comando remove somente o conjunto canonico marcado como seed, ou o conjunto
+legado reconhecido integralmente pela especificacao exata, e seus derivados.
+Se encontrar referencias de outros dados, reverte toda a transacao.
+Usuarios, grupos, permissoes, schema e Domain sao preservados. Repetir o
+comando depois da limpeza e seguro: ele informa que nao ha dados ficticios.
+
+`preparar_demo_permanente` preserva a senha utilizavel do usuario existente e
+reaplica flags/grupo minimos, sem criar ou exigir seed. Se o dry-run informar
+`usuario_pronto=sim`, concluir com:
 
 ```bash
 /opt/rhsaas/venv/bin/python manage.py preparar_demo_permanente
@@ -376,7 +394,8 @@ sobre outros tenants.
 - [ ] `check --deploy` sem issues;
 - [ ] migrations aplicadas em `public`, `rh_teste` e `demo1...demo10`;
 - [ ] `tenancy.0004` removeu somente o `DemoTenantSlot` de `demo1`;
-- [ ] `demo1` preserva schema, Domain, dados, usuario e grupo minimo;
+- [ ] `demo1` preserva schema, Domain, usuario e grupo minimo, sem dados
+      ficticios;
 - [ ] `demo1` nao aparece entre slots livres/ocupados/expirados;
 - [ ] pool publica contem somente `demo2...demo10`;
 - [ ] dez domains tecnicos respondendo por HTTPS;
@@ -395,7 +414,7 @@ sobre outros tenants.
 - [ ] lease expira, sessao para de funcionar e timer devolve vaga limpa;
 - [ ] dado permanente de `demo1` nao aparece em `demo2` e vice-versa;
 - [ ] pool cheia oferece fallback `?tenant=demo1` sem chamar novo lease;
-- [ ] seed reaparece depois do reset;
+- [ ] seed reaparece depois do reset de `demo2...demo10`;
 - [ ] timer executa duas vezes sem erro/idempotencia;
 - [ ] logs nao contem token, senha, hash, IP completo ou PII;
 - [ ] RAM, swap e disco permanecem dentro do limite aprovado;

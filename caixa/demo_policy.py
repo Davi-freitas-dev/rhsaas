@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist, PermissionDenied
 from django.db import connection
 
@@ -80,6 +81,14 @@ def is_applicable_demo_schema(schema_name=None):
     return suffix.isdigit() and 1 <= int(suffix) <= 10
 
 
+def is_demo_seed_required_schema(schema_name=None):
+    schema_name = schema_name or getattr(connection, "schema_name", "")
+    return (
+        is_applicable_demo_schema(schema_name)
+        and schema_name != settings.DEMO_PERMANENT_TENANT_SCHEMA
+    )
+
+
 def is_demo_seed_object(obj, *, _visited=None, allow_lazy=True):
     if obj is None or not hasattr(obj, "_meta"):
         return False
@@ -119,6 +128,9 @@ def assert_demo_write_allowed(user, obj=None, *, operation="write"):
     if not is_demo_public_user(user) or not is_applicable_demo_schema():
         return
 
+    if not is_demo_seed_required_schema():
+        return
+
     readiness = inspect_demo_seed_readiness()
     if not readiness.ready:
         raise PermissionDenied(DEMO_SCHEMA_NOT_READY_MESSAGE)
@@ -127,7 +139,11 @@ def assert_demo_write_allowed(user, obj=None, *, operation="write"):
 
 
 def demo_object_flags(obj, *, allow_lazy=True):
-    is_seed = is_demo_seed_object(obj, allow_lazy=allow_lazy)
+    schema_name = getattr(connection, "schema_name", "")
+    is_seed = (
+        schema_name != settings.DEMO_PERMANENT_TENANT_SCHEMA
+        and is_demo_seed_object(obj, allow_lazy=allow_lazy)
+    )
     return {
         "isSeed": is_seed,
         "isReadOnly": is_seed,

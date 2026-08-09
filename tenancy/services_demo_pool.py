@@ -37,6 +37,7 @@ from tenancy.command_guards import (
     ensure_demo_permanent_tenant_schema,
     ensure_demo_pool_schema,
     ensure_demo_public_pool_schema,
+    ensure_demo_seed_schema,
 )
 from tenancy.models import DemoTenantSlot, Domain
 
@@ -248,7 +249,7 @@ def sync_demo_permanent_user(
 
 
 def seed_demo_tenant(schema_name):
-    schema_name = ensure_demo_pool_schema(
+    schema_name = ensure_demo_seed_schema(
         schema_name,
         command_name="seed_demo_tenant",
         action="recriar dados ficticios da demo",

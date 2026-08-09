@@ -140,6 +140,24 @@ def ensure_demo_public_pool_schema(
     return schema_name
 
 
+def ensure_demo_seed_schema(
+    schema_name,
+    *,
+    command_name="seed_demo_tenant",
+    action="criar dados ficticios da demo",
+):
+    schema_name = ensure_demo_pool_schema(
+        schema_name,
+        command_name=command_name,
+        action=action,
+    )
+    if schema_name == "demo1":
+        raise CommandError(
+            f"O tenant {schema_name} e permanente e nao pode receber dados ficticios."
+        )
+    return schema_name
+
+
 def ensure_demo_permanent_tenant_schema(
     schema_name,
     *,

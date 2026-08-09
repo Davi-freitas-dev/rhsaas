@@ -8,7 +8,7 @@ from caixa.demo_seed import (
     match_legacy_demo_seed,
     validate_demo_seed_readiness,
 )
-from tenancy.command_guards import ensure_demo_pool_schema
+from tenancy.command_guards import ensure_demo_seed_schema
 
 
 TEST_SCHEMA_NAME = "rh_teste"
@@ -54,7 +54,7 @@ class Command(BaseCommand):
                     "rh_teste exige --allow-test-schema explicito."
                 )
         else:
-            schema_name = ensure_demo_pool_schema(
+            schema_name = ensure_demo_seed_schema(
                 schema_name,
                 command_name="backfill_demo_seed_keys",
                 action="marcar seed legado",
