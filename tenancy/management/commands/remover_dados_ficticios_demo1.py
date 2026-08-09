@@ -20,9 +20,15 @@ from caixa.demo_seed import (
     DemoSeedIntegrityError,
     demo_seed_entry,
     inspect_demo_seed_readiness,
-    match_legacy_demo_seed,
 )
-from caixa.models import Cliente, ConfiguracaoFinanceira, Evento, Orcamento, OrcamentoItem, Servico
+from caixa.models import (
+    Cliente,
+    ConfiguracaoFinanceira,
+    Evento,
+    Orcamento,
+    OrcamentoItem,
+    Servico,
+)
 from caixa.models_custos_extras import OrcamentoCustoExtra
 from tenancy.command_guards import ensure_demo_permanent_tenant_schema
 from tenancy.services_demo_pool import clear_demo_tenant_cache
@@ -35,6 +41,18 @@ SEED_ENTRY_NAMES = (
     "daily_service",
     "hourly_service",
     "budget",
+)
+LEGACY_OWNED_ENTRY_NAMES = (
+    "client",
+    "daily_service",
+    "hourly_service",
+    "budget",
+)
+# Before migration 0042 the seed reused the first active configuration. Without
+# a seed key, using that row is not proof that the seed created or owns it.
+CANONICAL_IDENTIFICATION = "chaves_canonicas"
+LEGACY_REUSED_CONFIGURATION_IDENTIFICATION = (
+    "especificacao_legada_exata_configuracao_reutilizada"
 )
 SEED_ROOT_MODELS = (ConfiguracaoFinanceira, Cliente, Servico, Orcamento)
 LEGACY_IDENTITY_FIELDS = {
@@ -126,14 +144,20 @@ class Command(BaseCommand):
                         summary = self._build_summary(seed_objects, identification)
                         deleted = self._remove_seed(seed_objects, identification)
                         connection.check_constraints()
-                        if self._remaining_seed_root_count(seed_objects) != 0:
+                        if (
+                            self._remaining_seed_root_count(
+                                seed_objects,
+                                identification,
+                            )
+                            != 0
+                        ):
                             raise CommandError(
                                 "A limpeza terminou com dados ficticios residuais; "
                                 "a transacao foi revertida."
                             )
                         if dry_run:
                             transaction.set_rollback(True)
-            except (IntegrityError, ProtectedError) as exc:
+            except (IntegrityError, ProtectedError, RestrictedError) as exc:
                 raise CommandError(
                     "Os dados ficticios possuem referencias fora do seed canonico; "
                     "a limpeza foi revertida para preservar os demais dados."
@@ -242,7 +266,8 @@ class Command(BaseCommand):
                 .values_list("pk", flat=True)
             )
             exact_candidates[name] = ids
-            exact_candidate_total += len(ids)
+            if name in LEGACY_OWNED_ENTRY_NAMES:
+                exact_candidate_total += len(ids)
             status = (
                 "missing"
                 if not ids
@@ -280,10 +305,12 @@ class Command(BaseCommand):
                     )
 
         proven_seed = None
+        proven_identification = None
         proven_by = "none"
         if keyed_rows:
             if readiness.ready:
                 proven_seed = readiness.objects
+                proven_identification = CANONICAL_IDENTIFICATION
                 proven_by = "canonical_seed_keys"
             else:
                 self.stdout.write("legacy_validation=not_used_seed_keys_exist")
@@ -291,7 +318,7 @@ class Command(BaseCommand):
             self.stdout.write("legacy_validation=no_exact_candidates")
         else:
             try:
-                legacy_matches = match_legacy_demo_seed()
+                legacy_matches = self._match_legacy_seed_with_reused_configuration()
             except DemoSeedIntegrityError as exc:
                 self.stdout.write("legacy_validation=partial_or_ambiguous")
                 self.stdout.write(f"legacy_validation_error={exc}")
@@ -300,8 +327,20 @@ class Command(BaseCommand):
                     DEMO_SEED_SPEC[name]["key"]: obj
                     for name, obj in legacy_matches.items()
                 }
-                proven_by = "exact_legacy_spec_and_relations"
-                self.stdout.write("legacy_validation=valid")
+                proven_identification = LEGACY_REUSED_CONFIGURATION_IDENTIFICATION
+                proven_by = "exact_legacy_spec_and_relations_reused_configuration"
+                self.stdout.write("legacy_validation=valid_reused_configuration")
+
+        exact_budget_ids = exact_candidates.get("budget", [])
+        if not keyed_rows and len(exact_budget_ids) == 1:
+            budget_candidate = Orcamento._base_manager.select_related(
+                "configuracao_financeira"
+            ).get(pk=exact_budget_ids[0])
+            self._write_reused_configuration_diagnostic(
+                budget_candidate.configuracao_financeira,
+                proven_seed=proven_seed,
+                identification=proven_identification,
+            )
 
         self.stdout.write(f"proven_seed_set={proven_by}")
         if proven_seed is None:
@@ -310,7 +349,28 @@ class Command(BaseCommand):
             )
             return
 
-        blockers = self._blocking_references(proven_seed)
+        planned, _collector_blockers = self._planned_deletion_identities(
+            proven_seed,
+            proven_identification,
+        )
+        planned_by_model = {}
+        for model_label, object_id in planned:
+            planned_by_model.setdefault(model_label, []).append(object_id)
+        self.stdout.write(f"proven_seed_tree_object_count={len(planned)}")
+        for model_label, ids in sorted(planned_by_model.items()):
+            self._write_json(
+                "proven_seed_tree_object",
+                {
+                    "model": model_label,
+                    "ids": sorted(ids),
+                    "will_be_deleted": True,
+                },
+            )
+
+        blockers = self._blocking_references(
+            proven_seed,
+            proven_identification,
+        )
         self.stdout.write(f"blocking_reference_count={len(blockers)}")
         for blocker in blockers:
             self._write_json("blocking_reference", blocker)
@@ -374,6 +434,74 @@ class Command(BaseCommand):
                     },
                 )
 
+    def _write_reused_configuration_diagnostic(
+        self,
+        configuration,
+        *,
+        proven_seed,
+        identification,
+    ):
+        fields = {
+            field.name: field.value_from_object(configuration)
+            for field in configuration._meta.concrete_fields
+        }
+        self._write_json(
+            "legacy_budget_configuration",
+            {
+                "model": configuration._meta.label_lower,
+                "id": configuration.pk,
+                "fields": fields,
+                "classifies_as_seed": False,
+                "will_be_deleted": False,
+                "ownership": "reused_unproven_preserved",
+            },
+        )
+
+        planned = None
+        if proven_seed is not None and identification is not None:
+            planned, _collector_blockers = self._planned_deletion_identities(
+                proven_seed,
+                identification,
+            )
+
+        total_count = 0
+        outside_count = 0
+        for reference in self._related_references(configuration):
+            total_count += reference["count"]
+            inside_ids = []
+            outside_ids = []
+            if planned is not None:
+                for object_id in reference["ids"]:
+                    identity = (reference["referencing_model"], object_id)
+                    target = inside_ids if identity in planned else outside_ids
+                    target.append(object_id)
+                outside_count += len(outside_ids)
+            self._write_json(
+                "legacy_budget_configuration_reference",
+                {
+                    **reference,
+                    "inside_proven_seed_tree_ids": (
+                        inside_ids if planned is not None else None
+                    ),
+                    "outside_proven_seed_tree_ids": (
+                        outside_ids if planned is not None else None
+                    ),
+                },
+            )
+
+        self.stdout.write(
+            f"legacy_budget_configuration_reference_count={total_count}"
+        )
+        if planned is None:
+            self.stdout.write(
+                "legacy_budget_configuration_outside_proven_tree_count=unknown"
+            )
+        else:
+            self.stdout.write(
+                "legacy_budget_configuration_outside_proven_tree_count="
+                f"{outside_count}"
+            )
+
     def _write_json_line(self, key, value):
         self._write_json(key, value)
 
@@ -417,13 +545,17 @@ class Command(BaseCommand):
         return references
 
     @classmethod
-    def _blocking_references(cls, seed_objects):
+    def _planned_deletion_identities(cls, seed_objects, identification):
         budget = seed_objects[demo_seed_entry("budget")["key"]]
         event = Evento.objects.filter(orcamento=budget).first()
         planned = {
-            (obj._meta.label_lower, obj.pk) for obj in seed_objects.values()
+            (
+                seed_objects[demo_seed_entry(name)["key"]]._meta.label_lower,
+                seed_objects[demo_seed_entry(name)["key"]].pk,
+            )
+            for name in cls._owned_entry_names(identification)
         }
-        blockers = []
+        collector_blockers = []
 
         if event is not None:
             collector = Collector(using=connection.alias)
@@ -439,14 +571,14 @@ class Command(BaseCommand):
                 for obj in protected_objects:
                     grouped.setdefault(obj._meta.label_lower, []).append(obj.pk)
                 for model_label, ids in sorted(grouped.items()):
-                    blockers.append(
+                    collector_blockers.append(
                         {
                             "kind": "event_delete_protected",
                             "model": model_label,
                             "ids": sorted(ids),
                         }
                     )
-                return blockers
+                return planned, collector_blockers
 
             for model, objects in collector.data.items():
                 planned.update(
@@ -471,23 +603,48 @@ class Command(BaseCommand):
             )
         )
 
-        raw_targets = [
-            ("budget", budget),
-            (
-                "daily_service",
-                seed_objects[demo_seed_entry("daily_service")["key"]],
-            ),
-            (
-                "hourly_service",
-                seed_objects[demo_seed_entry("hourly_service")["key"]],
-            ),
-            ("client", seed_objects[demo_seed_entry("client")["key"]]),
-            (
-                "configuration",
-                seed_objects[demo_seed_entry("configuration")["key"]],
-            ),
-        ]
-        for entry_name, target in raw_targets:
+        return planned, collector_blockers
+
+    @classmethod
+    def _blocking_references(cls, seed_objects, identification):
+        planned, blockers = cls._planned_deletion_identities(
+            seed_objects,
+            identification,
+        )
+        if blockers:
+            return blockers
+
+        deletion_targets = {}
+        for name in cls._owned_entry_names(identification):
+            target = seed_objects[demo_seed_entry(name)["key"]]
+            deletion_targets[(target._meta.label_lower, target.pk)] = (
+                name,
+                target,
+                "raw_delete_external_fk",
+            )
+        budget = seed_objects[demo_seed_entry("budget")["key"]]
+        event = Evento.objects.filter(orcamento=budget).first()
+        if event is not None:
+            deletion_targets[(event._meta.label_lower, event.pk)] = (
+                "event",
+                event,
+                "event_delete_external_fk",
+            )
+
+        for model_label, object_id in planned:
+            if (model_label, object_id) in deletion_targets:
+                continue
+            app_label, model_name = model_label.split(".", 1)
+            model = apps.get_model(app_label, model_name)
+            target = model._base_manager.filter(pk=object_id).first()
+            if target is not None:
+                deletion_targets[(model_label, object_id)] = (
+                    "proven_seed_tree",
+                    target,
+                    "tree_delete_external_fk",
+                )
+
+        for entry_name, target, blocker_kind in deletion_targets.values():
             for reference in cls._related_references(target):
                 model_label = reference["referencing_model"]
                 external_ids = [
@@ -499,7 +656,7 @@ class Command(BaseCommand):
                     continue
                 blockers.append(
                     {
-                        "kind": "raw_delete_external_fk",
+                        "kind": blocker_kind,
                         "target_entry": entry_name,
                         "target_model": target._meta.label_lower,
                         "target_id": target.pk,
@@ -510,6 +667,16 @@ class Command(BaseCommand):
                     }
                 )
         return blockers
+
+    @staticmethod
+    def _owned_entry_names(identification):
+        if identification == LEGACY_REUSED_CONFIGURATION_IDENTIFICATION:
+            return LEGACY_OWNED_ENTRY_NAMES
+        if identification == CANONICAL_IDENTIFICATION:
+            return SEED_ENTRY_NAMES
+        raise CommandError(
+            "Origem do conjunto ficticio desconhecida; a limpeza foi abortada."
+        )
 
     @staticmethod
     def _lock_cleanup_tables():
@@ -551,14 +718,14 @@ class Command(BaseCommand):
                     "O seed existente esta parcial ou inconsistente; nenhuma "
                     f"exclusao foi executada. Detalhes: {details}."
                 )
-            return readiness.objects, "chaves_canonicas"
+            return readiness.objects, CANONICAL_IDENTIFICATION
 
         legacy_candidate_count = self._legacy_candidate_count()
         if legacy_candidate_count == 0:
             return None
 
         try:
-            legacy_matches = match_legacy_demo_seed()
+            legacy_matches = self._match_legacy_seed_with_reused_configuration()
         except DemoSeedIntegrityError as exc:
             raise CommandError(
                 "Foram encontrados candidatos a dados ficticios legados, mas o "
@@ -568,23 +735,92 @@ class Command(BaseCommand):
         return {
             DEMO_SEED_SPEC[name]["key"]: obj
             for name, obj in legacy_matches.items()
-        }, "especificacao_legada_exata"
+        }, LEGACY_REUSED_CONFIGURATION_IDENTIFICATION
+
+    @classmethod
+    def _match_legacy_seed_with_reused_configuration(cls):
+        """Prove legacy-owned roots while treating the budget config as borrowed."""
+
+        matches = {}
+        errors = []
+        for name in LEGACY_OWNED_ENTRY_NAMES:
+            entry = demo_seed_entry(name)
+            candidates = list(
+                entry["model"].objects.filter(**cls._legacy_filters(name, entry))[:2]
+            )
+            if len(candidates) != 1:
+                errors.append(
+                    f"{name}: esperado um candidato legado exato, encontrados "
+                    f"{len(candidates)}"
+                )
+            else:
+                matches[name] = candidates[0]
+
+        if errors:
+            raise DemoSeedIntegrityError("; ".join(errors))
+
+        budget = matches["budget"]
+        if budget.cliente_id != matches["client"].pk:
+            errors.append("orcamento legado nao referencia o cliente candidato")
+
+        try:
+            configuration = budget.configuracao_financeira
+        except ObjectDoesNotExist:
+            errors.append("orcamento legado nao referencia uma configuracao existente")
+        else:
+            matches["configuration"] = configuration
+
+        items = list(budget.itens.all())
+        expected_service_ids = {
+            matches["daily_service"].pk,
+            matches["hourly_service"].pk,
+        }
+        if len(items) != 2 or {
+            item.servico_id for item in items
+        } != expected_service_ids:
+            errors.append(
+                "orcamento legado nao possui exatamente os dois servicos candidatos"
+            )
+
+        try:
+            event = budget.evento
+        except ObjectDoesNotExist:
+            errors.append("orcamento legado nao possui evento derivado")
+        else:
+            if event.cliente_id != matches["client"].pk:
+                errors.append("evento legado nao referencia o cliente candidato")
+            if not event.receitas.exists() or not event.despesas.exists():
+                errors.append("evento legado nao possui derivados financeiros minimos")
+            if set(
+                event.custos_servicos.values_list("servico_id", flat=True)
+            ) != expected_service_ids:
+                errors.append(
+                    "evento legado nao possui custos dos servicos candidatos"
+                )
+
+        if errors:
+            raise DemoSeedIntegrityError("; ".join(errors))
+        return matches
 
     @staticmethod
     def _legacy_candidate_count():
         count = 0
-        for name, entry in DEMO_SEED_SPEC.items():
+        for name in LEGACY_OWNED_ENTRY_NAMES:
+            entry = demo_seed_entry(name)
             filters = dict(entry["visible"])
             if name == "budget":
                 filters["status"] = "aprovado"
             count += entry["model"].objects.filter(**filters).count()
         return count
 
-    @staticmethod
-    def _remaining_seed_root_count(seed_objects):
+    @classmethod
+    def _remaining_seed_root_count(cls, seed_objects, identification):
         return sum(
             entry["model"].objects.filter(pk=seed_objects[entry["key"]].pk).count()
-            for entry in (demo_seed_entry(name) for name in SEED_ENTRY_NAMES)
+            for entry in (
+                demo_seed_entry(name)
+                for name in cls._owned_entry_names(identification)
+            )
         )
 
     @staticmethod
@@ -592,14 +828,23 @@ class Command(BaseCommand):
         budget = seed_objects[demo_seed_entry("budget")["key"]]
         event = Evento.objects.filter(orcamento=budget).first()
         root_identities = frozenset(
-            (obj._meta.label_lower, obj.pk) for obj in seed_objects.values()
+            (
+                seed_objects[demo_seed_entry(name)["key"]]._meta.label_lower,
+                seed_objects[demo_seed_entry(name)["key"]].pk,
+            )
+            for name in Command._owned_entry_names(identification)
         )
         history_targets, _seed_ids_by_model = Command._collect_history_targets(
             root_identities
         )
         return {
             "identification": identification,
-            "roots": len(DEMO_SEED_KEYS),
+            "roots": len(Command._owned_entry_names(identification)),
+            "configuration": (
+                "preservada_reutilizada"
+                if identification == LEGACY_REUSED_CONFIGURATION_IDENTIFICATION
+                else "removida_seed_canonica"
+            ),
             "budget_items": OrcamentoItem.objects.filter(orcamento=budget).count(),
             "budget_extra_costs": OrcamentoCustoExtra.objects.filter(
                 orcamento=budget
@@ -632,9 +877,19 @@ class Command(BaseCommand):
             ) from exc
 
         self._validate_seed_unchanged(roots, identification)
+        blockers = self._blocking_references(roots, identification)
+        if blockers:
+            raise CommandError(
+                "Os dados ficticios possuem referencias fora do seed canonico; "
+                "a limpeza foi revertida para preservar os demais dados."
+            )
         budget = roots[demo_seed_entry("budget")["key"]]
         root_identities = frozenset(
-            (obj._meta.label_lower, obj.pk) for obj in roots.values()
+            (
+                roots[demo_seed_entry(name)["key"]]._meta.label_lower,
+                roots[demo_seed_entry(name)["key"]].pk,
+            )
+            for name in self._owned_entry_names(identification)
         )
         history_targets, seed_ids_by_model = self._collect_history_targets(
             root_identities
@@ -645,7 +900,7 @@ class Command(BaseCommand):
             if model._meta.model_name in DEMO_SEED_PARENT_FIELDS
             for obj in model._base_manager.all().iterator()
             if self._is_resolved_seed_object(obj, root_identities)
-        ) + len(DEMO_SEED_KEYS)
+        ) + len(self._owned_entry_names(identification))
 
         event = Evento.objects.select_for_update().filter(orcamento=budget).first()
         if event is not None:
@@ -663,11 +918,12 @@ class Command(BaseCommand):
         self._raw_delete(
             Cliente.objects.filter(pk=roots[demo_seed_entry("client")["key"]].pk)
         )
-        self._raw_delete(
-            ConfiguracaoFinanceira.objects.filter(
-                pk=roots[demo_seed_entry("configuration")["key"]].pk
+        if identification != LEGACY_REUSED_CONFIGURATION_IDENTIFICATION:
+            self._raw_delete(
+                ConfiguracaoFinanceira.objects.filter(
+                    pk=roots[demo_seed_entry("configuration")["key"]].pk
+                )
             )
-        )
 
         deletion_history_targets, _seed_ids_by_model = (
             self._collect_history_targets(

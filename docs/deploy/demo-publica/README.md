@@ -172,7 +172,10 @@ e execute a remocao com confirmacao forte:
 
 O comando remove somente o conjunto canonico marcado como seed, ou o conjunto
 legado reconhecido integralmente pela especificacao exata, e seus derivados.
-Se encontrar referencias de outros dados, reverte toda a transacao.
+No conjunto legado sem seed keys, a configuracao financeira referenciada pelo
+orcamento e tratada como configuracao preexistente reutilizada: ela nao recebe
+seed key, nao e alterada e nao e removida. Se encontrar referencias de outros
+dados nos objetos que serao apagados, o comando reverte toda a transacao.
 Usuarios, grupos, permissoes, schema e Domain sao preservados. Repetir o
 comando depois da limpeza e seguro: ele informa que nao ha dados ficticios.
 
@@ -184,7 +187,9 @@ remocao. Colete primeiro o diagnostico estritamente somente leitura:
 ```
 
 O diagnostico usa uma transacao PostgreSQL `READ ONLY`, nao altera seed keys,
-historicos ou cache e nao classifica correspondencias parciais como seed.
+historicos ou cache e nao classifica correspondencias parciais como seed. Para
+um seed legado, ele mostra os campos da configuracao usada pelo orcamento e
+separa as referencias internas das referencias externas a arvore comprovada.
 
 `preparar_demo_permanente` preserva a senha utilizavel do usuario existente e
 reaplica flags/grupo minimos, sem criar ou exigir seed. Se o dry-run informar

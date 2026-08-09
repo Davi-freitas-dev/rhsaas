@@ -23,7 +23,10 @@ from caixa.models import (
     Cliente,
     ConfiguracaoFinanceira,
     Evento,
+    ObrigacaoFinanceira,
     Orcamento,
+    OrcamentoItem,
+    ReceitaOperacional,
     Servico,
 )
 from caixa.models_custos_extras import EventoCustoExtra
@@ -1057,7 +1060,7 @@ class DemoPublicFlowTests(MultiTenantTestCase):
         )
 
         with schema_context("demo1"):
-            self.assertEqual(ConfiguracaoFinanceira.objects.count(), 0)
+            self.assertEqual(ConfiguracaoFinanceira.objects.count(), 1)
             self.assertEqual(Cliente.objects.count(), 0)
             self.assertEqual(Servico.objects.count(), 0)
             self.assertEqual(Orcamento.objects.count(), 0)
@@ -1197,7 +1200,6 @@ class Demo1DiagnosticCommandTests(TransactionTestCase):
             domain="demo1.api-demo-rh.taquiondev.com.br",
             is_primary=True,
         )
-        self._seed_existing_demo1_fixture()
 
     def tearDown(self):
         try:
@@ -1221,7 +1223,89 @@ class Demo1DiagnosticCommandTests(TransactionTestCase):
         ):
             return seed_demo_tenant("demo1")
 
+    @staticmethod
+    def _create_reused_configuration_legacy_fixture():
+        with schema_context("demo1"):
+            configuration = ConfiguracaoFinanceira.objects.create(
+                nome="Configuracao real preexistente",
+                valor_alimentacao=Decimal("31.00"),
+                valor_transporte=Decimal("27.00"),
+                margem_lucro=Decimal("0.42"),
+                aliquota_imposto=Decimal("0.09"),
+                ativa=True,
+                data_inicio_vigencia=date(2025, 1, 1),
+                observacao="Configuracao real que existia antes do seed legado.",
+            )
+            configuration_snapshot = ConfiguracaoFinanceira.objects.values().get(
+                pk=configuration.pk
+            )
+
+            client = Cliente.objects.create(**DEMO_SEED_SPEC["client"]["visible"])
+            daily_service = Servico.objects.create(
+                **DEMO_SEED_SPEC["daily_service"]["visible"]
+            )
+            hourly_service = Servico.objects.create(
+                **DEMO_SEED_SPEC["hourly_service"]["visible"]
+            )
+            budget = Orcamento.objects.create(
+                cliente=client,
+                configuracao_financeira=configuration,
+                data_evento=date(2026, 9, 8),
+                validade=date(2026, 8, 16),
+                status="rascunho",
+                **DEMO_SEED_SPEC["budget"]["visible"],
+            )
+            OrcamentoItem.objects.create(
+                orcamento=budget,
+                servico=daily_service,
+                horas_por_dia=Decimal("8.00"),
+                quantidade_dias=1,
+                quantidade_pessoas=2,
+            )
+            OrcamentoItem.objects.create(
+                orcamento=budget,
+                servico=hourly_service,
+                horas_por_dia=Decimal("2.00"),
+                quantidade_dias=2,
+                quantidade_pessoas=2,
+            )
+            event = budget.aprovar_e_gerar_evento()
+
+            real_client = Cliente.objects.create(
+                nome_razao_social="Cliente real da configuracao preservada",
+                cpf_cnpj="45.112.990/0001-08",
+            )
+            real_budget = Orcamento.objects.create(
+                cliente=real_client,
+                configuracao_financeira=configuration,
+                numero="REAL-CONFIG-001",
+                nome_evento="Orcamento real preservado",
+                data_evento=date(2026, 11, 10),
+            )
+
+            return {
+                "configuration_id": configuration.pk,
+                "configuration_snapshot": configuration_snapshot,
+                "client_id": client.pk,
+                "service_ids": {daily_service.pk, hourly_service.pk},
+                "budget_id": budget.pk,
+                "event_id": event.pk,
+                "event_history_ids": set(
+                    Evento.history.filter(id=event.pk).values_list(
+                        "history_id", flat=True
+                    )
+                ),
+                "obligation_ids": set(
+                    ObrigacaoFinanceira.objects.filter(evento=event).values_list(
+                        "pk", flat=True
+                    )
+                ),
+                "real_client_id": real_client.pk,
+                "real_budget_id": real_budget.pk,
+            }
+
     def test_diagnostico_expoe_seed_legado_parcial_sem_alterar_dados(self):
+        self._seed_existing_demo1_fixture()
         with schema_context("demo1"):
             for entry in DEMO_SEED_SPEC.values():
                 entry["model"].objects.update(demo_seed_key=None)
@@ -1296,6 +1380,7 @@ class Demo1DiagnosticCommandTests(TransactionTestCase):
             )
 
     def test_diagnostico_lista_referencia_externa_que_bloqueia_limpeza(self):
+        self._seed_existing_demo1_fixture()
         with schema_context("demo1"):
             readiness = inspect_demo_seed_readiness()
             common_budget = Orcamento.objects.create(
@@ -1326,6 +1411,8 @@ class Demo1DiagnosticCommandTests(TransactionTestCase):
             self.assertTrue(Orcamento.objects.filter(pk=common_budget.pk).exists())
 
     def test_diagnostico_tem_read_only_imposto_pelo_postgresql(self):
+        self._seed_existing_demo1_fixture()
+
         def attempt_write(_command, _schema_name):
             Cliente.objects.update(ativo=False)
 
@@ -1344,6 +1431,236 @@ class Demo1DiagnosticCommandTests(TransactionTestCase):
 
         with schema_context("demo1"):
             self.assertTrue(Cliente.objects.get().ativo)
+
+    def test_seed_legado_com_configuracao_reutilizada_e_preservado_completo(self):
+        fixture = self._create_reused_configuration_legacy_fixture()
+
+        diagnostic_output = StringIO()
+        call_command(
+            "remover_dados_ficticios_demo1",
+            diagnostico=True,
+            stdout=diagnostic_output,
+            verbosity=0,
+        )
+        output = diagnostic_output.getvalue()
+        self.assertEqual(len(fixture["obligation_ids"]), 8)
+        self.assertIn("legacy_validation=valid_reused_configuration", output)
+        self.assertIn(
+            "proven_seed_set=exact_legacy_spec_and_relations_reused_configuration",
+            output,
+        )
+        self.assertIn(f'"id": {fixture["configuration_id"]}', output)
+        self.assertIn('"classifies_as_seed": false', output)
+        self.assertIn('"will_be_deleted": false', output)
+        self.assertIn("legacy_budget_configuration_reference_count=2", output)
+        self.assertIn(
+            "legacy_budget_configuration_outside_proven_tree_count=1",
+            output,
+        )
+        self.assertIn(
+            f'"outside_proven_seed_tree_ids": [{fixture["real_budget_id"]}]',
+            output,
+        )
+        self.assertIn(
+            'proven_seed_tree_object={"ids": '
+            f'{sorted(fixture["obligation_ids"])}, '
+            '"model": "caixa.obrigacaofinanceira", "will_be_deleted": true}',
+            output,
+        )
+
+        with schema_context("demo1"):
+            snapshot_before_dry_run = {
+                "configuration": ConfiguracaoFinanceira.objects.values().get(
+                    pk=fixture["configuration_id"]
+                ),
+                "clients": list(Cliente.objects.order_by("pk").values()),
+                "services": list(Servico.objects.order_by("pk").values()),
+                "budgets": list(Orcamento.objects.order_by("pk").values()),
+                "events": list(Evento.objects.order_by("pk").values()),
+                "event_history_ids": set(
+                    Evento.history.values_list("history_id", flat=True)
+                ),
+                "obligations": list(
+                    ObrigacaoFinanceira.objects.order_by("pk").values()
+                ),
+            }
+
+        dry_run_output = StringIO()
+        call_command(
+            "remover_dados_ficticios_demo1",
+            dry_run=True,
+            stdout=dry_run_output,
+            verbosity=0,
+        )
+        self.assertIn("DRY-RUN", dry_run_output.getvalue())
+        self.assertIn(
+            "configuration=preservada_reutilizada",
+            dry_run_output.getvalue(),
+        )
+
+        with schema_context("demo1"):
+            self.assertEqual(
+                {
+                    "configuration": ConfiguracaoFinanceira.objects.values().get(
+                        pk=fixture["configuration_id"]
+                    ),
+                    "clients": list(Cliente.objects.order_by("pk").values()),
+                    "services": list(Servico.objects.order_by("pk").values()),
+                    "budgets": list(Orcamento.objects.order_by("pk").values()),
+                    "events": list(Evento.objects.order_by("pk").values()),
+                    "event_history_ids": set(
+                        Evento.history.values_list("history_id", flat=True)
+                    ),
+                    "obligations": list(
+                        ObrigacaoFinanceira.objects.order_by("pk").values()
+                    ),
+                },
+                snapshot_before_dry_run,
+            )
+
+        call_command(
+            "remover_dados_ficticios_demo1",
+            confirm="REMOVER-DADOS-FICTICIOS demo1",
+            verbosity=0,
+        )
+
+        with schema_context("demo1"):
+            self.assertEqual(
+                ConfiguracaoFinanceira.objects.values().get(
+                    pk=fixture["configuration_id"]
+                ),
+                fixture["configuration_snapshot"],
+            )
+            self.assertTrue(
+                Cliente.objects.filter(pk=fixture["real_client_id"]).exists()
+            )
+            self.assertTrue(
+                Orcamento.objects.filter(pk=fixture["real_budget_id"]).exists()
+            )
+            self.assertFalse(Cliente.objects.filter(pk=fixture["client_id"]).exists())
+            self.assertFalse(
+                Servico.objects.filter(pk__in=fixture["service_ids"]).exists()
+            )
+            self.assertFalse(
+                Orcamento.objects.filter(pk=fixture["budget_id"]).exists()
+            )
+            self.assertFalse(Evento.objects.filter(pk=fixture["event_id"]).exists())
+            self.assertFalse(
+                Evento.history.filter(
+                    history_id__in=fixture["event_history_ids"]
+                ).exists()
+            )
+            self.assertFalse(
+                ObrigacaoFinanceira.objects.filter(
+                    pk__in=fixture["obligation_ids"]
+                ).exists()
+            )
+            self.assertIsNone(
+                getattr(ConfiguracaoFinanceira, "history", None),
+                "ConfiguracaoFinanceira nao possui historico simple-history; "
+                "a limpeza nao deve criar nem remover historicos para ela.",
+            )
+
+        repeated_output = StringIO()
+        call_command(
+            "remover_dados_ficticios_demo1",
+            confirm="REMOVER-DADOS-FICTICIOS demo1",
+            stdout=repeated_output,
+            verbosity=0,
+        )
+        self.assertIn("ja esta sem dados ficticios", repeated_output.getvalue())
+
+    def test_seed_legado_reutilizado_recusa_arvore_com_evento_de_outro_cliente(self):
+        fixture = self._create_reused_configuration_legacy_fixture()
+        with schema_context("demo1"):
+            Evento.objects.filter(pk=fixture["event_id"]).update(
+                cliente_id=fixture["real_client_id"]
+            )
+
+        with self.assertRaisesMessage(CommandError, "parcial ou ambiguo"):
+            call_command(
+                "remover_dados_ficticios_demo1",
+                dry_run=True,
+                verbosity=0,
+            )
+
+        with schema_context("demo1"):
+            self.assertTrue(Cliente.objects.filter(pk=fixture["client_id"]).exists())
+            self.assertEqual(
+                Servico.objects.filter(pk__in=fixture["service_ids"]).count(),
+                2,
+            )
+            self.assertTrue(
+                Orcamento.objects.filter(pk=fixture["budget_id"]).exists()
+            )
+            self.assertTrue(Evento.objects.filter(pk=fixture["event_id"]).exists())
+            self.assertEqual(
+                ConfiguracaoFinanceira.objects.values().get(
+                    pk=fixture["configuration_id"]
+                ),
+                fixture["configuration_snapshot"],
+            )
+
+    def test_seed_legado_recusa_obrigacao_set_null_com_origem_externa(self):
+        fixture = self._create_reused_configuration_legacy_fixture()
+        with schema_context("demo1"):
+            real_event = Evento.objects.create(
+                cliente_id=fixture["real_client_id"],
+                numero="REAL-OBRIGACAO-001",
+                nome_evento="Evento real da obrigacao externa",
+                data_inicio=date(2026, 12, 1),
+                data_fim=date(2026, 12, 1),
+            )
+            real_revenue = ReceitaOperacional.objects.create(
+                evento=real_event,
+                cliente_id=fixture["real_client_id"],
+                descricao="Receita real preservada",
+                valor_previsto=Decimal("500.00"),
+                data_vencimento=date(2026, 12, 1),
+            )
+            external_obligation = ObrigacaoFinanceira.objects.get(
+                receita_operacional=real_revenue
+            )
+            ObrigacaoFinanceira.objects.filter(pk=external_obligation.pk).update(
+                evento_id=fixture["event_id"]
+            )
+
+        diagnostic_output = StringIO()
+        call_command(
+            "remover_dados_ficticios_demo1",
+            diagnostico=True,
+            stdout=diagnostic_output,
+            verbosity=0,
+        )
+        output = diagnostic_output.getvalue()
+        self.assertIn('"kind": "event_delete_external_fk"', output)
+        self.assertIn(f'"ids": [{external_obligation.pk}]', output)
+
+        with self.assertRaisesMessage(CommandError, "referencias fora do seed"):
+            call_command(
+                "remover_dados_ficticios_demo1",
+                dry_run=True,
+                verbosity=0,
+            )
+
+        with schema_context("demo1"):
+            external_obligation.refresh_from_db()
+            self.assertEqual(external_obligation.evento_id, fixture["event_id"])
+            self.assertEqual(
+                external_obligation.receita_operacional_id,
+                real_revenue.pk,
+            )
+            self.assertTrue(Evento.objects.filter(pk=real_event.pk).exists())
+            self.assertTrue(
+                ReceitaOperacional.objects.filter(pk=real_revenue.pk).exists()
+            )
+            self.assertTrue(Evento.objects.filter(pk=fixture["event_id"]).exists())
+            self.assertEqual(
+                ConfiguracaoFinanceira.objects.values().get(
+                    pk=fixture["configuration_id"]
+                ),
+                fixture["configuration_snapshot"],
+            )
 
 
 class DemoPublicConcurrencyTests(TransactionTestCase):
