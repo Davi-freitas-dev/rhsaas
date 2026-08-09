@@ -62,7 +62,8 @@ class DemoStorageQuotaTests(MultiTenantTestCase):
         super().setUp()
 
         for schema_name in ("demo1", "demo2", "demo3"):
-            seed_demo_tenant(schema_name)
+            if schema_name != "demo1":
+                seed_demo_tenant(schema_name)
             sync_demo_public_user(schema_name)
 
         connection.set_schema_to_public()

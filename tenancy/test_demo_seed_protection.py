@@ -387,6 +387,21 @@ class DemoSeedProtectionTests(MultiTenantTestCase):
                 with self.assertRaises(PermissionDenied):
                     assert_demo_write_allowed(self.demo_user, obj)
 
+    def test_seed_flags_exempt_only_demo1(self):
+        with schema_context("demo2"):
+            seed_client = Cliente.objects.get(demo_seed_key__isnull=False)
+            for schema_name, expected in (
+                ("demo1", {"isSeed": False, "isReadOnly": False}),
+                ("demo2", {"isSeed": True, "isReadOnly": True}),
+                ("demo10", {"isSeed": True, "isReadOnly": True}),
+                ("rh_teste", {"isSeed": True, "isReadOnly": True}),
+                ("tenant_comum", {"isSeed": True, "isReadOnly": True}),
+                ("public", {"isSeed": True, "isReadOnly": True}),
+            ):
+                with self.subTest(schema_name=schema_name):
+                    with patch.object(connection, "schema_name", schema_name):
+                        self.assertEqual(demo_object_flags(seed_client), expected)
+
     def test_seed_service_cost_cannot_be_settled_or_paid_indirectly(self):
         with schema_context("demo2"):
             budget = Orcamento.objects.get(demo_seed_key__isnull=False)

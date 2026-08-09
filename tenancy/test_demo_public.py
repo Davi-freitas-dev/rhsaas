@@ -11,13 +11,21 @@ from django.contrib.auth.models import Group
 from django.contrib.sessions.models import Session
 from django.core.cache import cache
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.db import close_old_connections, connection
 from django.test import Client, TransactionTestCase, override_settings
 from django.utils import timezone
 from django_tenants.utils import schema_context
 
-from caixa.demo_seed import DEMO_SEED_SPEC
-from caixa.models import Cliente, Evento, Orcamento, Servico
+from caixa.demo_policy import assert_demo_write_allowed
+from caixa.demo_seed import DEMO_SEED_SPEC, inspect_demo_seed_readiness
+from caixa.models import (
+    Cliente,
+    ConfiguracaoFinanceira,
+    Evento,
+    Orcamento,
+    Servico,
+)
 from caixa.models_custos_extras import EventoCustoExtra
 from caixa.models_fci import Investimento
 from caixa.models_pagamentos import PagamentoEventoCustoExtra
@@ -26,7 +34,10 @@ from caixa.throttling import (
     DemoLeaseResumeRateThrottle,
     DemoStatusRateThrottle,
 )
-from tenancy.command_guards import DEMO_POOL_SCHEMA_NAMES
+from tenancy.command_guards import DEMO_POOL_SCHEMA_NAMES, ensure_demo_seed_schema
+from tenancy.management.commands.remover_dados_ficticios_demo1 import (
+    Command as RemoveDemo1SeedCommand,
+)
 from tenancy.models import DemoTenantSlot, Domain, Tenant
 from tenancy.services_demo_pool import (
     DemoLeaseResumeUnavailable,
@@ -134,6 +145,14 @@ class DemoPublicFlowTests(MultiTenantTestCase):
         connection.set_schema_to_public()
         DemoTenantSlot.objects.create(tenant=self.demo3, slot_code="demo3")
         DemoTenantSlot.objects.create(tenant=self.demo4, slot_code="demo4")
+
+    @staticmethod
+    def _seed_existing_demo1_fixture():
+        with patch(
+            "tenancy.services_demo_pool.ensure_demo_seed_schema",
+            return_value="demo1",
+        ):
+            return seed_demo_tenant("demo1")
 
     def test_fluxo_publico_aloca_e_autentica_sem_senha(self):
         public_client, lease_response = self._lease()
@@ -738,7 +757,7 @@ class DemoPublicFlowTests(MultiTenantTestCase):
         with schema_context("demo1"):
             self.assertEqual(Cliente.objects.count(), 0)
 
-    def test_prepara_demo1_permanente_com_seed_e_usuario_minimo(self):
+    def test_prepara_demo1_permanente_sem_seed_e_com_usuario_minimo(self):
         connection.set_schema_to_public()
         DemoTenantSlot.objects.filter(slot_code="demo1").delete()
 
@@ -765,8 +784,331 @@ class DemoPublicFlowTests(MultiTenantTestCase):
                 set(user.groups.values_list("name", flat=True)),
                 {"Demo Publica"},
             )
+            self.assertEqual(ConfiguracaoFinanceira.objects.count(), 0)
+            self.assertEqual(Cliente.objects.count(), 0)
+            self.assertEqual(Servico.objects.count(), 0)
+            self.assertEqual(Orcamento.objects.count(), 0)
+            self.assertEqual(Evento.objects.count(), 0)
+            self.assertEqual(Evento.history.count(), 0)
+            assert_demo_write_allowed(user)
+
+        repeated_output = StringIO()
+        call_command(
+            "remover_dados_ficticios_demo1",
+            confirm="REMOVER-DADOS-FICTICIOS demo1",
+            stdout=repeated_output,
+            verbosity=0,
+        )
+        self.assertIn("ja esta sem dados ficticios", repeated_output.getvalue())
+
+    def test_seed_e_backfill_recusam_demo1_permanente(self):
+        with self.assertRaisesMessage(CommandError, "tenant demo1 e permanente"):
+            seed_demo_tenant("demo1")
+
+        connection.set_schema_to_public()
+        with self.assertRaisesMessage(CommandError, "tenant demo1 e permanente"):
+            call_command(
+                "backfill_demo_seed_keys",
+                schema="demo1",
+                dry_run=True,
+                verbosity=0,
+            )
+
+    @override_settings(DEMO_PUBLIC_POOL_SLOTS=("demo2",))
+    def test_guard_de_seed_preserva_demo2_demo3_e_demo10_com_pool_parcial(self):
+        for schema_name in ("demo2", "demo3", "demo10"):
+            with self.subTest(schema_name=schema_name):
+                self.assertEqual(ensure_demo_seed_schema(schema_name), schema_name)
+
+        seed_demo_tenant("demo2")
+        seed_demo_tenant("demo3")
+        with schema_context("demo3"):
+            self.assertTrue(inspect_demo_seed_readiness().ready)
+
+        connection.set_schema_to_public()
+        backfill_output = StringIO()
+        call_command(
+            "backfill_demo_seed_keys",
+            schema="demo3",
+            dry_run=True,
+            stdout=backfill_output,
+            verbosity=0,
+        )
+        self.assertIn("ja possui seed pronto", backfill_output.getvalue())
+
+        with self.assertRaisesMessage(CommandError, "tenant demo1 e permanente"):
+            ensure_demo_seed_schema("demo1")
+
+    def test_remove_seed_existente_da_demo1_e_preserva_usuario(self):
+        connection.set_schema_to_public()
+        DemoTenantSlot.objects.filter(slot_code="demo1").delete()
+        with patch.dict(
+            "os.environ",
+            {"DEMO_PERMANENT_PASSWORD": "senha-permanente-segura"},
+            clear=False,
+        ):
+            call_command(
+                "preparar_demo_permanente",
+                password_env="DEMO_PERMANENT_PASSWORD",
+                verbosity=0,
+            )
+
+        self._seed_existing_demo1_fixture()
+
+        with schema_context("demo1"):
+            history_ids_before = set(
+                Evento.history.values_list("history_id", flat=True)
+            )
+
+        dry_run_output = StringIO()
+        call_command(
+            "remover_dados_ficticios_demo1",
+            dry_run=True,
+            stdout=dry_run_output,
+            verbosity=0,
+        )
+        self.assertIn("DRY-RUN", dry_run_output.getvalue())
+        with schema_context("demo1"):
+            self.assertTrue(inspect_demo_seed_readiness().ready)
+            self.assertEqual(ConfiguracaoFinanceira.objects.count(), 1)
             self.assertEqual(Cliente.objects.count(), 1)
             self.assertEqual(Servico.objects.count(), 2)
+            self.assertEqual(Orcamento.objects.count(), 1)
+            self.assertEqual(Evento.objects.count(), 1)
+            self.assertEqual(
+                set(Evento.history.values_list("history_id", flat=True)),
+                history_ids_before,
+            )
+
+        with self.assertRaisesMessage(CommandError, "confirmacao forte"):
+            call_command("remover_dados_ficticios_demo1", verbosity=0)
+
+        call_command(
+            "remover_dados_ficticios_demo1",
+            confirm="REMOVER-DADOS-FICTICIOS demo1",
+            verbosity=0,
+        )
+
+        with schema_context("demo1"):
+            user = get_user_model().objects.get(username="demo")
+            self.assertTrue(user.is_active)
+            self.assertTrue(user.check_password("senha-permanente-segura"))
+            self.assertEqual(
+                set(user.groups.values_list("name", flat=True)),
+                {"Demo Publica"},
+            )
+            self.assertEqual(ConfiguracaoFinanceira.objects.count(), 0)
+            self.assertEqual(Cliente.objects.count(), 0)
+            self.assertEqual(Servico.objects.count(), 0)
+            self.assertEqual(Orcamento.objects.count(), 0)
+            self.assertEqual(Evento.objects.count(), 0)
+            self.assertEqual(Evento.history.count(), 0)
+
+    def test_remocao_da_demo1_reverte_se_dado_comum_referencia_seed(self):
+        self._seed_existing_demo1_fixture()
+
+        with schema_context("demo1"):
+            readiness = inspect_demo_seed_readiness()
+            common_budget = Orcamento.objects.create(
+                cliente=readiness.objects[DEMO_SEED_SPEC["client"]["key"]],
+                configuracao_financeira=readiness.objects[
+                    DEMO_SEED_SPEC["configuration"]["key"]
+                ],
+                numero="DEMO1-DADO-COMUM-001",
+                nome_evento="Dado comum preservado",
+                data_evento=date(2026, 10, 1),
+            )
+
+        with self.assertRaisesMessage(CommandError, "referencias fora do seed"):
+            call_command(
+                "remover_dados_ficticios_demo1",
+                dry_run=True,
+                verbosity=0,
+            )
+
+        with schema_context("demo1"):
+            self.assertTrue(inspect_demo_seed_readiness().ready)
+            self.assertTrue(Orcamento.objects.filter(pk=common_budget.pk).exists())
+            self.assertEqual(Cliente.objects.count(), 1)
+            self.assertEqual(Servico.objects.count(), 2)
+
+        with self.assertRaisesMessage(CommandError, "referencias fora do seed"):
+            call_command(
+                "remover_dados_ficticios_demo1",
+                confirm="REMOVER-DADOS-FICTICIOS demo1",
+                verbosity=0,
+            )
+
+        with schema_context("demo1"):
+            self.assertTrue(inspect_demo_seed_readiness().ready)
+            self.assertTrue(Orcamento.objects.filter(pk=common_budget.pk).exists())
+            self.assertEqual(Cliente.objects.count(), 1)
+            self.assertEqual(Servico.objects.count(), 2)
+
+    def test_remocao_revalida_seed_imediatamente_antes_de_excluir(self):
+        self._seed_existing_demo1_fixture()
+
+        original_build_summary = RemoveDemo1SeedCommand._build_summary
+
+        def alter_seed_after_identification(seed_objects, identification):
+            summary = original_build_summary(seed_objects, identification)
+            seed_client = seed_objects[DEMO_SEED_SPEC["client"]["key"]]
+            Cliente.objects.filter(pk=seed_client.pk).update(demo_seed_key=None)
+            return summary
+
+        with patch.object(
+            RemoveDemo1SeedCommand,
+            "_build_summary",
+            side_effect=alter_seed_after_identification,
+        ):
+            with self.assertRaisesMessage(CommandError, "mudou durante a validacao"):
+                call_command(
+                    "remover_dados_ficticios_demo1",
+                    confirm="REMOVER-DADOS-FICTICIOS demo1",
+                    verbosity=0,
+                )
+
+        with schema_context("demo1"):
+            self.assertTrue(inspect_demo_seed_readiness().ready)
+            self.assertEqual(Cliente.objects.count(), 1)
+            self.assertEqual(Servico.objects.count(), 2)
+            self.assertEqual(Orcamento.objects.count(), 1)
+            self.assertEqual(Evento.objects.count(), 1)
+
+    def test_remove_historico_orfao_com_prova_e_preserva_origem_incerta(self):
+        self._seed_existing_demo1_fixture()
+
+        with schema_context("demo1"):
+            seed_event = Evento.objects.get(orcamento__demo_seed_key__isnull=False)
+            proven_cost = EventoCustoExtra.objects.create(
+                evento=seed_event,
+                categoria="outros",
+                descricao="Historico derivado do seed",
+                valor_previsto=Decimal("10.00"),
+                data_vencimento=date(2026, 10, 2),
+            )
+            proven_cost_id = proven_cost.pk
+            proven_cost.delete()
+
+            real_client = Cliente.objects.create(
+                nome_razao_social="Cliente real preservado",
+                cpf_cnpj="11.111.111/0001-11",
+            )
+            real_event = Evento.objects.create(
+                cliente=real_client,
+                numero="DEMO1-REAL-001",
+                nome_evento="Evento real preservado",
+                data_inicio=date(2026, 10, 3),
+                data_fim=date(2026, 10, 3),
+            )
+            uncertain_cost = EventoCustoExtra.objects.create(
+                evento=real_event,
+                categoria="outros",
+                descricao="Historico sem origem seed",
+                valor_previsto=Decimal("20.00"),
+                data_vencimento=date(2026, 10, 3),
+            )
+            uncertain_cost_id = uncertain_cost.pk
+            uncertain_cost.delete()
+
+            self.assertTrue(
+                EventoCustoExtra.history.filter(id=proven_cost_id).exists()
+            )
+            self.assertTrue(
+                EventoCustoExtra.history.filter(id=uncertain_cost_id).exists()
+            )
+
+        call_command(
+            "remover_dados_ficticios_demo1",
+            confirm="REMOVER-DADOS-FICTICIOS demo1",
+            verbosity=0,
+        )
+
+        with schema_context("demo1"):
+            self.assertFalse(
+                EventoCustoExtra.history.filter(id=proven_cost_id).exists()
+            )
+            self.assertTrue(
+                EventoCustoExtra.history.filter(id=uncertain_cost_id).exists()
+            )
+            self.assertTrue(Evento.objects.filter(pk=real_event.pk).exists())
+            self.assertTrue(Cliente.objects.filter(pk=real_client.pk).exists())
+
+    def test_remove_seed_legado_exato_sem_chaves_da_demo1(self):
+        self._seed_existing_demo1_fixture()
+
+        with schema_context("demo1"):
+            for entry in DEMO_SEED_SPEC.values():
+                entry["model"].objects.update(demo_seed_key=None)
+
+        dry_run_output = StringIO()
+        call_command(
+            "remover_dados_ficticios_demo1",
+            dry_run=True,
+            stdout=dry_run_output,
+            verbosity=0,
+        )
+        self.assertIn("especificacao_legada_exata", dry_run_output.getvalue())
+
+        call_command(
+            "remover_dados_ficticios_demo1",
+            confirm="REMOVER-DADOS-FICTICIOS demo1",
+            verbosity=0,
+        )
+
+        with schema_context("demo1"):
+            self.assertEqual(ConfiguracaoFinanceira.objects.count(), 0)
+            self.assertEqual(Cliente.objects.count(), 0)
+            self.assertEqual(Servico.objects.count(), 0)
+            self.assertEqual(Orcamento.objects.count(), 0)
+            self.assertEqual(Evento.objects.count(), 0)
+            self.assertEqual(Evento.history.count(), 0)
+
+    def test_falha_de_cache_apos_limpeza_e_recuperavel_em_nova_execucao(self):
+        self._seed_existing_demo1_fixture()
+        first_stdout = StringIO()
+        first_stderr = StringIO()
+        second_stdout = StringIO()
+
+        with patch(
+            "tenancy.management.commands.remover_dados_ficticios_demo1."
+            "clear_demo_tenant_cache",
+            side_effect=(RuntimeError("cache indisponivel"), 3),
+        ) as clear_cache:
+            call_command(
+                "remover_dados_ficticios_demo1",
+                confirm="REMOVER-DADOS-FICTICIOS demo1",
+                stdout=first_stdout,
+                stderr=first_stderr,
+                verbosity=0,
+            )
+
+            with schema_context("demo1"):
+                self.assertEqual(ConfiguracaoFinanceira.objects.count(), 0)
+                self.assertEqual(Cliente.objects.count(), 0)
+                self.assertEqual(Servico.objects.count(), 0)
+                self.assertEqual(Orcamento.objects.count(), 0)
+                self.assertEqual(Evento.objects.count(), 0)
+                real_client = Cliente.objects.create(
+                    nome_razao_social="Cliente real apos limpeza",
+                    cpf_cnpj="22.222.222/0001-22",
+                )
+
+            call_command(
+                "remover_dados_ficticios_demo1",
+                confirm="REMOVER-DADOS-FICTICIOS demo1",
+                stdout=second_stdout,
+                verbosity=0,
+            )
+
+        self.assertEqual(clear_cache.call_count, 2)
+        self.assertIn("Dados ficticios removidos", first_stdout.getvalue())
+        self.assertIn("cache_pendente=sim", first_stdout.getvalue())
+        self.assertIn("limpeza do banco foi concluida", first_stderr.getvalue())
+        self.assertIn("ja esta sem dados ficticios", second_stdout.getvalue())
+        self.assertIn("chaves_cache=3", second_stdout.getvalue())
+        with schema_context("demo1"):
+            self.assertTrue(Cliente.objects.filter(pk=real_client.pk).exists())
 
     def test_expiracao_remove_sessao_cache_token_e_desativa_usuario(self):
         _public_client, lease_response = self._lease()
