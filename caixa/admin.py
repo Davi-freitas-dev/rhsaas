@@ -148,6 +148,7 @@ from .models_custo_fixo import (
 )
 from .models_custos_extras import EventoCustoExtra, OrcamentoCustoExtra
 from .models_servidores import (
+    HistoricoJornadaMensalServidor,
     HistoricoSalarialServidor,
     ParticipacaoServidorEvento,
     Servidor,
@@ -1980,6 +1981,7 @@ class ServidorAdmin(SimpleHistoryAdmin, AuditoriaAdmin):
     readonly_fields = (
         "tipo_vinculo",
         "salario_mensal",
+        "carga_horaria_mensal",
         "criado_em",
         "atualizado_em",
         "criado_por",
@@ -2021,6 +2023,7 @@ class ServidorAdmin(SimpleHistoryAdmin, AuditoriaAdmin):
                 if campo
                 not in {
                     "salario_mensal",
+                    "carga_horaria_mensal",
                     "data_inicio_contrato",
                     "data_fim_contrato",
                     "dia_pagamento_salario",
@@ -2079,6 +2082,33 @@ class HistoricoSalarialServidorAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
     search_fields = ("servidor_nome_snapshot", "servidor__nome")
     readonly_fields = [
         campo.name for campo in HistoricoSalarialServidor._meta.fields
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_view_permission(self, request, obj=None):
+        return request.user.has_perm(VIEW_SERVER_SALARY_PERMISSION)
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(HistoricoJornadaMensalServidor)
+class HistoricoJornadaMensalServidorAdmin(SimpleHistoryAdmin, admin.ModelAdmin):
+    list_display = (
+        "servidor_nome_snapshot",
+        "horas_mensais",
+        "data_inicio",
+        "data_fim",
+    )
+    list_filter = ("data_inicio", "data_fim")
+    search_fields = ("servidor_nome_snapshot", "servidor__nome")
+    readonly_fields = [
+        campo.name for campo in HistoricoJornadaMensalServidor._meta.fields
     ]
 
     def has_add_permission(self, request):

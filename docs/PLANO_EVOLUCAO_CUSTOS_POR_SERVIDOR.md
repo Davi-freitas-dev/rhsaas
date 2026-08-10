@@ -1,6 +1,7 @@
 # Plano vivo — custos por servidor
 
-Status: fases 1–3 implementadas e validadas; fase 4 em andamento
+Status: fases 1–3 e pré-requisito de jornada da fase 4 implementados e
+validados; alocação da fase 4 bloqueada por ausência de horas aprovadas
 
 Última revisão: 2026-08-09
 
@@ -81,16 +82,18 @@ O mensalista possui hoje:
 
 - salário mensal;
 - data de vigência do salário e histórico salarial;
+- carga horária mensal contratada opcional, sem valor padrão, e histórico de
+  vigências da jornada;
 - início e fim do contrato;
 - dia de pagamento;
 - data de início da automação/materialização salarial;
 - serviços aos quais está vinculado.
 
-Não existe campo de jornada diária, carga horária semanal ou quantidade de
-horas mensais contratadas. O valor `horas_base_diaria_snapshot`, atualmente com
-padrão 8, pertence à participação/rateio do serviço no evento. Ele não é uma
-jornada contratual do mensalista e não pode ser reutilizado silenciosamente
-como tal.
+Não existe campo de jornada diária ou carga horária semanal. A carga mensal
+nova permanece `null` nos dados legados até ser informada explicitamente. O
+valor `horas_base_diaria_snapshot`, atualmente com padrão 8, pertence à
+participação/rateio do serviço no evento. Ele não é uma jornada contratual do
+mensalista e não pode ser reutilizado silenciosamente como tal.
 
 Ao criar ou editar um mensalista, o backend:
 
@@ -382,6 +385,29 @@ silenciosamente. Os guardrails diretamente relevantes foram executados de forma
 isolada: responsividade financeira, layout de filtros, acessibilidade e fronteira
 de serviços passaram.
 
+### P1 — não existe aprovação confiável das horas de mensalistas
+
+Achado na Fase 4: `ServidorEventoDiaTrabalhado.quantidade_horas` é opcional e
+não possui estado, autoria ou fluxo de aprovação. O status `concluido` do
+evento apenas bloqueia alterações posteriores; a API permite selecionar esse
+status diretamente, sem validar nem aprovar os apontamentos. Portanto, nem a
+existência de horas nem a conclusão do evento constituem evidência de horas
+aprovadas.
+
+Decisão: a alocação salarial da Fase 4 permanece bloqueada. Não usar horas
+nulas, `ParticipacaoServidorEvento.quantidade_horas`, oito horas por dia ou
+evento concluído como substitutos heurísticos. A continuação exige uma decisão
+de produto e uma modelagem explícita de apontamento/aprovação, com auditoria e
+regra de fechamento.
+
+### P2 — férias e afastamentos não estão modelados
+
+Não foi encontrado modelo determinístico de férias, licença ou afastamento que
+permita ajustar jornada/custo mensal. A carga mensal histórica não tenta
+representar essas ocorrências. A futura alocação deve permanecer indisponível
+nesses casos até existir modelagem própria; nenhum rateio proporcional foi
+inventado.
+
 ## Contrato recomendado da API
 
 Fazer uma evolução aditiva primeiro. Manter `totalPeriod` por uma janela de
@@ -523,18 +549,39 @@ custo no evento = custo-hora mensal × horas aprovadas no evento
 
 Requisitos antes de implementar:
 
-- [ ] definir o que compõe o custo mensal: salário ou salário + encargos;
-- [ ] cadastrar jornada/carga horária com vigência histórica;
-- [ ] definir tratamento de férias, afastamentos e mês parcial;
-- [ ] usar horas efetivamente registradas/aprovadas no evento;
+- [x] definir o que compõe o custo mensal: salário materializado, sem encargos
+  implícitos (D07);
+- [x] cadastrar jornada/carga horária com vigência histórica;
+- [x] definir que férias, afastamentos e mês parcial não serão inferidos sem
+  modelagem própria;
+- [ ] usar horas efetivamente registradas/aprovadas no evento — **bloqueado**:
+  o modelo atual não possui aprovação de horas;
 - [ ] materializar snapshots da regra, jornada e valor usados;
 - [ ] mostrar custo não alocado/ociosidade, sem forçar 100% do salário nos
   eventos;
 - [ ] garantir que a apropriação seja somente analítica;
 - [ ] garantir que ela nunca seja somada novamente ao custo total da equipe.
 
-Esta fase provavelmente exige migration, pois a jornada contratada não existe
-no modelo atual. Não reutilizar o padrão de 8 horas de uma participação.
+#### Fase 4A — jornada mensal contratada (concluída)
+
+- [x] campo opcional, exclusivo de mensalista, entre `0,01` e `744,00` horas;
+- [x] ausência preservada como `null`, inclusive para todos os dados legados;
+- [x] vigências históricas sem sobreposição, com autoria e snapshots de id/nome;
+- [x] atualização serializada pelo lock do servidor e histórico preservado após
+  exclusão do cadastro;
+- [x] leitura e escrita protegidas pelas mesmas permissões salariais;
+- [x] formulário sem sugestão nem fallback de oito horas;
+- [x] contrato backend/frontend e OpenAPI aditivos;
+- [x] migration `0047_jornada_mensal_servidores` revisada e validada para
+  aplicação forward em schemas de teste.
+
+#### Fase 4B — salários alocados aos eventos (bloqueada)
+
+A fórmula conceitual não foi implementada porque o pré-requisito expresso no
+plano não é satisfeito: o modelo atual não fornece horas confiáveis/aprovadas.
+Adicionar um fluxo de aprovação seria uma nova decisão de produto, não uma
+inferência técnica segura. Enquanto isso, o card de apropriação continua oculto,
+nenhum snapshot de alocação é criado e nenhuma escrita financeira nova ocorre.
 
 ## Matriz mínima de testes
 
@@ -556,6 +603,11 @@ no modelo atual. Não reutilizar o padrão de 8 horas de uma participação.
 - [ ] arredondamento monetário e soma de muitas linhas;
 - [ ] quantidade de queries constante para volumes maiores.
 - [x] período superior a 120 meses não executa varredura mensal ilimitada.
+- [x] jornada mensal sem padrão, limites, vínculo permitido e dados legados
+  nulos;
+- [x] criação, alteração, encerramento e sobreposição de vigências de jornada;
+- [x] alterações simultâneas preservam somente uma vigência de jornada aberta;
+- [x] exclusão preserva snapshots da jornada.
 
 ### Backend — API e segurança
 
@@ -567,6 +619,8 @@ no modelo atual. Não reutilizar o padrão de 8 horas de uma participação.
 - [x] validação 400 de cada filtro inválido;
 - [x] schema OpenAPI atualizado com enum canônico;
 - [x] isolamento entre dois tenants com salários sentinela distintos.
+- [x] jornada oculta sem permissão salarial e tentativa de alteração preservada;
+- [x] jornadas sentinela distintas permanecem isoladas em dois tenants.
 
 ### Frontend
 
@@ -580,6 +634,7 @@ no modelo atual. Não reutilizar o padrão de 8 horas de uma participação.
 - [x] detalhamento de diarista, mensalista, excluído e mudança de vínculo;
 - [x] fixture diretamente relacionada corrigida para contagens e totais consistentes;
 - [ ] E2E com backend real para pelo menos um cenário misto.
+- [x] cadastro E2E de jornada explícita sem sugestão de oito horas.
 
 ### Regressão financeira
 
@@ -651,6 +706,9 @@ nas bases financeira ou temporal exigem nova decisão registrada neste arquivo.
 | D10 | Mudanças históricas de vínculo aparecem em um único grupo `MIXED`, com `linkTypes` e vínculo em cada participação. | fechada |
 | D11 | Filtros inválidos, desconhecidos ou repetidos retornam 400; ids inexistentes válidos continuam produzindo conjunto vazio. | fechada |
 | D12 | `materializedSalaryOccurrence` é a origem canônica; `source` legado permanece como alias temporário. | fechada |
+| D13 | A jornada mensal é opcional, sem padrão, histórica e protegida como dado salarial; legado permanece `null`. | fechada |
+| D14 | Não alocar salário sem um fluxo explícito de horas aprovadas; evento concluído e horas agregadas não substituem aprovação. | bloqueia a Fase 4B |
+| D15 | Férias, afastamentos e mês parcial não serão inferidos enquanto não houver modelagem determinística própria. | fechada como limitação |
 
 ### Regras semânticas fechadas
 
@@ -682,3 +740,5 @@ nas bases financeira ou temporal exigem nova decisão registrada neste arquivo.
 | 2026-08-09 | guardrail agregado documentado | achado P3 externo ao diff mantido fora do escopo; quatro checks relevantes passaram isoladamente |
 | 2026-08-09 | primeira evolução implementada e revisada | contrato aditivo no backend, três cards no frontend, testes direcionados verdes e nenhuma migration gerada |
 | 2026-08-09 | Fase 3 concluída | filtros estritos, bases observáveis, vínculo `MIXED`, situação atual explícita e origem canônica; 16 testes backend e E2E direcionado verdes, sem migration |
+| 2026-08-09 | Fase 4A concluída | jornada mensal opcional com vigência, permissões, concorrência, snapshots, isolamento entre tenants e migration `0047`; checks backend, OpenAPI, TypeScript, lint, build e E2E verdes |
+| 2026-08-09 | Fase 4B auditada e bloqueada | horas por dia são opcionais e não aprovadas; conclusão do evento não aprova apontamentos; nenhuma fórmula, heurística ou escrita financeira foi criada |

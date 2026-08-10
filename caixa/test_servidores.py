@@ -50,6 +50,7 @@ from .models_custo_fixo import (
 )
 from .models_pagamentos import PagamentoEventoCustoExtra, PagamentoEventoCustoServico
 from .models_servidores import (
+    HistoricoJornadaMensalServidor,
     HistoricoSalarialServidor,
     ParticipacaoServidorEvento,
     Servidor,
@@ -201,6 +202,7 @@ class ConcorrenciaSalarialPostgreSQLTests(
                 91,
                 tipo_vinculo=Servidor.VINCULO_MENSALISTA,
                 salario_mensal=Decimal("1000.00"),
+                carga_horaria_mensal=Decimal("160.00"),
                 data_inicio_contrato=date(2026, 7, 1),
                 dia_pagamento_salario=5,
                 data_autorizacao_custo_salarial=(
@@ -210,6 +212,7 @@ class ConcorrenciaSalarialPostgreSQLTests(
             servicos_ids=[self.servico.pk],
             usuario=self.usuario,
             data_vigencia_salario=date(2026, 7, 1),
+            data_vigencia_jornada=date(2026, 7, 1),
         )
 
     def test_alteracoes_salariais_simultaneas_preservam_uma_vigencia_aberta(self):
@@ -284,6 +287,48 @@ class ConcorrenciaSalarialPostgreSQLTests(
             ).count(),
             1,
         )
+
+    def test_alteracoes_de_jornada_simultaneas_preservam_uma_vigencia_aberta(self):
+        servidor = self.criar_mensalista(autorizado=False)
+
+        def alterar(horas):
+            def operacao():
+                servidor_thread = Servidor.objects.get(pk=servidor.pk)
+                usuario_thread = get_user_model().objects.get(pk=self.usuario.pk)
+                atualizado = atualizar_servidor(
+                    servidor_thread,
+                    dados={"carga_horaria_mensal": horas},
+                    servicos_ids=[self.servico.pk],
+                    usuario=usuario_thread,
+                    data_vigencia_jornada=date(2026, 8, 1),
+                )
+                return atualizado.carga_horaria_mensal
+
+            return operacao
+
+        resultados = self.executar_em_paralelo(
+            [alterar(Decimal("176.00")), alterar(Decimal("180.00"))]
+        )
+
+        servidor.refresh_from_db()
+        vigencias = list(
+            HistoricoJornadaMensalServidor.objects.filter(
+                servidor=servidor
+            ).order_by("data_inicio", "id")
+        )
+        self.assertEqual(len(vigencias), 2)
+        self.assertEqual(vigencias[0].data_fim, date(2026, 7, 31))
+        self.assertEqual(vigencias[1].data_inicio, date(2026, 8, 1))
+        self.assertIsNone(vigencias[1].data_fim)
+        self.assertEqual(
+            HistoricoJornadaMensalServidor.objects.filter(
+                servidor=servidor,
+                data_fim__isnull=True,
+            ).count(),
+            1,
+        )
+        self.assertEqual(servidor.carga_horaria_mensal, vigencias[1].horas_mensais)
+        self.assertIn(servidor.carga_horaria_mensal, resultados)
 
 
 class ServidoresDominioTests(ServidoresFixtureMixin, TenantAppTestCase):
@@ -1193,6 +1238,108 @@ class CustosPorServidorEvolucaoTests(ServidoresFixtureMixin, TenantAppTestCase):
             )
 
 
+class JornadaMensalServidorTests(ServidoresFixtureMixin, TenantAppTestCase):
+    def dados_mensalista(self, indice, jornada):
+        return self.dados_servidor(
+            indice,
+            tipo_vinculo=Servidor.VINCULO_MENSALISTA,
+            salario_mensal=Decimal("3000.00"),
+            carga_horaria_mensal=jornada,
+        )
+
+    def test_jornada_sem_default_cria_e_fecha_vigencias_explicitas(self):
+        sem_jornada = criar_servidor(
+            dados=self.dados_mensalista(220, None),
+            servicos_ids=[self.servico.id],
+            usuario=self.usuario,
+            data_vigencia_salario=date(2026, 1, 1),
+        )
+        self.assertIsNone(sem_jornada.carga_horaria_mensal)
+        self.assertFalse(
+            HistoricoJornadaMensalServidor.objects.filter(
+                servidor=sem_jornada
+            ).exists()
+        )
+
+        servidor = criar_servidor(
+            dados=self.dados_mensalista(221, Decimal("160.00")),
+            servicos_ids=[self.servico.id],
+            usuario=self.usuario,
+            data_vigencia_salario=date(2026, 1, 1),
+            data_vigencia_jornada=date(2026, 1, 1),
+        )
+        atualizar_servidor(
+            servidor,
+            dados=self.dados_mensalista(221, Decimal("176.00")),
+            servicos_ids=[self.servico.id],
+            usuario=self.usuario,
+            data_vigencia_salario=date(2026, 1, 1),
+            data_vigencia_jornada=date(2026, 7, 1),
+        )
+        vigencias = list(
+            HistoricoJornadaMensalServidor.objects.filter(
+                servidor=servidor
+            ).order_by("data_inicio")
+        )
+        self.assertEqual(len(vigencias), 2)
+        self.assertEqual(vigencias[0].horas_mensais, Decimal("160.00"))
+        self.assertEqual(vigencias[0].data_fim, date(2026, 6, 30))
+        self.assertEqual(vigencias[1].horas_mensais, Decimal("176.00"))
+        self.assertIsNone(vigencias[1].data_fim)
+
+    def test_jornada_valida_limites_vinculo_e_sobreposicao(self):
+        for indice, jornada in ((222, Decimal("0.00")), (223, Decimal("744.01"))):
+            with self.subTest(jornada=jornada), self.assertRaises(ValidationError):
+                criar_servidor(
+                    dados=self.dados_mensalista(indice, jornada),
+                    servicos_ids=[self.servico.id],
+                    usuario=self.usuario,
+                )
+        with self.assertRaises(ValidationError):
+            criar_servidor(
+                dados=self.dados_servidor(
+                    224,
+                    carga_horaria_mensal=Decimal("160.00"),
+                ),
+                servicos_ids=[self.servico.id],
+                usuario=self.usuario,
+            )
+
+        servidor = criar_servidor(
+            dados=self.dados_mensalista(225, Decimal("160.00")),
+            servicos_ids=[self.servico.id],
+            usuario=self.usuario,
+            data_vigencia_jornada=date(2026, 1, 1),
+        )
+        sobreposta = HistoricoJornadaMensalServidor(
+            servidor=servidor,
+            servidor_id_snapshot=servidor.pk,
+            servidor_nome_snapshot=servidor.nome,
+            horas_mensais=Decimal("180.00"),
+            data_inicio=date(2026, 6, 1),
+        )
+        with self.assertRaises(ValidationError):
+            sobreposta.full_clean()
+
+    def test_exclusao_preserva_snapshot_da_jornada(self):
+        servidor = criar_servidor(
+            dados=self.dados_mensalista(226, Decimal("160.00")),
+            servicos_ids=[self.servico.id],
+            usuario=self.usuario,
+            data_vigencia_jornada=date(2026, 1, 1),
+        )
+        referencia = servidor.pk
+        nome = servidor.nome
+        excluir_servidor(servidor, usuario=self.usuario)
+
+        historico = HistoricoJornadaMensalServidor.objects.get(
+            servidor_id_snapshot=referencia
+        )
+        self.assertIsNone(historico.servidor_id)
+        self.assertEqual(historico.servidor_nome_snapshot, nome)
+        self.assertEqual(historico.horas_mensais, Decimal("160.00"))
+
+
 class EscalaDiariaServidoresTests(ServidoresFixtureMixin, TenantAppTestCase):
     def ampliar_evento(self, data_fim=date(2026, 7, 22)):
         self.evento.data_fim = data_fim
@@ -1682,6 +1829,97 @@ class ServidoresApiTests(ServidoresFixtureMixin, TenantAppTestCase):
         self.assertEqual(atualizado.status_code, 200)
         excluido = self.client.delete(detalhe, HTTP_X_CSRFTOKEN=self.csrf)
         self.assertEqual(excluido.status_code, 204)
+
+    def test_api_cadastra_e_altera_jornada_mensal_com_vigencia(self):
+        payload = {
+            **self.payload(219),
+            "linkType": "MENSALISTA",
+            "monthlySalary": "3200.00",
+            "monthlyWorkloadHours": "160.00",
+            "salaryEffectiveDate": "2026-01-01",
+            "workloadEffectiveDate": "2026-01-01",
+        }
+        resposta = self.client.post(
+            reverse("caixa:api_servidores"),
+            payload,
+            content_type="application/json",
+            HTTP_X_CSRFTOKEN=self.csrf,
+        )
+        self.assertEqual(resposta.status_code, 201, resposta.content)
+        item = resposta.json()["data"]["server"]
+        self.assertEqual(item["monthlyWorkloadHours"], "160.00")
+        servidor = Servidor.objects.get(pk=item["id"])
+        self.assertEqual(
+            HistoricoJornadaMensalServidor.objects.get(
+                servidor=servidor
+            ).data_inicio,
+            date(2026, 1, 1),
+        )
+
+        payload["monthlyWorkloadHours"] = "176.00"
+        payload["workloadEffectiveDate"] = "2026-07-01"
+        atualizada = self.client.put(
+            reverse("caixa:api_servidor_detalhe", args=[servidor.pk]),
+            payload,
+            content_type="application/json",
+            HTTP_X_CSRFTOKEN=self.csrf,
+        )
+        self.assertEqual(atualizada.status_code, 200, atualizada.content)
+        self.assertEqual(
+            atualizada.json()["data"]["server"]["monthlyWorkloadHours"],
+            "176.00",
+        )
+        vigencias = list(
+            HistoricoJornadaMensalServidor.objects.filter(
+                servidor=servidor
+            ).order_by("data_inicio")
+        )
+        self.assertEqual(
+            [(item.horas_mensais, item.data_inicio, item.data_fim) for item in vigencias],
+            [
+                (Decimal("160.00"), date(2026, 1, 1), date(2026, 6, 30)),
+                (Decimal("176.00"), date(2026, 7, 1), None),
+            ],
+        )
+
+    def test_cliente_legado_pode_mudar_mensalista_para_diarista_sem_novo_campo(self):
+        payload = {
+            **self.payload(218),
+            "linkType": "MENSALISTA",
+            "monthlySalary": "3200.00",
+            "monthlyWorkloadHours": "160.00",
+            "salaryEffectiveDate": "2026-01-01",
+            "workloadEffectiveDate": "2026-01-01",
+        }
+        criada = self.client.post(
+            reverse("caixa:api_servidores"),
+            payload,
+            content_type="application/json",
+            HTTP_X_CSRFTOKEN=self.csrf,
+        )
+        self.assertEqual(criada.status_code, 201, criada.content)
+        servidor_id = criada.json()["data"]["server"]["id"]
+
+        payload["linkType"] = "DIARISTA"
+        payload["monthlySalary"] = None
+        payload["salaryEffectiveDate"] = "2026-08-01"
+        payload.pop("monthlyWorkloadHours")
+        payload.pop("workloadEffectiveDate")
+        atualizada = self.client.put(
+            reverse("caixa:api_servidor_detalhe", args=[servidor_id]),
+            payload,
+            content_type="application/json",
+            HTTP_X_CSRFTOKEN=self.csrf,
+        )
+
+        self.assertEqual(atualizada.status_code, 200, atualizada.content)
+        servidor = Servidor.objects.get(pk=servidor_id)
+        self.assertEqual(servidor.tipo_vinculo, Servidor.VINCULO_DIARISTA)
+        self.assertIsNone(servidor.carga_horaria_mensal)
+        historico = HistoricoJornadaMensalServidor.objects.get(
+            servidor=servidor
+        )
+        self.assertEqual(historico.data_fim, date(2026, 7, 31))
 
     def test_socio_diarista_altera_somente_apresentacao(self):
         payload = {
@@ -2228,6 +2466,7 @@ class ServidoresApiTests(ServidoresFixtureMixin, TenantAppTestCase):
                 email="restrito@example.com",
                 tipo_vinculo=Servidor.VINCULO_MENSALISTA,
                 salario_mensal=Decimal("2200.00"),
+                carga_horaria_mensal=Decimal("160.00"),
             ),
             servicos_ids=[self.servico.id],
             usuario=self.usuario,
@@ -2246,6 +2485,7 @@ class ServidoresApiTests(ServidoresFixtureMixin, TenantAppTestCase):
         self.assertEqual(item["phone"], "")
         self.assertEqual(item["notes"], "")
         self.assertIsNone(item["monthlySalary"])
+        self.assertIsNone(item["monthlyWorkloadHours"])
         self.assertEqual(client.get(reverse("caixa:api_custos_por_servidor")).status_code, 403)
 
     def test_edicao_sem_permissao_salarial_preserva_salario(self):
@@ -2255,6 +2495,7 @@ class ServidoresApiTests(ServidoresFixtureMixin, TenantAppTestCase):
                 observacoes="Anotação confidencial",
                 tipo_vinculo=Servidor.VINCULO_MENSALISTA,
                 salario_mensal=Decimal("2300.00"),
+                carga_horaria_mensal=Decimal("160.00"),
             ),
             servicos_ids=[self.servico.id],
             usuario=self.usuario,
@@ -2274,6 +2515,8 @@ class ServidoresApiTests(ServidoresFixtureMixin, TenantAppTestCase):
             "document": mensalista.documento_mascarado,
             "linkType": "MENSALISTA",
             "monthlySalary": None,
+            "monthlyWorkloadHours": "300.00",
+            "workloadEffectiveDate": "2026-08-01",
         })
         resposta = client.put(
             reverse("caixa:api_servidor_detalhe", args=[mensalista.id]),
@@ -2285,6 +2528,13 @@ class ServidoresApiTests(ServidoresFixtureMixin, TenantAppTestCase):
         mensalista.refresh_from_db()
         self.assertEqual(mensalista.nome, "Mensalista atualizado")
         self.assertEqual(mensalista.salario_mensal, Decimal("2300.00"))
+        self.assertEqual(mensalista.carga_horaria_mensal, Decimal("160.00"))
+        self.assertEqual(
+            HistoricoJornadaMensalServidor.objects.get(
+                servidor=mensalista
+            ).horas_mensais,
+            Decimal("160.00"),
+        )
         self.assertEqual(mensalista.observacoes, "Anotação confidencial")
 
     def test_salario_aparece_em_custo_fixo_sem_linha_editavel_duplicada(self):
@@ -2733,7 +2983,7 @@ class ServidoresIsolamentoMultiTenantTests(MultiTenantTestCase):
             "tenant-custos-servidores-b.localhost",
         )
 
-        def criar_cenario(sufixo, salario):
+        def criar_cenario(sufixo, salario, jornada):
             usuario = get_user_model().objects.create_superuser(
                 username=f"custos-servidores-{sufixo}",
                 email=f"{sufixo}@example.com",
@@ -2753,6 +3003,7 @@ class ServidoresIsolamentoMultiTenantTests(MultiTenantTestCase):
                     "documento": "12345678901",
                     "tipo_vinculo": Servidor.VINCULO_MENSALISTA,
                     "salario_mensal": Decimal(salario),
+                    "carga_horaria_mensal": Decimal(jornada),
                     "data_inicio_contrato": date(2026, 7, 1),
                     "dia_pagamento_salario": 5,
                     "data_autorizacao_custo_salarial": date(2026, 7, 1),
@@ -2760,29 +3011,42 @@ class ServidoresIsolamentoMultiTenantTests(MultiTenantTestCase):
                 servicos_ids=[servico.pk],
                 usuario=usuario,
                 data_vigencia_salario=date(2026, 7, 1),
+                data_vigencia_jornada=date(2026, 7, 1),
             )
             return usuario
 
         with self.in_schema(self.primary_tenant.schema_name):
-            usuario_a = criar_cenario("tenant-a", "1234.00")
+            usuario_a = criar_cenario("tenant-a", "1234.00", "160.00")
             resumo_a = custos_por_servidor(
                 data_inicial=date(2026, 7, 1),
                 data_final=date(2026, 7, 31),
                 usuario=usuario_a,
             )["summary"]
+            jornadas_a = list(
+                HistoricoJornadaMensalServidor.objects.values_list(
+                    "horas_mensais", flat=True
+                )
+            )
 
         with self.in_schema(tenant_b.schema_name):
-            usuario_b = criar_cenario("tenant-b", "9876.00")
+            usuario_b = criar_cenario("tenant-b", "9876.00", "176.00")
             resumo_b = custos_por_servidor(
                 data_inicial=date(2026, 7, 1),
                 data_final=date(2026, 7, 31),
                 usuario=usuario_b,
             )["summary"]
+            jornadas_b = list(
+                HistoricoJornadaMensalServidor.objects.values_list(
+                    "horas_mensais", flat=True
+                )
+            )
 
         self.assertEqual(resumo_a["monthlySalaryTotal"], "1234.00")
         self.assertEqual(resumo_a["teamCostTotal"], "1234.00")
         self.assertEqual(resumo_b["monthlySalaryTotal"], "9876.00")
         self.assertEqual(resumo_b["teamCostTotal"], "9876.00")
+        self.assertEqual(jornadas_a, [Decimal("160.00")])
+        self.assertEqual(jornadas_b, [Decimal("176.00")])
 
     def test_documento_repetido_por_tenant_e_api_sem_vazamento(self):
         tenant_b, _ = self.create_tenant(

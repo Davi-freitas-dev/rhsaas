@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from .models import Evento, Servico
 from .models_servidores import (
+    HistoricoJornadaMensalServidor,
     HistoricoSalarialServidor,
     ParticipacaoServidorEvento,
     Servidor,
@@ -153,8 +154,102 @@ def _sincronizar_historico_salarial(
     nova.save()
 
 
+def _fechar_vigencia_jornada(vigencia, data_fim, usuario):
+    if data_fim < vigencia.data_inicio:
+        vigencia._history_user = usuario
+        vigencia.delete()
+        return
+    vigencia.data_fim = data_fim
+    _atribuir_autoria(vigencia, usuario)
+    vigencia.full_clean()
+    vigencia.save(update_fields=["data_fim", "atualizado_por", "atualizado_em"])
+
+
+def _sincronizar_historico_jornada(
+    servidor,
+    *,
+    jornada_anterior,
+    vinculo_anterior,
+    data_vigencia,
+    usuario,
+):
+    mudou = (
+        jornada_anterior != servidor.carga_horaria_mensal
+        or vinculo_anterior != servidor.tipo_vinculo
+    )
+    if not mudou:
+        return
+
+    atual = (
+        HistoricoJornadaMensalServidor.objects.select_for_update()
+        .filter(servidor=servidor, data_fim__isnull=True)
+        .order_by("-data_inicio", "-id")
+        .first()
+    )
+    jornada = (
+        servidor.carga_horaria_mensal
+        if servidor.tipo_vinculo == Servidor.VINCULO_MENSALISTA
+        else None
+    )
+    if jornada is None:
+        if atual:
+            _fechar_vigencia_jornada(
+                atual,
+                data_vigencia - timedelta(days=1),
+                usuario,
+            )
+        return
+
+    if atual and data_vigencia < atual.data_inicio:
+        raise ValidationError(
+            {
+                "workloadEffectiveDate": (
+                    "A nova vigência não pode ser anterior à vigência de jornada atual."
+                )
+            }
+        )
+    if atual and atual.data_inicio == data_vigencia:
+        atual.horas_mensais = jornada
+        atual.servidor_nome_snapshot = servidor.nome
+        _atribuir_autoria(atual, usuario)
+        atual.full_clean()
+        atual.save(
+            update_fields=[
+                "horas_mensais",
+                "servidor_nome_snapshot",
+                "atualizado_por",
+                "atualizado_em",
+            ]
+        )
+        return
+    if atual:
+        _fechar_vigencia_jornada(
+            atual,
+            data_vigencia - timedelta(days=1),
+            usuario,
+        )
+
+    nova = HistoricoJornadaMensalServidor(
+        servidor=servidor,
+        servidor_nome_snapshot=servidor.nome,
+        servidor_id_snapshot=servidor.id,
+        horas_mensais=jornada,
+        data_inicio=data_vigencia,
+    )
+    _atribuir_autoria(nova, usuario, criado=True)
+    nova.full_clean()
+    nova.save()
+
+
 @transaction.atomic
-def criar_servidor(*, dados, servicos_ids, usuario, data_vigencia_salario=None):
+def criar_servidor(
+    *,
+    dados,
+    servicos_ids,
+    usuario,
+    data_vigencia_salario=None,
+    data_vigencia_jornada=None,
+):
     servidor = Servidor(**dados)
     _atribuir_autoria(servidor, usuario, criado=True)
     servidor.full_clean()
@@ -169,6 +264,17 @@ def criar_servidor(*, dados, servicos_ids, usuario, data_vigencia_salario=None):
         salario_anterior=None,
         vinculo_anterior=None,
         data_vigencia=data_vigencia_salario or timezone.localdate(),
+        usuario=usuario,
+    )
+    _sincronizar_historico_jornada(
+        servidor,
+        jornada_anterior=None,
+        vinculo_anterior=None,
+        data_vigencia=(
+            data_vigencia_jornada
+            or data_vigencia_salario
+            or timezone.localdate()
+        ),
         usuario=usuario,
     )
     sincronizar_plano_salarial(
@@ -187,9 +293,11 @@ def atualizar_servidor(
     servicos_ids,
     usuario,
     data_vigencia_salario=None,
+    data_vigencia_jornada=None,
 ):
     servidor = Servidor.objects.select_for_update().get(pk=servidor.pk)
     salario_anterior = servidor.salario_mensal
+    jornada_anterior = servidor.carga_horaria_mensal
     vinculo_anterior = servidor.tipo_vinculo
     for campo, valor in dados.items():
         setattr(servidor, campo, valor)
@@ -206,6 +314,17 @@ def atualizar_servidor(
         salario_anterior=salario_anterior,
         vinculo_anterior=vinculo_anterior,
         data_vigencia=data_vigencia_salario or timezone.localdate(),
+        usuario=usuario,
+    )
+    _sincronizar_historico_jornada(
+        servidor,
+        jornada_anterior=jornada_anterior,
+        vinculo_anterior=vinculo_anterior,
+        data_vigencia=(
+            data_vigencia_jornada
+            or data_vigencia_salario
+            or timezone.localdate()
+        ),
         usuario=usuario,
     )
     sincronizar_plano_salarial(
@@ -258,6 +377,18 @@ def excluir_servidor(servidor, *, usuario):
         HistoricoSalarialServidor.objects.select_for_update().filter(servidor=servidor)
     )
     for historico in historicos_salariais:
+        historico.servidor_nome_snapshot = servidor.nome
+        _atribuir_autoria(historico, usuario)
+        historico.save(
+            update_fields=["servidor_nome_snapshot", "atualizado_por", "atualizado_em"]
+        )
+
+    historicos_jornada = list(
+        HistoricoJornadaMensalServidor.objects.select_for_update().filter(
+            servidor=servidor
+        )
+    )
+    for historico in historicos_jornada:
         historico.servidor_nome_snapshot = servidor.nome
         _atribuir_autoria(historico, usuario)
         historico.save(

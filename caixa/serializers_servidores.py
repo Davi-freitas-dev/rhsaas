@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from .models_servidores import Servidor
@@ -27,7 +29,16 @@ class ServidorPayloadSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
     )
+    monthlyWorkloadHours = serializers.DecimalField(
+        max_digits=7,
+        decimal_places=2,
+        min_value=Decimal("0.01"),
+        max_value=Decimal("744.00"),
+        required=False,
+        allow_null=True,
+    )
     salaryEffectiveDate = serializers.DateField(required=False)
+    workloadEffectiveDate = serializers.DateField(required=False)
     contractStartDate = serializers.DateField(required=False, allow_null=True)
     contractEndDate = serializers.DateField(required=False, allow_null=True)
     salaryPaymentDay = serializers.IntegerField(
@@ -58,6 +69,17 @@ class ServidorPayloadSerializer(serializers.Serializer):
                 {"monthlySalary": "Diarista não deve possuir salário mensal."}
             )
         if (
+            attrs["linkType"] != Servidor.VINCULO_MENSALISTA
+            and attrs.get("monthlyWorkloadHours") is not None
+        ):
+            raise serializers.ValidationError(
+                {
+                    "monthlyWorkloadHours": (
+                        "Jornada mensal contratada é exclusiva de mensalistas."
+                    )
+                }
+            )
+        if (
             attrs.get("contractStartDate")
             and attrs.get("contractEndDate")
             and attrs["contractEndDate"] < attrs["contractStartDate"]
@@ -83,6 +105,7 @@ class ServidorPayloadSerializer(serializers.Serializer):
             "tipo_vinculo": dados["linkType"],
             "exibir_como_socio": dados.get("displayAsPartner", False),
             "salario_mensal": dados.get("monthlySalary"),
+            "carga_horaria_mensal": dados.get("monthlyWorkloadHours"),
             "data_inicio_contrato": dados.get("contractStartDate"),
             "data_fim_contrato": dados.get("contractEndDate"),
             "dia_pagamento_salario": dados.get("salaryPaymentDay"),
@@ -110,6 +133,11 @@ def serializar_servidor(servidor, *, pode_ver_salario=False, pode_ver_sensiveis=
         "monthlySalary": (
             f"{servidor.salario_mensal:.2f}"
             if pode_ver_salario and servidor.salario_mensal is not None
+            else None
+        ),
+        "monthlyWorkloadHours": (
+            f"{servidor.carga_horaria_mensal:.2f}"
+            if pode_ver_salario and servidor.carga_horaria_mensal is not None
             else None
         ),
         "contractStartDate": (
@@ -176,6 +204,11 @@ class ServidorResponseSerializer(serializers.Serializer):
     )
     monthlySalary = serializers.DecimalField(
         max_digits=12,
+        decimal_places=2,
+        allow_null=True,
+    )
+    monthlyWorkloadHours = serializers.DecimalField(
+        max_digits=7,
         decimal_places=2,
         allow_null=True,
     )

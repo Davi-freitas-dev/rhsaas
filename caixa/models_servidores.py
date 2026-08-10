@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.core.validators import MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models import Q
 from django.db.models.functions import Lower
@@ -60,6 +60,16 @@ class Servidor(models.Model):
         decimal_places=2,
         null=True,
         blank=True,
+    )
+    carga_horaria_mensal = models.DecimalField(
+        max_digits=7,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        validators=[
+            MinValueValidator(Decimal("0.01")),
+            MaxValueValidator(Decimal("744.00")),
+        ],
     )
     data_inicio_contrato = models.DateField(null=True, blank=True, db_index=True)
     data_fim_contrato = models.DateField(null=True, blank=True, db_index=True)
@@ -132,6 +142,24 @@ class Servidor(models.Model):
                 | Q(dia_pagamento_salario__gte=1, dia_pagamento_salario__lte=31),
                 name="ck_servidor_dia_pagamento",
             ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        tipo_vinculo="MENSALISTA",
+                        carga_horaria_mensal__isnull=True,
+                    )
+                    | Q(
+                        tipo_vinculo="MENSALISTA",
+                        carga_horaria_mensal__gt=0,
+                        carga_horaria_mensal__lte=Decimal("744.00"),
+                    )
+                    | Q(
+                        tipo_vinculo="DIARISTA",
+                        carga_horaria_mensal__isnull=True,
+                    )
+                ),
+                name="ck_servidor_jornada_mensal",
+            ),
         ]
         permissions = [
             ("view_salario_servidor", "Pode visualizar salário de servidor"),
@@ -187,6 +215,14 @@ class Servidor(models.Model):
                 1 <= self.dia_pagamento_salario <= 31
             ):
                 erros["dia_pagamento_salario"] = "O dia de pagamento deve estar entre 1 e 31."
+            if self.carga_horaria_mensal is not None and not (
+                Decimal("0.01")
+                <= self.carga_horaria_mensal
+                <= Decimal("744.00")
+            ):
+                erros["carga_horaria_mensal"] = (
+                    "A jornada mensal deve estar entre 0,01 e 744 horas."
+                )
         else:
             if self.salario_mensal is not None:
                 erros["salario_mensal"] = "Diarista não deve possuir salário mensal."
@@ -199,6 +235,10 @@ class Servidor(models.Model):
                 ]
             ):
                 erros["tipo_vinculo"] = "Dados de custo salarial são exclusivos de mensalistas."
+            if self.carga_horaria_mensal is not None:
+                erros["carga_horaria_mensal"] = (
+                    "Jornada mensal contratada é exclusiva de mensalistas."
+                )
 
         if erros:
             raise ValidationError(erros)
@@ -350,6 +390,99 @@ class HistoricoSalarialServidor(models.Model):
             )
             if sobrepostos.exists():
                 erros["data_inicio"] = "Já existe uma vigência salarial sobreposta."
+        if erros:
+            raise ValidationError(erros)
+
+
+class HistoricoJornadaMensalServidor(models.Model):
+    servidor = models.ForeignKey(
+        "Servidor",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="historicos_jornada_mensal",
+    )
+    servidor_nome_snapshot = models.CharField(max_length=150)
+    servidor_id_snapshot = models.PositiveBigIntegerField()
+    horas_mensais = models.DecimalField(
+        max_digits=7,
+        decimal_places=2,
+        validators=[
+            MinValueValidator(Decimal("0.01")),
+            MaxValueValidator(Decimal("744.00")),
+        ],
+    )
+    data_inicio = models.DateField(db_index=True)
+    data_fim = models.DateField(null=True, blank=True, db_index=True)
+    criado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="historicos_jornada_mensal_criados",
+    )
+    atualizado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="historicos_jornada_mensal_atualizados",
+    )
+    criado_em = models.DateTimeField(auto_now_add=True)
+    atualizado_em = models.DateTimeField(auto_now=True)
+    history = HistoricalRecords()
+
+    class Meta:
+        verbose_name = "Histórico de jornada mensal do servidor"
+        verbose_name_plural = "Históricos de jornada mensal dos servidores"
+        ordering = ["-data_inicio", "-id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(horas_mensais__gt=0, horas_mensais__lte=Decimal("744.00")),
+                name="ck_hist_jornada_horas",
+            ),
+            models.CheckConstraint(
+                condition=Q(data_fim__isnull=True)
+                | Q(data_fim__gte=models.F("data_inicio")),
+                name="ck_hist_jornada_periodo",
+            ),
+            models.UniqueConstraint(
+                fields=["servidor_id_snapshot", "data_inicio"],
+                name="uq_hist_jornada_snapshot_inicio",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["servidor", "data_inicio", "data_fim"]),
+            models.Index(
+                fields=["servidor_id_snapshot", "data_inicio", "data_fim"]
+            ),
+        ]
+
+    def __str__(self):
+        nome = self.servidor.nome if self.servidor_id else self.servidor_nome_snapshot
+        return f"{nome} — {self.horas_mensais}h desde {self.data_inicio:%d/%m/%Y}"
+
+    def clean(self):
+        super().clean()
+        self.servidor_nome_snapshot = (self.servidor_nome_snapshot or "").strip()
+        erros = {}
+        if not Decimal("0.01") <= self.horas_mensais <= Decimal("744.00"):
+            erros["horas_mensais"] = (
+                "A jornada mensal deve estar entre 0,01 e 744 horas."
+            )
+        if self.data_fim and self.data_fim < self.data_inicio:
+            erros["data_fim"] = "A data final não pode ser anterior à data inicial."
+        if self.servidor_id_snapshot:
+            sobrepostos = HistoricoJornadaMensalServidor.objects.filter(
+                servidor_id_snapshot=self.servidor_id_snapshot,
+            ).exclude(pk=self.pk)
+            if self.data_fim:
+                sobrepostos = sobrepostos.filter(data_inicio__lte=self.data_fim)
+            sobrepostos = sobrepostos.filter(
+                Q(data_fim__isnull=True) | Q(data_fim__gte=self.data_inicio)
+            )
+            if sobrepostos.exists():
+                erros["data_inicio"] = "Já existe uma vigência de jornada sobreposta."
         if erros:
             raise ValidationError(erros)
 

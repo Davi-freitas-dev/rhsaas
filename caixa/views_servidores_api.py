@@ -83,7 +83,9 @@ def _salvar(request, servidor=None):
         dados_entrada["displayAsPartner"] = servidor.exibir_como_socio
     if servidor is not None and not pode_alterar_salario:
         dados_entrada["monthlySalary"] = servidor.salario_mensal
+        dados_entrada["monthlyWorkloadHours"] = servidor.carga_horaria_mensal
         dados_entrada.pop("salaryEffectiveDate", None)
+        dados_entrada.pop("workloadEffectiveDate", None)
         dados_entrada["contractStartDate"] = servidor.data_inicio_contrato
         dados_entrada["contractEndDate"] = servidor.data_fim_contrato
         dados_entrada["salaryPaymentDay"] = servidor.dia_pagamento_salario
@@ -91,7 +93,13 @@ def _salvar(request, servidor=None):
             servidor.data_autorizacao_custo_salarial
         )
     elif servidor is not None:
+        vinculo_solicitado = dados_entrada.get("linkType", servidor.tipo_vinculo)
         campos_automacao_existentes = {
+            "monthlyWorkloadHours": (
+                servidor.carga_horaria_mensal
+                if vinculo_solicitado == Servidor.VINCULO_MENSALISTA
+                else None
+            ),
             "contractStartDate": servidor.data_inicio_contrato,
             "contractEndDate": servidor.data_fim_contrato,
             "salaryPaymentDay": servidor.dia_pagamento_salario,
@@ -150,6 +158,9 @@ def _salvar(request, servidor=None):
             "servicos_ids": serializer.validated_data["serviceIds"],
             "usuario": request.user,
             "data_vigencia_salario": serializer.validated_data.get("salaryEffectiveDate"),
+            "data_vigencia_jornada": serializer.validated_data.get(
+                "workloadEffectiveDate"
+            ),
         }
         if servidor is None:
             servidor = criar_servidor(**argumentos)
