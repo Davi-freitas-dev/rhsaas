@@ -1,7 +1,7 @@
 # Plano vivo — custos por servidor
 
-Status: fases 1–3 e pré-requisito de jornada da fase 4 implementados e
-validados; alocação da fase 4 bloqueada por ausência de horas aprovadas
+Status: todo o planejamento implementável foi concluído e validado; alocação da
+fase 4 bloqueada por ausência de horas aprovadas
 
 Última revisão: 2026-08-09
 
@@ -354,6 +354,12 @@ Decisão tomada nesta entrega: registrar `ServerCostStateEnum` em
 `SPECTACULAR_SETTINGS.ENUM_NAME_OVERRIDES` e cobrir por teste que os três campos
 referenciam o mesmo componente canônico.
 
+Na revisão global, um teste legado ainda acessava diretamente o nome instável
+`LinkTypeEnum`, embora os campos já referenciem o componente canônico
+`ServerLinkTypeEnum`. O teste foi corrigido para resolver a `$ref` declarada
+pelo próprio campo e validar o enum referenciado. O contrato de produção não
+mudou nessa correção.
+
 ### P3 — nomes de origem divergentes
 
 O item salarial usa `MATERIALIZED_SALARY_OCCURRENCE`, o `meta` usa
@@ -687,6 +693,24 @@ Frontend:
 Para a apropriação futura, também serão envolvidos os modelos, serviços,
 migrations e formulários de cadastro de mensalistas.
 
+## Resumo final da implementação
+
+- Fases 1–3 concluídas: composição explícita dos custos, estados seguros,
+  permissões, filtros estritos e semântica histórica observável.
+- Fase 4A concluída: jornada mensal contratada opcional e histórica, sem padrão
+  e sem reaproveitar as oito horas da participação.
+- Fase 4B não implementável com segurança no modelo atual: faltam horas
+  explicitamente aprovadas e modelagem de férias/afastamentos.
+- Migration criada: `0047_jornada_mensal_servidores`, aditiva, nullable e sem
+  backfill heurístico ou operação de dados.
+- Revisão global: 94 testes Django e 11 E2E de servidores passaram; OpenAPI,
+  TypeScript, ESLint, build de produção e checks Django passaram.
+- Nenhum relatório criou ou alterou custo fixo, obrigação, pagamento,
+  lançamento, participação ou materialização salarial.
+- Não permanecem P0/P1/P2 introduzidos pelos diffs. Permanecem apenas o
+  bloqueio de produto/dados da Fase 4B e o P3 externo do guardrail agregado do
+  dashboard já documentado.
+
 ## Decisões fechadas
 
 Não há decisão funcional pendente para a primeira evolução. Alterações futuras
@@ -742,3 +766,4 @@ nas bases financeira ou temporal exigem nova decisão registrada neste arquivo.
 | 2026-08-09 | Fase 3 concluída | filtros estritos, bases observáveis, vínculo `MIXED`, situação atual explícita e origem canônica; 16 testes backend e E2E direcionado verdes, sem migration |
 | 2026-08-09 | Fase 4A concluída | jornada mensal opcional com vigência, permissões, concorrência, snapshots, isolamento entre tenants e migration `0047`; checks backend, OpenAPI, TypeScript, lint, build e E2E verdes |
 | 2026-08-09 | Fase 4B auditada e bloqueada | horas por dia são opcionais e não aprovadas; conclusão do evento não aprova apontamentos; nenhuma fórmula, heurística ou escrita financeira foi criada |
+| 2026-08-09 | revisão global concluída | 94/94 testes Django e 11/11 E2E de servidores verdes; teste OpenAPI corrigido para seguir a `$ref`; todo o planejamento implementável concluído |

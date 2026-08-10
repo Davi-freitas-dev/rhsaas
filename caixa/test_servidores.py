@@ -2102,7 +2102,14 @@ class ServidoresApiTests(ServidoresFixtureMixin, TenantAppTestCase):
             resposta["properties"]["displayAsPartner"]["type"],
             "boolean",
         )
-        self.assertNotIn("SOCIO", componentes["LinkTypeEnum"]["enum"])
+        referencia_payload = payload["properties"]["linkType"]["$ref"]
+        referencia_resposta = resposta["properties"]["linkType"]["$ref"]
+        self.assertEqual(referencia_payload, referencia_resposta)
+        nome_enum = referencia_payload.rsplit("/", 1)[-1]
+        self.assertEqual(
+            componentes[nome_enum]["enum"],
+            [Servidor.VINCULO_DIARISTA, Servidor.VINCULO_MENSALISTA],
+        )
 
     def test_novo_mensalista_nao_ativa_automacao_silenciosamente(self):
         payload = self.payload(91)
