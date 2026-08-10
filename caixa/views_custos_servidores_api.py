@@ -1,5 +1,4 @@
 from django.utils import timezone
-from django.utils.dateparse import parse_date
 from django.views.decorators.cache import never_cache
 from drf_spectacular.utils import OpenApiParameter, OpenApiTypes, extend_schema
 from rest_framework.decorators import api_view, permission_classes
@@ -14,14 +13,24 @@ from .permissions import (
 )
 from .security_salarios import usuario_pode_acessar_custos_salariais
 from .selectors_custos_servidores import custos_por_servidor
-from .serializers_custos_servidores import CustosPorServidorResponseSerializer
+from .serializers_custos_servidores import (
+    CustosPorServidorQuerySerializer,
+    CustosPorServidorResponseSerializer,
+)
 from .serializers_api import HttpApiErrorSerializer
 
 
-def _data_filtro(valor, padrao):
-    if not valor:
-        return padrao
-    return parse_date(valor)
+PARAMETROS_FILTRO = {
+    "startDate",
+    "endDate",
+    "serverId",
+    "existence",
+    "active",
+    "linkType",
+    "serviceId",
+    "eventId",
+    "manuallyEdited",
+}
 
 
 @never_cache
@@ -54,20 +63,48 @@ def api_custos_por_servidor(request):
     if not request.user.has_perm(VIEW_SERVER_COSTS_PERMISSION):
         return Response({"detail": "Permission denied."}, status=403)
     hoje = timezone.localdate()
-    data_inicial = _data_filtro(request.GET.get("startDate", ""), hoje.replace(day=1))
-    data_final = _data_filtro(request.GET.get("endDate", ""), hoje)
-    if data_inicial is None or data_final is None or data_inicial > data_final:
-        return Response({"errors": {"period": ["Informe um período válido."]}}, status=400)
+    parametros_desconhecidos = sorted(set(request.GET) - PARAMETROS_FILTRO)
+    parametros_repetidos = sorted(
+        chave
+        for chave in PARAMETROS_FILTRO
+        if len(request.GET.getlist(chave)) > 1
+    )
+    erros_query = {}
+    if parametros_desconhecidos:
+        erros_query["query"] = [
+            "Parâmetros não reconhecidos: " + ", ".join(parametros_desconhecidos) + "."
+        ]
+    if parametros_repetidos:
+        erros_query["duplicates"] = [
+            "Parâmetros repetidos: " + ", ".join(parametros_repetidos) + "."
+        ]
+    if erros_query:
+        return Response({"errors": erros_query}, status=400)
+
+    entrada = {
+        "startDate": request.GET.get("startDate") or hoje.replace(day=1).isoformat(),
+        "endDate": request.GET.get("endDate") or hoje.isoformat(),
+    }
+    for chave in PARAMETROS_FILTRO - {"startDate", "endDate"}:
+        valor = request.GET.get(chave)
+        if valor not in (None, ""):
+            entrada[chave] = valor
+    query = CustosPorServidorQuerySerializer(data=entrada)
+    if not query.is_valid():
+        return Response({"errors": query.errors}, status=400)
+    dados = query.validated_data
+    data_inicial = dados["startDate"]
+    data_final = dados["endDate"]
     filtros = {
         "data_inicial": data_inicial,
         "data_final": data_final,
-        "servidor_id": (request.GET.get("serverId") or "").strip(),
-        "existencia": (request.GET.get("existence") or "").strip(),
-        "ativo": (request.GET.get("active") or "").strip().lower(),
-        "tipo_vinculo": (request.GET.get("linkType") or "").strip().upper(),
-        "servico_id": (request.GET.get("serviceId") or "").strip(),
-        "evento_id": (request.GET.get("eventId") or "").strip(),
-        "valor_editado": (request.GET.get("manuallyEdited") or "").strip().lower(),
+        "servidor_id": dados.get("serverId", ""),
+        "existencia": dados.get("existence", ""),
+        "ativo": dados.get("active", ""),
+        "tipo_vinculo": dados.get("linkType", ""),
+        "servico_id": dados.get("serviceId", ""),
+        "evento_id": dados.get("eventId", ""),
+        "valor_editado": dados.get("manuallyEdited", ""),
     }
     pode_ver_salario = usuario_pode_acessar_custos_salariais(request.user)
     payload = custos_por_servidor(**filtros, usuario=request.user)
@@ -85,12 +122,12 @@ def api_custos_por_servidor(request):
             "filters": {
                 "startDate": data_inicial.isoformat(),
                 "endDate": data_final.isoformat(),
-                "serverId": filtros["servidor_id"],
+                "serverId": str(filtros["servidor_id"]),
                 "existence": filtros["existencia"],
                 "active": filtros["ativo"],
                 "linkType": filtros["tipo_vinculo"],
-                "serviceId": filtros["servico_id"],
-                "eventId": filtros["evento_id"],
+                "serviceId": str(filtros["servico_id"]),
+                "eventId": str(filtros["evento_id"]),
                 "manuallyEdited": filtros["valor_editado"],
             },
             "filterOptions": {

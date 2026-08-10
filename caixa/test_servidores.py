@@ -1064,6 +1064,87 @@ class CustosPorServidorEvolucaoTests(ServidoresFixtureMixin, TenantAppTestCase):
             "SALARY_COVERAGE_PERIOD_EXCEEDS_LIMIT",
         )
 
+    def test_mudanca_de_vinculo_preserva_naturezas_historicas_sem_duplicar(self):
+        servidor = self.criar_diarista(216)
+        self.participar(servidor)
+        atualizar_servidor(
+            servidor,
+            dados=self.dados_servidor(
+                216,
+                tipo_vinculo=Servidor.VINCULO_MENSALISTA,
+                salario_mensal=Decimal("2800.00"),
+                data_inicio_contrato=date(2026, 7, 1),
+                dia_pagamento_salario=5,
+                data_autorizacao_custo_salarial=date(2026, 7, 1),
+            ),
+            servicos_ids=[self.servico.id],
+            usuario=self.usuario,
+            data_vigencia_salario=date(2026, 7, 1),
+        )
+
+        resultado = self.relatorio()
+        self.assertEqual(resultado["summary"]["diaristCostTotal"], "100.00")
+        self.assertEqual(resultado["summary"]["monthlySalaryTotal"], "2800.00")
+        self.assertEqual(resultado["summary"]["teamCostTotal"], "2900.00")
+        self.assertEqual(len(resultado["servers"]), 1)
+        grupo = resultado["servers"][0]
+        self.assertEqual(grupo["linkType"], "MIXED")
+        self.assertEqual(grupo["linkTypes"], ["DIARISTA", "MENSALISTA"])
+        self.assertEqual(grupo["participationCostTotal"], "100.00")
+        self.assertEqual(grupo["salaryCostTotal"], "2800.00")
+
+        diaristas = self.relatorio(tipo_vinculo="DIARISTA")["servers"][0]
+        self.assertEqual(diaristas["linkType"], "DIARISTA")
+        mensalistas = self.relatorio(tipo_vinculo="MENSALISTA")["servers"][0]
+        self.assertEqual(mensalistas["linkType"], "MENSALISTA")
+
+    def test_bases_historicas_explicitas_preservam_inicio_do_evento_e_estado_atual(self):
+        servidor = self.criar_diarista(217)
+        self.evento.data_inicio = date(2026, 6, 30)
+        self.evento.data_fim = date(2026, 7, 1)
+        self.evento.save(update_fields=["data_inicio", "data_fim"])
+        self.participar(
+            servidor,
+            datas_trabalhadas=[
+                {"data": date(2026, 7, 1), "quantidade_horas": Decimal("6.00")}
+            ],
+        )
+        servidor.ativo = False
+        servidor.save(update_fields=["ativo"])
+
+        julho = self.relatorio(ativo="false")
+        self.assertEqual(julho["summary"]["diaristCostTotal"], "0.00")
+        self.assertEqual(julho["servers"], [])
+        self.assertEqual(julho["meta"]["diaristPeriodBasis"], "eventStartDate")
+        self.assertEqual(julho["meta"]["activeFilterBasis"], "currentRegistrationState")
+        self.assertEqual(
+            julho["meta"]["serverFilterBasis"],
+            "currentIdOrHistoricalSnapshotId",
+        )
+
+        junho = custos_por_servidor(
+            data_inicial=date(2026, 6, 1),
+            data_final=date(2026, 6, 30),
+            ativo="false",
+            usuario=self.usuario,
+        )
+        self.assertEqual(junho["summary"]["diaristCostTotal"], "100.00")
+
+    def test_servidor_excluido_permanece_identificado_por_snapshot(self):
+        servidor = self.criar_diarista(218)
+        referencia = servidor.pk
+        nome = servidor.nome
+        self.participar(servidor)
+        excluir_servidor(servidor, usuario=self.usuario)
+
+        resultado = self.relatorio(existencia="deleted")
+        self.assertEqual(len(resultado["servers"]), 1)
+        grupo = resultado["servers"][0]
+        self.assertIsNone(grupo["serverId"])
+        self.assertEqual(grupo["serverReferenceId"], referencia)
+        self.assertEqual(grupo["serverName"], nome)
+        self.assertTrue(grupo["serverDeleted"])
+
     def test_legado_parcial_nao_quebra_nem_entra_no_total(self):
         referencia = self.criar_diarista(215)
         CustoFixo.objects.create(
@@ -1928,6 +2009,39 @@ class ServidoresApiTests(ServidoresFixtureMixin, TenantAppTestCase):
         self.assertEqual(dados_custos["summary"]["totalPeriod"], "100.00")
         self.assertEqual(dados_custos["meta"]["diaristPeriodBasis"], "eventStartDate")
         self.assertEqual(dados_custos["meta"]["salaryPeriodBasis"], "dueDate")
+        self.assertEqual(
+            dados_custos["meta"]["activeFilterBasis"],
+            "currentRegistrationState",
+        )
+        self.assertEqual(
+            dados_custos["meta"]["manualEditFilterBasis"],
+            "historicalParticipation",
+        )
+
+    def test_api_custos_rejeita_filtros_invalidos_desconhecidos_e_repetidos(self):
+        url = reverse("caixa:api_custos_por_servidor")
+        casos = [
+            {"startDate": "invalida"},
+            {"endDate": "31-07-2026"},
+            {"serverId": "abc"},
+            {"serverId": "0"},
+            {"existence": "archived"},
+            {"active": "yes"},
+            {"linkType": "SOCIO"},
+            {"serviceId": "-1"},
+            {"eventId": "evento"},
+            {"manuallyEdited": "maybe"},
+            {"desconhecido": "1"},
+        ]
+        for parametros in casos:
+            with self.subTest(parametros=parametros):
+                resposta = self.client.get(url, parametros)
+                self.assertEqual(resposta.status_code, 400)
+                self.assertIn("errors", resposta.json())
+
+        repetido = self.client.get(f"{url}?serverId=1&serverId=2")
+        self.assertEqual(repetido.status_code, 400)
+        self.assertIn("duplicates", repetido.json()["errors"])
 
     def test_api_valida_e_substitui_escala_diaria_sem_confiar_nos_totais(self):
         self.evento.data_fim = date(2026, 7, 22)

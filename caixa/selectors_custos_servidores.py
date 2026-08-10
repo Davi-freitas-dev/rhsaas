@@ -26,6 +26,8 @@ from .utils_financeiros import quantizar_moeda
 
 
 ZERO = Decimal("0.00")
+FONTE_SALARIO_CANONICA = "materializedSalaryOccurrence"
+FONTE_SALARIO_LEGADA = "MATERIALIZED_SALARY_OCCURRENCE"
 
 ESTADO_CALCULADO = "calculated"
 ESTADO_RESTRITO = "restricted"
@@ -236,6 +238,7 @@ def _novo_grupo(participacao=None, ocorrencia_salarial=None):
             "serverDeleted": servidor is None,
             "active": bool(servidor and servidor.ativo),
             "linkType": participacao.tipo_vinculo,
+            "linkTypes": {participacao.tipo_vinculo},
             "services": {},
             "participations": [],
             "salaryCosts": [],
@@ -261,6 +264,7 @@ def _novo_grupo(participacao=None, ocorrencia_salarial=None):
         "serverDeleted": servidor is None,
         "active": bool(servidor and servidor.ativo),
         "linkType": Servidor.VINCULO_MENSALISTA,
+        "linkTypes": {Servidor.VINCULO_MENSALISTA},
         "services": {},
         "participations": [],
         "salaryCosts": [],
@@ -379,6 +383,7 @@ def custos_por_servidor(
         dias_trabalhados = serializar_dias_trabalhados(item)
         chave = item.servidor_id_snapshot
         grupo = grupos.setdefault(chave, _novo_grupo(participacao=item))
+        grupo["linkTypes"].add(item.tipo_vinculo)
         grupo["services"][item.servico_id] = {
             "id": item.servico_id,
             "name": item.servico_nome_snapshot,
@@ -395,6 +400,7 @@ def custos_por_servidor(
                 "eventStatus": item.evento.status,
                 "serviceId": item.servico_id,
                 "serviceName": item.servico_nome_snapshot,
+                "linkType": item.tipo_vinculo,
                 "days": item.quantidade_dias,
                 "hours": f"{item.quantidade_horas:.2f}",
                 "workedDays": dias_trabalhados,
@@ -442,12 +448,14 @@ def custos_por_servidor(
                 _novo_grupo(ocorrencia_salarial=ocorrencia),
             )
             grupo = grupos[referencia]
+            grupo["linkTypes"].add(Servidor.VINCULO_MENSALISTA)
             grupo["salaryCosts"].append(
                 {
                     "competence": ocorrencia.competencia.strftime("%Y-%m"),
                     "amount": f"{ocorrencia.valor_previsto:.2f}",
                     "financialRealCost": f"{ocorrencia.valor_previsto:.2f}",
-                    "source": "MATERIALIZED_SALARY_OCCURRENCE",
+                    "source": FONTE_SALARIO_LEGADA,
+                    "sourceType": FONTE_SALARIO_CANONICA,
                 }
             )
         cobertura_salarial_completa, motivo_cobertura_salarial = (
@@ -470,6 +478,15 @@ def custos_por_servidor(
             sum((Decimal(item["financialRealCost"]) for item in grupo["salaryCosts"]), ZERO)
         )
         grupo["services"] = sorted(grupo["services"].values(), key=lambda item: item["name"])
+        grupo["linkTypes"] = sorted(
+            grupo["linkTypes"],
+            key=lambda valor: (valor != Servidor.VINCULO_DIARISTA, valor),
+        )
+        grupo["linkType"] = (
+            grupo["linkTypes"][0]
+            if len(grupo["linkTypes"]) == 1
+            else "MIXED"
+        )
         grupo["eventCount"] = len({item["eventId"] for item in grupo["participations"]})
         grupo["participationCostTotal"] = f"{total_participacoes:.2f}"
         grupo["salaryCostTotal"] = (
@@ -579,5 +596,12 @@ def custos_por_servidor(
             "salaryPeriodBasis": "dueDate",
             "salaryValueBasis": "plannedMaterializedAmount",
             "salaryCoverage": estado_salarios,
+            "serverFilterBasis": "currentIdOrHistoricalSnapshotId",
+            "existenceFilterBasis": "currentRegistrationExistence",
+            "activeFilterBasis": "currentRegistrationState",
+            "linkTypeFilterBasis": "historicalParticipationOrSalaryOccurrence",
+            "serviceFilterBasis": "historicalParticipation",
+            "eventFilterBasis": "historicalParticipation",
+            "manualEditFilterBasis": "historicalParticipation",
         },
     }

@@ -1,6 +1,6 @@
 # Plano vivo — custos por servidor
 
-Status: primeira evolução implementada; validação final concluída
+Status: fases 1–3 implementadas e validadas; fase 4 em andamento
 
 Última revisão: 2026-08-09
 
@@ -279,9 +279,11 @@ diarista para mensalista dentro de um período amplo, participações de víncul
 diferentes e salário podem cair no mesmo grupo. O `linkType` exibido vem do
 primeiro item processado, podendo esconder subtotal ou usar o rótulo errado.
 
-Recomendação: os totais globais devem ser calculados por natureza do custo, não
-pelo rótulo do grupo. No detalhamento, representar os vínculos encontrados ou
-separar subgrupos por vínculo sem duplicar a pessoa no contador de servidores.
+Decisão implementada na Fase 3: os totais globais continuam calculados por
+natureza do custo. O grupo expõe `linkTypes` e usa `linkType=MIXED` quando há
+mais de um vínculo histórico, sem duplicar a pessoa no contador. Cada
+participação também expõe seu próprio vínculo, e o frontend separa diária e
+salário sem permitir inferência quando o salário está restrito.
 
 ### P2 — filtros incompatíveis não informam “não aplicável”
 
@@ -309,9 +311,10 @@ modelagem financeira canônica correspondente.
 Os filtros ativo/inativo usam o estado atual do servidor. Alterar o cadastro
 hoje pode mudar a composição de um relatório de meses anteriores.
 
-Recomendação: manter esse comportamento apenas se o filtro for claramente
-rotulado “Situação atual”. Caso a intenção seja situação no período, será
-necessário snapshot histórico e uma mudança separada.
+Decisão implementada na Fase 3: manter o comportamento histórico existente e
+rotular o filtro como **Situação atual**. A API declara
+`activeFilterBasis=currentRegistrationState`; nenhum estado histórico é
+inventado retroativamente.
 
 ### P2 — detalhamento de serviços pode ficar vazio ou incompleto
 
@@ -353,7 +356,9 @@ referenciam o mesmo componente canônico.
 O item salarial usa `MATERIALIZED_SALARY_OCCURRENCE`, o `meta` usa
 `materializedSalaryOccurrence` e fixtures antigas usam `salaryHistory`.
 
-Recomendação: definir enum canônico e manter alias apenas durante a transição.
+Decisão implementada na Fase 3: `materializedSalaryOccurrence` é o nome
+canônico em `sourceType` e `meta.salarySource`. O campo legado `source` é
+preservado temporariamente como alias compatível.
 
 ### P3 — filtros inválidos são geralmente ignorados
 
@@ -361,8 +366,9 @@ Datas inválidas retornam 400, mas ids/textos inválidos dos outros filtros pode
 ser tratados como filtro vazio. Isso dificulta diagnóstico e pode produzir um
 total mais amplo do que o solicitante imaginou.
 
-Recomendação: validar todos os filtros no serializer de entrada e responder 400
-para valores fora do contrato.
+Decisão implementada na Fase 3: todos os filtros são validados por serializer;
+valores, ids, parâmetros desconhecidos ou repetidos fora do contrato retornam
+400 e nunca ampliam silenciosamente o relatório.
 
 ### P3 — guardrail agregado do dashboard bloqueado por rota fora deste diff
 
@@ -490,15 +496,18 @@ Os três cards, isoladamente, não exigem migration.
 
 ### Fase 3 — consistência histórica e filtros
 
-- [ ] Validar filtros por serializer de entrada.
-- [ ] Tornar a base de cada filtro observável na resposta.
-- [ ] Decidir se o período de diaristas continuará pelo início do evento ou será
+- [x] Validar filtros por serializer de entrada.
+- [x] Tornar a base de cada filtro observável na resposta.
+- [x] Decidir se o período de diaristas continuará pelo início do evento ou será
   atribuído às datas trabalhadas.
-- [ ] Resolver a apresentação de mudança de vínculo no mesmo período.
-- [ ] Definir se “ativo/inativo” significa situação atual ou situação histórica.
+- [x] Resolver a apresentação de mudança de vínculo no mesmo período.
+- [x] Definir se “ativo/inativo” significa situação atual ou situação histórica.
 
-Mudanças de base temporal devem ser entregues separadamente, com comparação de
-totais antes/depois.
+Decisão final: preservar `Evento.data_inicio` como base temporal dos diaristas,
+sem alterar totais antigos; usar situação atual no filtro ativo/inativo; expor
+todas as bases em `meta`; representar mudanças de vínculo como `MIXED`. Uma
+eventual mudança para dias trabalhados continua sendo evolução separada, com
+comparação de totais antes/depois.
 
 ### Fase 4 — futura apropriação de mensalistas nos eventos
 
@@ -538,9 +547,9 @@ no modelo atual. Não reutilizar o padrão de 8 horas de uma participação.
 - [x] salário pendente, parcial, pago, cancelado e inativo;
 - [x] competência ausente e configuração necessária ausente;
 - [x] salário legado sem competência/histórico/servidor;
-- [ ] servidor excluído com snapshots;
-- [ ] servidor que mudou de vínculo no período;
-- [ ] evento iniciado fora do período com dias trabalhados dentro;
+- [x] servidor excluído com snapshots;
+- [x] servidor que mudou de vínculo no período;
+- [x] evento iniciado fora do período com dias trabalhados dentro;
 - [x] filtros de vínculo, evento, serviço e edição, inclusive combinação;
 - [ ] valores manuais de diaristas;
 - [ ] mês parcial sem rateio automático;
@@ -555,7 +564,7 @@ no modelo atual. Não reutilizar o padrão de 8 horas de uma participação.
 - [x] impossibilidade de inferir salário por diferença;
 - [ ] permissão de apropriação independente;
 - [ ] estados e motivos sem conteúdo sensível;
-- [ ] validação 400 de cada filtro inválido;
+- [x] validação 400 de cada filtro inválido;
 - [x] schema OpenAPI atualizado com enum canônico;
 - [x] isolamento entre dois tenants com salários sentinela distintos.
 
@@ -568,7 +577,7 @@ no modelo atual. Não reutilizar o padrão de 8 horas de uma participação.
 - [ ] filtros e atualização durante carregamento;
 - [x] salário nunca aparece sem permissão;
 - [x] total não permite inferir salário restrito;
-- [ ] detalhamento de diarista, mensalista, excluído e mudança de vínculo;
+- [x] detalhamento de diarista, mensalista, excluído e mudança de vínculo;
 - [x] fixture diretamente relacionada corrigida para contagens e totais consistentes;
 - [ ] E2E com backend real para pelo menos um cenário misto.
 
@@ -637,6 +646,11 @@ nas bases financeira ou temporal exigem nova decisão registrada neste arquivo.
 | D05 | Evento, serviço ou valor editado tornam salário não aplicável e total indisponível, sem rateio; `DIARISTA` explícito continua sendo exceção calculável. | fechada |
 | D06 | Apropriação futura exigirá carga horária mensal contratada, com vigência histórica e sem padrão. | fechada para esta evolução |
 | D07 | Considerar somente salário materializado; encargos só entram quando cadastrados explicitamente. | fechada para esta evolução |
+| D08 | Preservar `Evento.data_inicio` como base de diaristas; dias trabalhados permanecem detalhe, sem mudança retroativa de totais. | fechada |
+| D09 | O filtro ativo/inativo representa a situação atual e deve ser nomeado e declarado dessa forma. | fechada |
+| D10 | Mudanças históricas de vínculo aparecem em um único grupo `MIXED`, com `linkTypes` e vínculo em cada participação. | fechada |
+| D11 | Filtros inválidos, desconhecidos ou repetidos retornam 400; ids inexistentes válidos continuam produzindo conjunto vazio. | fechada |
+| D12 | `materializedSalaryOccurrence` é a origem canônica; `source` legado permanece como alias temporário. | fechada |
 
 ### Regras semânticas fechadas
 
@@ -667,3 +681,4 @@ nas bases financeira ou temporal exigem nova decisão registrada neste arquivo.
 | 2026-08-09 | enum OpenAPI consolidado | achado P2 resolvido com `ServerCostStateEnum` canônico e teste de contrato |
 | 2026-08-09 | guardrail agregado documentado | achado P3 externo ao diff mantido fora do escopo; quatro checks relevantes passaram isoladamente |
 | 2026-08-09 | primeira evolução implementada e revisada | contrato aditivo no backend, três cards no frontend, testes direcionados verdes e nenhuma migration gerada |
+| 2026-08-09 | Fase 3 concluída | filtros estritos, bases observáveis, vínculo `MIXED`, situação atual explícita e origem canônica; 16 testes backend e E2E direcionado verdes, sem migration |

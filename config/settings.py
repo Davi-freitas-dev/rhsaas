@@ -298,6 +298,16 @@ SPECTACULAR_SETTINGS = {
         "ServerCostStateEnum": (
             "caixa.serializers_custos_servidores.ESTADOS_CUSTO_ANALITICO"
         ),
+        "ServerLinkTypeEnum": (
+            "caixa.serializers_custos_servidores.TIPOS_VINCULO_CUSTO"
+        ),
+        "ServerCostGroupLinkTypeEnum": (
+            "caixa.serializers_custos_servidores.TIPOS_VINCULO_GRUPO_CUSTO"
+        ),
+        "HistoricalParticipationFilterBasisEnum": (
+            "caixa.serializers_custos_servidores."
+            "BASE_FILTRO_PARTICIPACAO_HISTORICA"
+        ),
     },
 }
 
