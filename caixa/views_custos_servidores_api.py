@@ -71,6 +71,7 @@ def api_custos_por_servidor(request):
     }
     pode_ver_salario = usuario_pode_acessar_custos_salariais(request.user)
     payload = custos_por_servidor(**filtros, usuario=request.user)
+    meta_custos = payload.pop("meta")
     pode_ver_apropriacao = request.user.has_perm(VIEW_SERVER_APPROPRIATION_PERMISSION)
     if not pode_ver_apropriacao:
         for grupo in payload["servers"]:
@@ -120,6 +121,7 @@ def api_custos_por_servidor(request):
                 ),
                 "distributionSource": "EventoCustoServico.valor_diarias",
                 "managerialAppropriationCalculated": False,
+                **meta_custos,
             },
         }
     )

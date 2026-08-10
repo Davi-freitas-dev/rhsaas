@@ -294,6 +294,11 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "Schema OpenAPI inicial para validacao incremental.",
     "VERSION": "0.1.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    "ENUM_NAME_OVERRIDES": {
+        "ServerCostStateEnum": (
+            "caixa.serializers_custos_servidores.ESTADOS_CUSTO_ANALITICO"
+        ),
+    },
 }
 
 

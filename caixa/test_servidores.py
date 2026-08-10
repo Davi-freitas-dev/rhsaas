@@ -37,6 +37,12 @@ from .models import (
     ObrigacaoFinanceira,
     Servico,
 )
+from .constants_financeiros import (
+    STATUS_CANCELADO,
+    STATUS_PAGO,
+    STATUS_PARCIAL,
+    STATUS_PENDENTE,
+)
 from .models_custo_fixo import (
     AuditoriaCustoRecorrente,
     CustoFixo,
@@ -810,6 +816,300 @@ class ServidoresDominioTests(ServidoresFixtureMixin, TenantAppTestCase):
             EventoCustoServico.objects.aggregate(total=Sum("valor_diarias"))["total"],
             custo_inicial,
         )
+
+
+class CustosPorServidorEvolucaoTests(ServidoresFixtureMixin, TenantAppTestCase):
+    def criar_mensalista_configurado(self, indice, salario="2000.00"):
+        return criar_servidor(
+            dados=self.dados_servidor(
+                indice,
+                tipo_vinculo=Servidor.VINCULO_MENSALISTA,
+                salario_mensal=Decimal(salario),
+                data_inicio_contrato=date(2026, 7, 1),
+                dia_pagamento_salario=5,
+                data_autorizacao_custo_salarial=date(2026, 7, 1),
+            ),
+            servicos_ids=[self.servico.id],
+            usuario=self.usuario,
+            data_vigencia_salario=date(2026, 7, 1),
+        )
+
+    def relatorio(self, **filtros):
+        return custos_por_servidor(
+            data_inicial=date(2026, 7, 1),
+            data_final=date(2026, 7, 31),
+            usuario=self.usuario,
+            **filtros,
+        )
+
+    def test_zero_real_e_somente_diaristas(self):
+        vazio = self.relatorio()
+        resumo = vazio["summary"]
+        self.assertEqual(resumo["diaristCostState"], "calculated")
+        self.assertEqual(resumo["diaristCostTotal"], "0.00")
+        self.assertEqual(resumo["monthlySalaryState"], "calculated")
+        self.assertEqual(resumo["monthlySalaryTotal"], "0.00")
+        self.assertEqual(resumo["teamCostState"], "calculated")
+        self.assertEqual(resumo["teamCostTotal"], "0.00")
+
+        self.participar(self.criar_diarista(201))
+        diaristas = self.relatorio(tipo_vinculo=Servidor.VINCULO_DIARISTA)
+        resumo = diaristas["summary"]
+        self.assertEqual(resumo["diaristCostTotal"], "100.00")
+        self.assertEqual(resumo["monthlySalaryState"], "outOfFilter")
+        self.assertIsNone(resumo["monthlySalaryTotal"])
+        self.assertEqual(resumo["teamCostState"], "calculated")
+        self.assertEqual(resumo["teamCostTotal"], "100.00")
+        self.assertEqual(resumo["totalPeriod"], "100.00")
+
+    def test_somente_mensalistas_usa_previsto_materializado(self):
+        mensalista = self.criar_mensalista_configurado(202, "2300.00")
+        self.participar(mensalista)
+
+        resultado = self.relatorio(tipo_vinculo=Servidor.VINCULO_MENSALISTA)
+        resumo = resultado["summary"]
+        self.assertEqual(resumo["diaristCostState"], "outOfFilter")
+        self.assertIsNone(resumo["diaristCostTotal"])
+        self.assertEqual(resumo["monthlySalaryState"], "calculated")
+        self.assertEqual(resumo["monthlySalaryTotal"], "2300.00")
+        self.assertEqual(resumo["teamCostTotal"], "2300.00")
+        self.assertEqual(resumo["totalPeriod"], "2300.00")
+        self.assertEqual(resultado["meta"]["salaryPeriodBasis"], "dueDate")
+        self.assertEqual(
+            resultado["meta"]["salaryValueBasis"],
+            "plannedMaterializedAmount",
+        )
+
+    def test_diarista_e_mensalista_nao_duplicam_salario_na_participacao(self):
+        self.participar(self.criar_diarista(203))
+        mensalista = self.criar_mensalista_configurado(204, "2000.00")
+        participacao = self.participar(mensalista)
+        self.assertEqual(participacao.valor_final, Decimal("0.00"))
+        estado_antes = (
+            CustoFixo.objects.count(),
+            list(
+                ParticipacaoServidorEvento.objects.order_by("pk").values_list(
+                    "pk",
+                    "valor_final",
+                )
+            ),
+        )
+
+        resultado = self.relatorio()
+        resumo = resultado["summary"]
+        self.assertEqual(resumo["diaristCostTotal"], "100.00")
+        self.assertEqual(resumo["monthlySalaryTotal"], "2000.00")
+        self.assertEqual(resumo["teamCostTotal"], "2100.00")
+        self.assertEqual(resumo["totalPeriod"], "2100.00")
+        self.assertEqual(
+            (
+                CustoFixo.objects.count(),
+                list(
+                    ParticipacaoServidorEvento.objects.order_by("pk").values_list(
+                        "pk",
+                        "valor_final",
+                    )
+                ),
+            ),
+            estado_antes,
+        )
+
+    def test_status_pendente_parcial_e_pago_entram_pelo_previsto(self):
+        servidores = [
+            self.criar_mensalista_configurado(205, "1000.00"),
+            self.criar_mensalista_configurado(206, "2000.00"),
+            self.criar_mensalista_configurado(207, "3000.00"),
+        ]
+        ocorrencias = [
+            CustoFixo.objects.get(servidor_salario=servidor)
+            for servidor in servidores
+        ]
+        CustoFixo.objects.filter(pk=ocorrencias[0].pk).update(
+            status=STATUS_PENDENTE,
+            valor_pago=Decimal("0.00"),
+        )
+        CustoFixo.objects.filter(pk=ocorrencias[1].pk).update(
+            status=STATUS_PARCIAL,
+            valor_pago=Decimal("500.00"),
+        )
+        CustoFixo.objects.filter(pk=ocorrencias[2].pk).update(
+            status=STATUS_PAGO,
+            valor_pago=Decimal("3000.00"),
+        )
+
+        resumo = self.relatorio()["summary"]
+        self.assertEqual(resumo["monthlySalaryState"], "calculated")
+        self.assertEqual(resumo["monthlySalaryTotal"], "6000.00")
+        self.assertEqual(resumo["teamCostTotal"], "6000.00")
+
+    def test_cancelado_e_inativo_ficam_fora_sem_tornar_cobertura_incompleta(self):
+        cancelado = self.criar_mensalista_configurado(208, "1100.00")
+        inativo = self.criar_mensalista_configurado(209, "1200.00")
+        valido = self.criar_mensalista_configurado(210, "1300.00")
+        CustoFixo.objects.filter(servidor_salario=cancelado).update(
+            status=STATUS_CANCELADO
+        )
+        CustoFixo.objects.filter(servidor_salario=inativo).update(ativo=False)
+
+        resultado = self.relatorio()
+        resumo = resultado["summary"]
+        self.assertEqual(resumo["monthlySalaryState"], "calculated")
+        self.assertEqual(resumo["monthlySalaryTotal"], "1300.00")
+        self.assertEqual(resumo["teamCostTotal"], "1300.00")
+        self.assertEqual(resumo["totalPeriod"], "1300.00")
+        self.assertEqual(
+            [item["serverId"] for item in resultado["servers"]],
+            [valido.id],
+        )
+
+    def test_ocorrencia_esperada_ausente_e_configuracao_ausente_sao_incompletas(self):
+        configurado = self.criar_mensalista_configurado(211, "2500.00")
+        CustoFixo.objects.filter(servidor_salario=configurado).delete()
+        resultado = self.relatorio()
+        resumo = resultado["summary"]
+        self.assertEqual(resumo["monthlySalaryState"], "incomplete")
+        self.assertEqual(
+            resumo["monthlySalaryReason"],
+            "SALARY_OCCURRENCE_MISSING",
+        )
+        self.assertIsNone(resumo["monthlySalaryTotal"])
+        self.assertEqual(resumo["teamCostState"], "incomplete")
+        self.assertIsNone(resumo["teamCostTotal"])
+        self.assertEqual(resumo["totalPeriod"], "0.00")
+        mensalistas_incompletos = self.relatorio(
+            tipo_vinculo=Servidor.VINCULO_MENSALISTA
+        )["summary"]
+        self.assertEqual(mensalistas_incompletos["teamCostState"], "incomplete")
+        self.assertIsNone(mensalistas_incompletos["teamCostTotal"])
+
+        criar_servidor(
+            dados=self.dados_servidor(
+                212,
+                tipo_vinculo=Servidor.VINCULO_MENSALISTA,
+                salario_mensal=Decimal("2600.00"),
+            ),
+            servicos_ids=[self.servico.id],
+            usuario=self.usuario,
+            data_vigencia_salario=date(2026, 7, 1),
+        )
+        mensalista_sem_config = Servidor.objects.get(nome="Servidor 212")
+        resultado = self.relatorio(servidor_id=str(mensalista_sem_config.pk))
+        self.assertEqual(
+            resultado["summary"]["monthlySalaryReason"],
+            "SALARY_CONFIGURATION_MISSING",
+        )
+
+    def test_filtros_incompativeis_e_vinculos_explicitos(self):
+        diarista = self.criar_diarista(213)
+        self.participar(diarista)
+        self.criar_mensalista_configurado(214, "2700.00")
+
+        casos = [
+            ({"evento_id": str(self.evento.pk)}, "EVENT_SCOPE_REQUIRES_MONTHLY_ALLOCATION"),
+            ({"servico_id": str(self.servico.pk)}, "SERVICE_SCOPE_REQUIRES_MONTHLY_ALLOCATION"),
+            ({"valor_editado": "false"}, "PARTICIPATION_FILTER_NOT_APPLICABLE_TO_SALARY"),
+            (
+                {
+                    "evento_id": str(self.evento.pk),
+                    "servico_id": str(self.servico.pk),
+                    "valor_editado": "false",
+                },
+                "EVENT_SCOPE_REQUIRES_MONTHLY_ALLOCATION",
+            ),
+        ]
+        for filtros, motivo in casos:
+            with self.subTest(filtros=filtros):
+                resumo = self.relatorio(**filtros)["summary"]
+                self.assertEqual(resumo["monthlySalaryState"], "notApplicable")
+                self.assertEqual(resumo["monthlySalaryReason"], motivo)
+                self.assertEqual(resumo["teamCostState"], "notApplicable")
+                self.assertIsNone(resumo["teamCostTotal"])
+
+        diaristas = self.relatorio(
+            tipo_vinculo=Servidor.VINCULO_DIARISTA,
+            evento_id=str(self.evento.pk),
+        )["summary"]
+        self.assertEqual(diaristas["monthlySalaryState"], "outOfFilter")
+        self.assertEqual(diaristas["teamCostTotal"], "100.00")
+
+        mensalistas = self.relatorio(
+            tipo_vinculo=Servidor.VINCULO_MENSALISTA
+        )["summary"]
+        self.assertEqual(mensalistas["diaristCostState"], "outOfFilter")
+        self.assertEqual(mensalistas["monthlySalaryTotal"], "2700.00")
+        self.assertEqual(mensalistas["teamCostTotal"], "2700.00")
+
+        mensalistas_por_evento = self.relatorio(
+            tipo_vinculo=Servidor.VINCULO_MENSALISTA,
+            evento_id=str(self.evento.pk),
+        )["summary"]
+        self.assertEqual(
+            mensalistas_por_evento["monthlySalaryState"],
+            "notApplicable",
+        )
+        self.assertEqual(
+            mensalistas_por_evento["teamCostState"],
+            "notApplicable",
+        )
+        self.assertIsNone(mensalistas_por_evento["teamCostTotal"])
+
+        periodo_extenso = custos_por_servidor(
+            data_inicial=date(2000, 1, 1),
+            data_final=date(2026, 7, 31),
+            usuario=self.usuario,
+        )["summary"]
+        self.assertEqual(periodo_extenso["monthlySalaryState"], "incomplete")
+        self.assertEqual(
+            periodo_extenso["monthlySalaryReason"],
+            "SALARY_COVERAGE_PERIOD_EXCEEDS_LIMIT",
+        )
+
+    def test_legado_parcial_nao_quebra_nem_entra_no_total(self):
+        referencia = self.criar_diarista(215)
+        CustoFixo.objects.create(
+            descricao="Salário legado parcial",
+            categoria="salario",
+            valor_previsto=Decimal("9999.00"),
+            data_vencimento=date(2026, 7, 5),
+            origem_recorrencia="legado",
+            servidor_salario=referencia,
+        )
+
+        resultado = self.relatorio()
+        resumo = resultado["summary"]
+        self.assertEqual(resumo["monthlySalaryState"], "incomplete")
+        self.assertEqual(
+            resumo["monthlySalaryReason"],
+            "LEGACY_SALARY_UNCORRELATED",
+        )
+        self.assertIsNone(resumo["monthlySalaryTotal"])
+        self.assertIsNone(resumo["teamCostTotal"])
+        self.assertEqual(resumo["totalPeriod"], "0.00")
+        self.assertEqual(resultado["servers"], [])
+
+    def test_openapi_usa_um_enum_canonico_para_estados_dos_cards(self):
+        schema = SchemaGenerator().get_schema(public=True)
+        componentes = schema["components"]["schemas"]
+        self.assertEqual(
+            componentes["ServerCostStateEnum"]["enum"],
+            [
+                "calculated",
+                "restricted",
+                "incomplete",
+                "notApplicable",
+                "outOfFilter",
+            ],
+        )
+        propriedades = componentes["CustosPorServidorSummary"]["properties"]
+        for campo in (
+            "diaristCostState",
+            "monthlySalaryState",
+            "teamCostState",
+        ):
+            self.assertEqual(
+                propriedades[campo]["$ref"],
+                "#/components/schemas/ServerCostStateEnum",
+            )
 
 
 class EscalaDiariaServidoresTests(ServidoresFixtureMixin, TenantAppTestCase):
@@ -1620,7 +1920,14 @@ class ServidoresApiTests(ServidoresFixtureMixin, TenantAppTestCase):
             {"startDate": "2026-07-01", "endDate": "2026-07-31"},
         )
         self.assertEqual(relatorio.status_code, 200)
-        self.assertEqual(relatorio.json()["data"]["summary"]["totalPeriod"], "100.00")
+        dados_custos = relatorio.json()["data"]
+        self.assertEqual(dados_custos["summary"]["diaristCostTotal"], "100.00")
+        self.assertEqual(dados_custos["summary"]["diaristCostState"], "calculated")
+        self.assertEqual(dados_custos["summary"]["monthlySalaryTotal"], "0.00")
+        self.assertEqual(dados_custos["summary"]["teamCostTotal"], "100.00")
+        self.assertEqual(dados_custos["summary"]["totalPeriod"], "100.00")
+        self.assertEqual(dados_custos["meta"]["diaristPeriodBasis"], "eventStartDate")
+        self.assertEqual(dados_custos["meta"]["salaryPeriodBasis"], "dueDate")
 
     def test_api_valida_e_substitui_escala_diaria_sem_confiar_nos_totais(self):
         self.evento.data_fim = date(2026, 7, 22)
@@ -1764,6 +2071,10 @@ class ServidoresApiTests(ServidoresFixtureMixin, TenantAppTestCase):
         dados = depois.json()["data"]
         self.assertFalse(dados["permissions"]["canViewSalary"])
         self.assertEqual(dados["meta"]["salarySource"], "redacted")
+        self.assertEqual(dados["summary"]["monthlySalaryState"], "restricted")
+        self.assertIsNone(dados["summary"]["monthlySalaryTotal"])
+        self.assertEqual(dados["summary"]["teamCostState"], "restricted")
+        self.assertIsNone(dados["summary"]["teamCostTotal"])
         self.assertEqual(
             dados["summary"]["totalPeriod"],
             antes.json()["data"]["summary"]["totalPeriod"],
@@ -1781,6 +2092,19 @@ class ServidoresApiTests(ServidoresFixtureMixin, TenantAppTestCase):
         self.assertEqual(individual.status_code, 200)
         self.assertEqual(individual.json()["data"]["servers"], [])
         self.assertEqual(individual.json()["data"]["summary"]["totalPeriod"], "0.00")
+
+        mensalistas = client.get(
+            url,
+            {
+                "startDate": "2026-07-01",
+                "endDate": "2026-07-31",
+                "linkType": "MENSALISTA",
+            },
+        ).json()["data"]["summary"]
+        self.assertEqual(mensalistas["diaristCostState"], "outOfFilter")
+        self.assertEqual(mensalistas["monthlySalaryState"], "restricted")
+        self.assertEqual(mensalistas["teamCostState"], "restricted")
+        self.assertIsNone(mensalistas["teamCostTotal"])
 
     def test_api_restringe_documento_salario_e_custos_por_permissao(self):
         mensalista = criar_servidor(
@@ -2288,6 +2612,64 @@ class AtivacaoMensalistasCommandTests(ServidoresFixtureMixin, TenantAppTestCase)
 
 
 class ServidoresIsolamentoMultiTenantTests(MultiTenantTestCase):
+    def test_novos_totais_de_custos_permanecem_isolados_por_schema(self):
+        tenant_b, _ = self.create_tenant(
+            "tenant_custos_servidores_b",
+            "Tenant Custos Servidores B",
+            "tenant-custos-servidores-b.localhost",
+        )
+
+        def criar_cenario(sufixo, salario):
+            usuario = get_user_model().objects.create_superuser(
+                username=f"custos-servidores-{sufixo}",
+                email=f"{sufixo}@example.com",
+                password="senha-segura",
+            )
+            servico = Servico.objects.create(
+                nome=f"Serviço {sufixo}",
+                codigo=f"servico-{sufixo}",
+                diaria_padrao=Decimal("100.00"),
+                valor_unitario=Decimal("100.00"),
+                horas_base_diaria=8,
+            )
+            criar_servidor(
+                dados={
+                    "nome": f"Mensalista {sufixo}",
+                    "tipo_documento": Servidor.TIPO_DOCUMENTO_CPF,
+                    "documento": "12345678901",
+                    "tipo_vinculo": Servidor.VINCULO_MENSALISTA,
+                    "salario_mensal": Decimal(salario),
+                    "data_inicio_contrato": date(2026, 7, 1),
+                    "dia_pagamento_salario": 5,
+                    "data_autorizacao_custo_salarial": date(2026, 7, 1),
+                },
+                servicos_ids=[servico.pk],
+                usuario=usuario,
+                data_vigencia_salario=date(2026, 7, 1),
+            )
+            return usuario
+
+        with self.in_schema(self.primary_tenant.schema_name):
+            usuario_a = criar_cenario("tenant-a", "1234.00")
+            resumo_a = custos_por_servidor(
+                data_inicial=date(2026, 7, 1),
+                data_final=date(2026, 7, 31),
+                usuario=usuario_a,
+            )["summary"]
+
+        with self.in_schema(tenant_b.schema_name):
+            usuario_b = criar_cenario("tenant-b", "9876.00")
+            resumo_b = custos_por_servidor(
+                data_inicial=date(2026, 7, 1),
+                data_final=date(2026, 7, 31),
+                usuario=usuario_b,
+            )["summary"]
+
+        self.assertEqual(resumo_a["monthlySalaryTotal"], "1234.00")
+        self.assertEqual(resumo_a["teamCostTotal"], "1234.00")
+        self.assertEqual(resumo_b["monthlySalaryTotal"], "9876.00")
+        self.assertEqual(resumo_b["teamCostTotal"], "9876.00")
+
     def test_documento_repetido_por_tenant_e_api_sem_vazamento(self):
         tenant_b, _ = self.create_tenant(
             "tenant_servidores_b",

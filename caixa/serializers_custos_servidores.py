@@ -3,6 +3,15 @@ from rest_framework import serializers
 from .serializers_participacoes_servidores import DiaTrabalhadoResponseSerializer
 
 
+ESTADOS_CUSTO_ANALITICO = [
+    "calculated",
+    "restricted",
+    "incomplete",
+    "notApplicable",
+    "outOfFilter",
+]
+
+
 class ServicoCustoServidorResponseSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     name = serializers.CharField()
@@ -73,6 +82,27 @@ class CustoPorServidorGrupoResponseSerializer(serializers.Serializer):
 class CustosPorServidorSummarySerializer(serializers.Serializer):
     serverCount = serializers.IntegerField()
     eventCount = serializers.IntegerField()
+    diaristCostTotal = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        allow_null=True,
+    )
+    diaristCostState = serializers.ChoiceField(choices=ESTADOS_CUSTO_ANALITICO)
+    diaristCostReason = serializers.CharField(allow_blank=True)
+    monthlySalaryTotal = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        allow_null=True,
+    )
+    monthlySalaryState = serializers.ChoiceField(choices=ESTADOS_CUSTO_ANALITICO)
+    monthlySalaryReason = serializers.CharField(allow_blank=True)
+    teamCostTotal = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        allow_null=True,
+    )
+    teamCostState = serializers.ChoiceField(choices=ESTADOS_CUSTO_ANALITICO)
+    teamCostReason = serializers.CharField(allow_blank=True)
     totalPeriod = serializers.DecimalField(max_digits=14, decimal_places=2)
     managerialAppropriationTotal = serializers.DecimalField(
         max_digits=14,
@@ -116,6 +146,12 @@ class CustosPorServidorMetaSerializer(serializers.Serializer):
     salarySource = serializers.CharField()
     distributionSource = serializers.CharField()
     managerialAppropriationCalculated = serializers.BooleanField()
+    diaristPeriodBasis = serializers.ChoiceField(choices=["eventStartDate"])
+    salaryPeriodBasis = serializers.ChoiceField(choices=["dueDate"])
+    salaryValueBasis = serializers.ChoiceField(
+        choices=["plannedMaterializedAmount"]
+    )
+    salaryCoverage = serializers.ChoiceField(choices=ESTADOS_CUSTO_ANALITICO)
 
 
 class CustosPorServidorDataSerializer(serializers.Serializer):

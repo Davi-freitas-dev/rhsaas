@@ -1,15 +1,229 @@
+from collections import defaultdict
 from decimal import Decimal
 
 from django.db.models import Q
+from django.utils import timezone
 
-from .models_custo_fixo import CustoFixo
-from .models_servidores import ParticipacaoServidorEvento, Servidor
-from .security_salarios import filtrar_ocorrencias_salariais_por_usuario
+from .constants_financeiros import STATUS_CANCELADO
+from .models_custo_fixo import CustoFixo, PlanoCustoRecorrente
+from .models_servidores import (
+    HistoricoSalarialServidor,
+    ParticipacaoServidorEvento,
+    Servidor,
+)
+from .security_salarios import (
+    filtrar_ocorrencias_salariais_por_usuario,
+    usuario_pode_acessar_custos_salariais,
+)
 from .serializers_participacoes_servidores import serializar_dias_trabalhados
+from .services_custos_recorrentes import (
+    data_vencimento_da_competencia,
+    fim_do_mes,
+    inicio_do_mes,
+    iterar_competencias,
+)
 from .utils_financeiros import quantizar_moeda
 
 
 ZERO = Decimal("0.00")
+
+ESTADO_CALCULADO = "calculated"
+ESTADO_RESTRITO = "restricted"
+ESTADO_INCOMPLETO = "incomplete"
+ESTADO_NAO_APLICAVEL = "notApplicable"
+ESTADO_FORA_FILTRO = "outOfFilter"
+
+MOTIVO_SEM_PERMISSAO_SALARIAL = "SALARY_PERMISSION_REQUIRED"
+MOTIVO_EVENTO_INCOMPATIVEL = "EVENT_SCOPE_REQUIRES_MONTHLY_ALLOCATION"
+MOTIVO_SERVICO_INCOMPATIVEL = "SERVICE_SCOPE_REQUIRES_MONTHLY_ALLOCATION"
+MOTIVO_EDICAO_INCOMPATIVEL = "PARTICIPATION_FILTER_NOT_APPLICABLE_TO_SALARY"
+MOTIVO_CONFIGURACAO_SALARIAL = "SALARY_CONFIGURATION_MISSING"
+MOTIVO_OCORRENCIA_AUSENTE = "SALARY_OCCURRENCE_MISSING"
+MOTIVO_OCORRENCIA_BLOQUEADA = "SALARY_OCCURRENCE_BLOCKED"
+MOTIVO_SALARIO_LEGADO = "LEGACY_SALARY_UNCORRELATED"
+MOTIVO_PERIODO_COBERTURA_EXCEDIDO = "SALARY_COVERAGE_PERIOD_EXCEEDS_LIMIT"
+
+
+def _motivo_filtro_incompativel(*, servico_id, evento_id, valor_editado):
+    if evento_id:
+        return MOTIVO_EVENTO_INCOMPATIVEL
+    if servico_id:
+        return MOTIVO_SERVICO_INCOMPATIVEL
+    if valor_editado:
+        return MOTIVO_EDICAO_INCOMPATIVEL
+    return ""
+
+
+def _referencia_ocorrencia_salarial(ocorrencia):
+    historico = ocorrencia.historico_salarial
+    if historico:
+        return historico.servidor_id_snapshot
+    return ocorrencia.servidor_salario_id
+
+
+def _ocorrencia_salarial_estruturada(ocorrencia):
+    return bool(
+        ocorrencia.origem_recorrencia == "salario"
+        and ocorrencia.plano_recorrente_id
+        and ocorrencia.competencia
+        and ocorrencia.historico_salarial_id
+        and _referencia_ocorrencia_salarial(ocorrencia) is not None
+    )
+
+
+def _servidores_mensalistas_esperados(
+    *,
+    data_inicial,
+    data_final,
+    servidor_id,
+    existencia,
+    ativo,
+):
+    if existencia == "deleted" or ativo in {"false", "0", "inativo"}:
+        return []
+
+    qs = Servidor.objects.filter(
+        ativo=True,
+        tipo_vinculo=Servidor.VINCULO_MENSALISTA,
+        salario_mensal__gt=ZERO,
+    ).order_by("id")
+    if str(servidor_id).isdigit():
+        qs = qs.filter(pk=int(servidor_id))
+
+    servidores = []
+    for servidor in qs:
+        if (
+            servidor.data_inicio_contrato
+            and servidor.data_inicio_contrato > data_final
+        ):
+            continue
+        if servidor.data_fim_contrato and servidor.data_fim_contrato < data_inicial:
+            continue
+        servidores.append(servidor)
+    return servidores
+
+
+def _historico_cobre_competencia(historicos, competencia):
+    inicio = inicio_do_mes(competencia)
+    fim = fim_do_mes(competencia)
+    return any(
+        historico.data_inicio <= inicio
+        and (historico.data_fim is None or historico.data_fim >= fim)
+        for historico in historicos
+    )
+
+
+def _analisar_cobertura_salarial(
+    *,
+    data_inicial,
+    data_final,
+    servidor_id,
+    existencia,
+    ativo,
+    ocorrencias,
+):
+    for ocorrencia in ocorrencias:
+        if not ocorrencia.ativo or ocorrencia.status == STATUS_CANCELADO:
+            continue
+        if not _ocorrencia_salarial_estruturada(ocorrencia):
+            return False, MOTIVO_SALARIO_LEGADO
+
+    quantidade_meses = (
+        (data_final.year - data_inicial.year) * 12
+        + data_final.month
+        - data_inicial.month
+        + 1
+    )
+    if quantidade_meses > 120:
+        return False, MOTIVO_PERIODO_COBERTURA_EXCEDIDO
+
+    servidores = _servidores_mensalistas_esperados(
+        data_inicial=data_inicial,
+        data_final=data_final,
+        servidor_id=servidor_id,
+        existencia=existencia,
+        ativo=ativo,
+    )
+    if not servidores:
+        return True, ""
+
+    servidor_ids = [servidor.pk for servidor in servidores]
+    planos_por_servidor = {
+        plano.servidor_id: plano
+        for plano in PlanoCustoRecorrente.objects.filter(
+            servidor_id__in=servidor_ids,
+            origem=PlanoCustoRecorrente.ORIGEM_SALARIO,
+        ).order_by("servidor_id", "id")
+    }
+    historicos_por_servidor = defaultdict(list)
+    for historico in HistoricoSalarialServidor.objects.filter(
+        servidor_id__in=servidor_ids,
+        data_inicio__lte=fim_do_mes(data_final),
+    ).filter(
+        Q(data_fim__isnull=True) | Q(data_fim__gte=inicio_do_mes(data_inicial))
+    ).order_by("servidor_id", "data_inicio", "id"):
+        historicos_por_servidor[historico.servidor_id].append(historico)
+
+    ocorrencias_materializadas = {
+        (ocorrencia.plano_recorrente_id, inicio_do_mes(ocorrencia.competencia))
+        for ocorrencia in ocorrencias
+        if ocorrencia.plano_recorrente_id and ocorrencia.competencia
+    }
+    competencia_atual = inicio_do_mes(timezone.localdate())
+
+    for servidor in servidores:
+        if not all(
+            [
+                servidor.data_inicio_contrato,
+                servidor.dia_pagamento_salario,
+                servidor.data_autorizacao_custo_salarial,
+            ]
+        ):
+            return False, MOTIVO_CONFIGURACAO_SALARIAL
+
+        plano = planos_por_servidor.get(servidor.pk)
+        if not plano or not plano.ativo:
+            return False, MOTIVO_CONFIGURACAO_SALARIAL
+
+        for competencia in iterar_competencias(data_inicial, data_final):
+            vencimento = data_vencimento_da_competencia(
+                competencia,
+                servidor.dia_pagamento_salario,
+            )
+            if not data_inicial <= vencimento <= data_final:
+                continue
+            if competencia > competencia_atual:
+                continue
+            if competencia < inicio_do_mes(
+                servidor.data_autorizacao_custo_salarial
+            ):
+                continue
+
+            inicio_competencia = inicio_do_mes(competencia)
+            fim_competencia = fim_do_mes(competencia)
+            if fim_competencia < servidor.data_inicio_contrato or (
+                servidor.data_fim_contrato
+                and inicio_competencia > servidor.data_fim_contrato
+            ):
+                continue
+            if servidor.data_inicio_contrato > inicio_competencia or (
+                servidor.data_fim_contrato
+                and servidor.data_fim_contrato < fim_competencia
+            ):
+                return False, MOTIVO_OCORRENCIA_BLOQUEADA
+            if fim_competencia < plano.data_inicio or (
+                plano.data_fim and inicio_competencia > plano.data_fim
+            ):
+                return False, MOTIVO_CONFIGURACAO_SALARIAL
+            if not _historico_cobre_competencia(
+                historicos_por_servidor[servidor.pk],
+                competencia,
+            ):
+                return False, MOTIVO_OCORRENCIA_BLOQUEADA
+            if (plano.pk, inicio_competencia) not in ocorrencias_materializadas:
+                return False, MOTIVO_OCORRENCIA_AUSENTE
+
+    return True, ""
 
 
 def _novo_grupo(participacao=None, ocorrencia_salarial=None):
@@ -144,6 +358,12 @@ def custos_por_servidor(
     usuario=None,
 ):
     grupos = {}
+    pode_ver_salario = usuario_pode_acessar_custos_salariais(usuario)
+    motivo_filtro_incompativel = _motivo_filtro_incompativel(
+        servico_id=servico_id,
+        evento_id=evento_id,
+        valor_editado=valor_editado,
+    )
     participacoes = _filtrar_participacoes(
         data_inicial=data_inicial,
         data_final=data_final,
@@ -189,7 +409,14 @@ def custos_por_servidor(
             }
         )
 
-    aplicar_salarios = not servico_id and not evento_id and not valor_editado
+    ocorrencias_salariais = []
+    cobertura_salarial_completa = True
+    motivo_cobertura_salarial = ""
+    aplicar_salarios = (
+        tipo_vinculo != Servidor.VINCULO_DIARISTA
+        and pode_ver_salario
+        and not motivo_filtro_incompativel
+    )
     if aplicar_salarios:
         ocorrencias_salariais = list(
             _filtrar_ocorrencias_salariais(
@@ -203,17 +430,13 @@ def custos_por_servidor(
             )
         )
         for ocorrencia in ocorrencias_salariais:
-            historico = ocorrencia.historico_salarial
-            referencia = (
-                historico.servidor_id_snapshot
-                if historico
-                else ocorrencia.servidor_salario_id
-            )
-            if referencia is None:
-                # Uma ocorrência salarial precisa manter uma referência histórica;
-                # omitir uma linha corrompida é mais seguro que atribuí-la a outro
-                # servidor ou expor um dado não correlacionável.
+            if not ocorrencia.ativo or ocorrencia.status == STATUS_CANCELADO:
                 continue
+            if not _ocorrencia_salarial_estruturada(ocorrencia):
+                # Registros parciais nunca são associados por nome nem entram em
+                # totais; a cobertura semântica informa a inconsistência.
+                continue
+            referencia = _referencia_ocorrencia_salarial(ocorrencia)
             grupos.setdefault(
                 referencia,
                 _novo_grupo(ocorrencia_salarial=ocorrencia),
@@ -227,6 +450,16 @@ def custos_por_servidor(
                     "source": "MATERIALIZED_SALARY_OCCURRENCE",
                 }
             )
+        cobertura_salarial_completa, motivo_cobertura_salarial = (
+            _analisar_cobertura_salarial(
+                data_inicial=data_inicial,
+                data_final=data_final,
+                servidor_id=servidor_id,
+                existencia=existencia,
+                ativo=ativo,
+                ocorrencias=ocorrencias_salariais,
+            )
+        )
 
     resultado = []
     for grupo in grupos.values():
@@ -239,7 +472,9 @@ def custos_por_servidor(
         grupo["services"] = sorted(grupo["services"].values(), key=lambda item: item["name"])
         grupo["eventCount"] = len({item["eventId"] for item in grupo["participations"]})
         grupo["participationCostTotal"] = f"{total_participacoes:.2f}"
-        grupo["salaryCostTotal"] = f"{total_salarios:.2f}"
+        grupo["salaryCostTotal"] = (
+            f"{total_salarios:.2f}" if pode_ver_salario else None
+        )
         grupo["managerialAppropriationTotal"] = "0.00"
         grupo["totalByServer"] = f"{quantizar_moeda(total_participacoes + total_salarios):.2f}"
         resultado.append(grupo)
@@ -248,6 +483,63 @@ def custos_por_servidor(
     total_periodo = quantizar_moeda(
         sum((Decimal(item["totalByServer"]) for item in resultado), ZERO)
     )
+    total_diaristas = quantizar_moeda(
+        sum((Decimal(item["participationCostTotal"]) for item in resultado), ZERO)
+    )
+    total_salarios = quantizar_moeda(
+        sum(
+            (
+                Decimal(item["salaryCostTotal"])
+                for item in resultado
+                if item["salaryCostTotal"] is not None
+            ),
+            ZERO,
+        )
+    )
+
+    estado_diaristas = (
+        ESTADO_FORA_FILTRO
+        if tipo_vinculo == Servidor.VINCULO_MENSALISTA
+        else ESTADO_CALCULADO
+    )
+    motivo_diaristas = (
+        "LINK_TYPE_MONTHLY_ONLY"
+        if estado_diaristas == ESTADO_FORA_FILTRO
+        else ""
+    )
+    if tipo_vinculo == Servidor.VINCULO_DIARISTA:
+        estado_salarios = ESTADO_FORA_FILTRO
+        motivo_salarios = "LINK_TYPE_DAILY_ONLY"
+    elif not pode_ver_salario:
+        estado_salarios = ESTADO_RESTRITO
+        motivo_salarios = MOTIVO_SEM_PERMISSAO_SALARIAL
+    elif motivo_filtro_incompativel:
+        estado_salarios = ESTADO_NAO_APLICAVEL
+        motivo_salarios = motivo_filtro_incompativel
+    elif not cobertura_salarial_completa:
+        estado_salarios = ESTADO_INCOMPLETO
+        motivo_salarios = motivo_cobertura_salarial
+    else:
+        estado_salarios = ESTADO_CALCULADO
+        motivo_salarios = ""
+
+    if tipo_vinculo == Servidor.VINCULO_DIARISTA:
+        estado_total = ESTADO_CALCULADO
+        motivo_total = ""
+        total_equipe = total_diaristas
+    elif estado_salarios == ESTADO_CALCULADO:
+        estado_total = ESTADO_CALCULADO
+        motivo_total = ""
+        total_equipe = (
+            total_salarios
+            if tipo_vinculo == Servidor.VINCULO_MENSALISTA
+            else quantizar_moeda(total_diaristas + total_salarios)
+        )
+    else:
+        estado_total = estado_salarios
+        motivo_total = motivo_salarios
+        total_equipe = None
+
     return {
         "servers": resultado,
         "summary": {
@@ -259,8 +551,33 @@ def custos_por_servidor(
                     for item in grupo["participations"]
                 }
             ),
+            "diaristCostTotal": (
+                f"{total_diaristas:.2f}"
+                if estado_diaristas == ESTADO_CALCULADO
+                else None
+            ),
+            "diaristCostState": estado_diaristas,
+            "diaristCostReason": motivo_diaristas,
+            "monthlySalaryTotal": (
+                f"{total_salarios:.2f}"
+                if estado_salarios == ESTADO_CALCULADO
+                else None
+            ),
+            "monthlySalaryState": estado_salarios,
+            "monthlySalaryReason": motivo_salarios,
+            "teamCostTotal": (
+                f"{total_equipe:.2f}" if total_equipe is not None else None
+            ),
+            "teamCostState": estado_total,
+            "teamCostReason": motivo_total,
             "totalPeriod": f"{total_periodo:.2f}",
             "managerialAppropriationTotal": "0.00",
             "managerialAppropriationCalculated": False,
+        },
+        "meta": {
+            "diaristPeriodBasis": "eventStartDate",
+            "salaryPeriodBasis": "dueDate",
+            "salaryValueBasis": "plannedMaterializedAmount",
+            "salaryCoverage": estado_salarios,
         },
     }
