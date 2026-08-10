@@ -187,15 +187,10 @@ class ConfiguracaoFinanceira(models.Model):
                 ),
                 name="ck_config_fin_valores_nn",
             ),
-            models.UniqueConstraint(
-                fields=["ativa"],
-                condition=models.Q(ativa=True),
-                name="uq_config_fin_ativa",
-            ),
         ]
 
     def __str__(self):
-        status = "Ativa" if self.ativa else "Inativa"
+        status = "Disponível" if self.ativa else "Indisponível"
         return f"{self.nome} - {status}"
 
     def clean(self):
@@ -204,15 +199,6 @@ class ConfiguracaoFinanceira(models.Model):
 
         if self.aliquota_imposto < 0:
             raise ValidationError("A alíquota de imposto não pode ser negativa.")
-
-        if self.ativa:
-            qs = ConfiguracaoFinanceira.objects.filter(ativa=True)
-            if self.pk:
-                qs = qs.exclude(pk=self.pk)
-
-            if qs.exists():
-                raise ValidationError("Já existe outra configuração financeira ativa.")
-
 
 class Cliente(models.Model):
     TIPO_PESSOA_CHOICES = [

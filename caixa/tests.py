@@ -44253,22 +44253,25 @@ class PagamentosEventoTests(TenantScopedTestCase):
 
 
 class ModelagemIntegridadeBancoTests(TenantScopedTestCase):
-    def test_configuracao_financeira_permite_apenas_uma_ativa_no_banco(self):
+    def test_configuracao_financeira_permite_multiplas_ativas_no_banco(self):
         ConfiguracaoFinanceira.objects.create(
             nome="Padrao",
             ativa=True,
             data_inicio_vigencia=date(2026, 1, 1),
         )
 
-        with self.assertRaises(IntegrityError):
-            with transaction.atomic():
-                ConfiguracaoFinanceira.objects.bulk_create([
-                    ConfiguracaoFinanceira(
-                        nome="Outra ativa",
-                        ativa=True,
-                        data_inicio_vigencia=date(2026, 2, 1),
-                    )
-                ])
+        ConfiguracaoFinanceira.objects.bulk_create([
+            ConfiguracaoFinanceira(
+                nome="Outra ativa",
+                ativa=True,
+                data_inicio_vigencia=date(2026, 2, 1),
+            )
+        ])
+
+        self.assertEqual(
+            ConfiguracaoFinanceira.objects.filter(ativa=True).count(),
+            2,
+        )
 
     def test_evento_nao_permite_periodo_invertido_no_banco(self):
         cliente = Cliente.objects.create(
@@ -48814,6 +48817,7 @@ class OrcamentosApiTests(TenantScopedTestCase):
                 "clientDisplayName",
                 "configurationId",
                 "configurationName",
+                "configurationOption",
                 "eventName",
                 "eventDate",
                 "local",
@@ -48834,6 +48838,28 @@ class OrcamentosApiTests(TenantScopedTestCase):
                 "isSeed",
                 "isReadOnly",
             },
+        )
+        self.assertEqual(
+            set(budget["configurationOption"]),
+            {
+                "id",
+                "name",
+                "displayName",
+                "isActive",
+                "effectiveDate",
+                "mealAmount",
+                "transportAmount",
+                "profitMargin",
+                "taxRate",
+            },
+        )
+        self.assertEqual(
+            budget["configurationOption"]["id"],
+            budget["configurationId"],
+        )
+        self.assertEqual(
+            budget["configurationOption"]["displayName"],
+            budget["configurationName"],
         )
         self.assertEqual(
             set(budget["items"][0]),

@@ -832,6 +832,20 @@ class DemoSeedProtectionTests(MultiTenantTestCase):
             )
             self.assertTrue(seed_configuration.ativa)
             count_before = ConfiguracaoFinanceira.objects.count()
+            active_count_before = ConfiguracaoFinanceira.objects.filter(
+                ativa=True
+            ).count()
+            seed_state_before = {
+                "nome": seed_configuration.nome,
+                "valor_alimentacao": seed_configuration.valor_alimentacao,
+                "valor_transporte": seed_configuration.valor_transporte,
+                "margem_lucro": seed_configuration.margem_lucro,
+                "aliquota_imposto": seed_configuration.aliquota_imposto,
+                "ativa": seed_configuration.ativa,
+                "data_inicio_vigencia": seed_configuration.data_inicio_vigencia,
+                "observacao": seed_configuration.observacao,
+                "demo_seed_key": seed_configuration.demo_seed_key,
+            }
 
         response = self.tenant_client.post(
             reverse("caixa:api_configuracoes_financeiras"),
@@ -848,11 +862,32 @@ class DemoSeedProtectionTests(MultiTenantTestCase):
             ),
             content_type="application/json",
         )
-        self.assertEqual(response.status_code, 403, response.content)
+        self.assertEqual(response.status_code, 201, response.content)
+        common_active_id = response.json()["data"]["configuration"]["id"]
         with schema_context("demo2"):
             seed_configuration.refresh_from_db()
+            seed_state_after = {
+                "nome": seed_configuration.nome,
+                "valor_alimentacao": seed_configuration.valor_alimentacao,
+                "valor_transporte": seed_configuration.valor_transporte,
+                "margem_lucro": seed_configuration.margem_lucro,
+                "aliquota_imposto": seed_configuration.aliquota_imposto,
+                "ativa": seed_configuration.ativa,
+                "data_inicio_vigencia": seed_configuration.data_inicio_vigencia,
+                "observacao": seed_configuration.observacao,
+                "demo_seed_key": seed_configuration.demo_seed_key,
+            }
+            common_active = ConfiguracaoFinanceira.objects.get(pk=common_active_id)
+
+            self.assertEqual(seed_state_after, seed_state_before)
             self.assertTrue(seed_configuration.ativa)
-            self.assertEqual(ConfiguracaoFinanceira.objects.count(), count_before)
+            self.assertTrue(common_active.ativa)
+            self.assertIsNone(common_active.demo_seed_key)
+            self.assertEqual(ConfiguracaoFinanceira.objects.count(), count_before + 1)
+            self.assertEqual(
+                ConfiguracaoFinanceira.objects.filter(ativa=True).count(),
+                active_count_before + 1,
+            )
 
         inactive_response = self.tenant_client.post(
             reverse("caixa:api_configuracoes_financeiras"),

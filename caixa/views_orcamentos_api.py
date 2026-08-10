@@ -59,6 +59,12 @@ ITEM_EDITABLE_VALUE_FIELDS = {
     "margem_lucro_usada",
     "aliquota_imposto_usada",
 }
+ITEM_CONFIGURATION_VALUE_FIELDS = {
+    "valor_alimentacao_usado",
+    "valor_transporte_usado",
+    "margem_lucro_usada",
+    "aliquota_imposto_usada",
+}
 ITEM_HISTORICAL_SNAPSHOT_FIELDS = {
     "horas_base_diaria_usada",
     "percentual_hora_extra_usado",
@@ -421,6 +427,11 @@ def _serialize_orcamento(orcamento):
         "clientDisplayName": dimensao["clientDisplayName"],
         "configurationId": orcamento.configuracao_financeira_id,
         "configurationName": str(configuracao) if configuracao is not None else "",
+        "configurationOption": (
+            _serialize_configuracao_option(configuracao)
+            if configuracao is not None
+            else None
+        ),
         "eventName": orcamento.nome_evento,
         "eventDate": _date_or_empty(orcamento.data_evento),
         "local": orcamento.local,
@@ -448,7 +459,16 @@ def _serialize_orcamento(orcamento):
     }
 
 
-def _filter_options():
+def _filter_options(*, current_configuration=None):
+    configurations = list(
+        ConfiguracaoFinanceira.objects.filter(ativa=True).order_by(
+            "-data_inicio_vigencia",
+            "-id",
+        )
+    )
+    if current_configuration is not None and not current_configuration.ativa:
+        configurations.insert(0, current_configuration)
+
     return {
         "statuses": _choice_options(status_orcamentos_para_filtro()),
         "editableStatuses": _choice_options(
@@ -464,11 +484,7 @@ def _filter_options():
         ],
         "configurations": [
             _serialize_configuracao_option(configuracao)
-            for configuracao in ConfiguracaoFinanceira.objects.order_by(
-                "-ativa",
-                "-data_inicio_vigencia",
-                "-id",
-            )
+            for configuracao in configurations
         ],
         "services": [
             _serialize_servico_option(servico)
@@ -911,7 +927,12 @@ def _resolve_existing_item_for_payload(
     return itens_by_position_service.get((payload_index, service_id))
 
 
-def _prepare_items_for_recreation(orcamento, itens_data):
+def _prepare_items_for_recreation(
+    orcamento,
+    itens_data,
+    *,
+    configuration_changed=False,
+):
     itens_by_id, itens_by_position_service, ambiguous_service_ids = (
         _existing_item_resolution_context(orcamento)
     )
@@ -938,6 +959,13 @@ def _prepare_items_for_recreation(orcamento, itens_data):
         )
         item_data.pop("_existing_item_id", None)
         item_data.pop("_payload_index", None)
+        editable_fields = ITEM_EDITABLE_VALUE_FIELDS
+        if configuration_changed:
+            for field in ITEM_CONFIGURATION_VALUE_FIELDS:
+                item_data.pop(field, None)
+            editable_fields = (
+                ITEM_EDITABLE_VALUE_FIELDS - ITEM_CONFIGURATION_VALUE_FIELDS
+            )
 
         if existing_item is not None:
             backend_values = _backend_authority_values_from_item(existing_item)
@@ -945,12 +973,12 @@ def _prepare_items_for_recreation(orcamento, itens_data):
                 item_data.pop(field, None)
             submitted_editable_values = {
                 field: item_data.pop(field)
-                for field in ITEM_EDITABLE_VALUE_FIELDS
+                for field in editable_fields
                 if field in item_data
             }
             post_save_values = {
                 field: getattr(existing_item, field)
-                for field in ITEM_EDITABLE_VALUE_FIELDS
+                for field in editable_fields
             }
             post_save_values.update(submitted_editable_values)
             post_save_values.update(backend_values)
@@ -959,7 +987,7 @@ def _prepare_items_for_recreation(orcamento, itens_data):
                 item_data.pop(field, None)
             post_save_values = {
                 field: item_data.pop(field)
-                for field in ITEM_EDITABLE_VALUE_FIELDS
+                for field in editable_fields
                 if field in item_data
             }
 
@@ -988,6 +1016,33 @@ def _save_prepared_budget_item(orcamento, prepared_item):
     return item
 
 
+def _configuration_for_budget(configuration_id, *, current_configuration_id=None):
+    try:
+        configuration = ConfiguracaoFinanceira.objects.select_for_update().get(
+            pk=configuration_id
+        )
+    except ConfiguracaoFinanceira.DoesNotExist as error:
+        raise ValidationError(
+            {"configurationId": "Selecione uma configuracao financeira valida."}
+        ) from error
+
+    keeps_historical_configuration = (
+        current_configuration_id is not None
+        and configuration.id == current_configuration_id
+    )
+    if not configuration.ativa and not keeps_historical_configuration:
+        raise ValidationError(
+            {
+                "configurationId": (
+                    "A configuracao financeira selecionada nao esta disponivel "
+                    "para orcamentos."
+                )
+            }
+        )
+
+    return configuration
+
+
 def _salvar_orcamento_from_payload(payload, *, orcamento=None, user=None):
     assert_demo_write_allowed(
         user,
@@ -997,20 +1052,41 @@ def _salvar_orcamento_from_payload(payload, *, orcamento=None, user=None):
     orcamento_data = _orcamento_data_from_payload(payload)
     itens_data = _itens_from_payload(payload)
     custos_extras_data = _custos_extras_from_payload(payload)
-    prepared_items = _prepare_items_for_recreation(orcamento, itens_data)
-
-    if orcamento is not None and orcamento.status not in EDITABLE_BUDGET_STATUSES:
-        raise ValidationError(
-            {
-                "status": (
-                    "Orçamentos aprovados, recusados ou cancelados ficam somente "
-                    "leitura no Next."
+    with transaction.atomic():
+        if orcamento is not None:
+            orcamento = Orcamento.objects.select_for_update().get(pk=orcamento.pk)
+            if orcamento.status not in EDITABLE_BUDGET_STATUSES:
+                raise ValidationError(
+                    {
+                        "status": (
+                            "Orçamentos aprovados, recusados ou cancelados ficam "
+                            "somente leitura no Next."
+                        )
+                    }
                 )
-            }
+
+        current_configuration_id = (
+            orcamento.configuracao_financeira_id
+            if orcamento is not None
+            else None
+        )
+        configuration = _configuration_for_budget(
+            orcamento_data["configuracao_financeira_id"],
+            current_configuration_id=current_configuration_id,
+        )
+        configuration_changed = bool(
+            current_configuration_id is not None
+            and current_configuration_id != configuration.id
+        )
+        prepared_items = _prepare_items_for_recreation(
+            orcamento,
+            itens_data,
+            configuration_changed=configuration_changed,
         )
 
-    with transaction.atomic():
         orcamento = orcamento or Orcamento()
+        orcamento_data["configuracao_financeira"] = configuration
+        orcamento_data.pop("configuracao_financeira_id", None)
 
         for field, value in orcamento_data.items():
             setattr(orcamento, field, value)
@@ -1205,7 +1281,9 @@ def api_orcamento_detalhe(request, pk):
                     "data": {
                         "budget": _serialize_orcamento(orcamento),
                         "permissions": _permissions_payload(request.user),
-                        "filterOptions": _filter_options(),
+                        "filterOptions": _filter_options(
+                            current_configuration=orcamento.configuracao_financeira
+                        ),
                         "meta": {"source": "backend"},
                     }
                 },
