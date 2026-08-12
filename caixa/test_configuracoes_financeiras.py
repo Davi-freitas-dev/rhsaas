@@ -1,14 +1,24 @@
 import json
 from datetime import date
 from decimal import Decimal
+from threading import Event, Lock, Thread
+from time import monotonic
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.db import close_old_connections, connection
 from django.test import Client
 from django.urls import reverse
 
-from tenancy.test_helpers import MultiTenantTestCase, TenantAppTestCase
+from tenancy.test_helpers import (
+    MultiTenantTestCase,
+    TenantAppTestCase,
+    TenantTransactionTestCase,
+)
 
+from . import views_orcamentos_api
 from .models import Cliente, ConfiguracaoFinanceira, Orcamento, Servico
+from .views_configuracoes_financeiras_api import _salvar_configuracao_response
 
 
 class MultiplasConfiguracoesFinanceirasAtivasTests(TenantAppTestCase):
@@ -512,6 +522,188 @@ class MultiplasConfiguracoesFinanceirasAtivasTests(TenantAppTestCase):
 
     def test_orcamento_cancelado_permanece_congelado(self):
         self._assert_closed_budget_rejects_configuration_change("cancelado")
+
+
+class ConfiguracaoFinanceiraConcorrenciaPostgreSQLTests(TenantTransactionTestCase):
+    def setUp(self):
+        super().setUp()
+        if connection.vendor != "postgresql":
+            self.skipTest("Concorrencia de configuracao financeira exige PostgreSQL.")
+
+        self.usuario = get_user_model().objects.create_superuser(
+            username="configuracao-concorrente",
+            email="configuracao-concorrente@example.com",
+            password="senha-segura",
+        )
+        self.cliente = Cliente.objects.create(
+            nome_razao_social="Cliente Concorrencia Configuracao",
+            tipo_pessoa="PJ",
+            cpf_cnpj="98.765.432/0001-10",
+        )
+        self.servico = Servico.objects.create(
+            nome="Servico Concorrencia Configuracao",
+            codigo="servico-configuracao-concorrente",
+            diaria_padrao=Decimal("100.00"),
+            valor_unitario=Decimal("100.00"),
+            horas_base_diaria=8,
+            percentual_hora_extra=Decimal("2.00"),
+        )
+        self.configuracao = ConfiguracaoFinanceira.objects.create(
+            nome="Configuracao concorrente",
+            valor_alimentacao=Decimal("10.00"),
+            valor_transporte=Decimal("5.00"),
+            margem_lucro=Decimal("0.10"),
+            aliquota_imposto=Decimal("0.01"),
+            ativa=True,
+            data_inicio_vigencia=date(2026, 1, 1),
+        )
+
+    def _orcamento_payload(self):
+        return {
+            "clientId": self.cliente.pk,
+            "configurationId": self.configuracao.pk,
+            "number": "ORC-CONFIG-CONCORRENTE",
+            "eventName": "Evento concorrente",
+            "eventDate": "2026-05-20",
+            "local": "Local",
+            "validUntil": "2026-05-15",
+            "status": "rascunho",
+            "notes": "",
+            "items": [
+                {
+                    "serviceId": self.servico.pk,
+                    "hoursPerDay": "8.00",
+                    "daysCount": 1,
+                    "peopleCount": 1,
+                }
+            ],
+            "extraCosts": [],
+        }
+
+    def _backend_waits_for_lock(self, backend_pid, finished):
+        deadline = monotonic() + 10
+        while monotonic() < deadline:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT wait_event_type FROM pg_stat_activity WHERE pid = %s",
+                    [backend_pid],
+                )
+                row = cursor.fetchone()
+            if row and row[0] == "Lock":
+                return True
+            if finished.wait(0.02):
+                return False
+        return False
+
+    def test_inativacao_aguarda_orcamento_persistir_apos_validacao_com_lock(self):
+        configuration_locked = Event()
+        release_budget = Event()
+        deactivation_backend_ready = Event()
+        deactivation_finished = Event()
+        result_lock = Lock()
+        results = {}
+        errors = []
+        original_configuration_loader = (
+            views_orcamentos_api._configuration_for_budget
+        )
+
+        def locked_configuration_loader(*args, **kwargs):
+            configuration = original_configuration_loader(*args, **kwargs)
+            configuration_locked.set()
+            if not release_budget.wait(timeout=15):
+                raise TimeoutError("O teste nao liberou a gravacao do orcamento.")
+            return configuration
+
+        def save_budget():
+            close_old_connections()
+            connection.set_tenant(self.primary_tenant)
+            try:
+                user = get_user_model().objects.get(pk=self.usuario.pk)
+                with patch.object(
+                    views_orcamentos_api,
+                    "_configuration_for_budget",
+                    side_effect=locked_configuration_loader,
+                ):
+                    budget = views_orcamentos_api._salvar_orcamento_from_payload(
+                        self._orcamento_payload(),
+                        user=user,
+                    )
+                with result_lock:
+                    results["budget_id"] = budget.pk
+            except Exception as error:
+                with result_lock:
+                    errors.append(error)
+            finally:
+                close_old_connections()
+
+        def deactivate_configuration():
+            if not configuration_locked.wait(timeout=15):
+                with result_lock:
+                    errors.append(
+                        TimeoutError("O orcamento nao bloqueou a configuracao.")
+                    )
+                deactivation_finished.set()
+                return
+
+            close_old_connections()
+            connection.set_tenant(self.primary_tenant)
+            try:
+                configuration = ConfiguracaoFinanceira.objects.get(
+                    pk=self.configuracao.pk
+                )
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT pg_backend_pid()")
+                    backend_pid = cursor.fetchone()[0]
+                with result_lock:
+                    results["deactivation_backend_pid"] = backend_pid
+                deactivation_backend_ready.set()
+
+                configuration.ativa = False
+                response = _salvar_configuracao_response(
+                    configuration,
+                    success_message="Configuracao financeira atualizada com sucesso.",
+                )
+                with result_lock:
+                    results["deactivation_status"] = response.status_code
+            except Exception as error:
+                with result_lock:
+                    errors.append(error)
+            finally:
+                deactivation_finished.set()
+                close_old_connections()
+
+        budget_thread = Thread(target=save_budget)
+        deactivation_thread = Thread(target=deactivate_configuration)
+        budget_thread.start()
+        try:
+            self.assertTrue(configuration_locked.wait(timeout=15))
+            deactivation_thread.start()
+            self.assertTrue(deactivation_backend_ready.wait(timeout=15))
+            self.assertTrue(
+                self._backend_waits_for_lock(
+                    results["deactivation_backend_pid"],
+                    deactivation_finished,
+                ),
+                "A inativacao deveria aguardar o row lock da configuracao.",
+            )
+        finally:
+            release_budget.set()
+            budget_thread.join(timeout=30)
+            if deactivation_thread.ident is not None:
+                deactivation_thread.join(timeout=30)
+
+        self.assertFalse(budget_thread.is_alive())
+        self.assertFalse(deactivation_thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(results["deactivation_status"], 200)
+
+        self.configuracao.refresh_from_db()
+        budget = Orcamento.objects.get(pk=results["budget_id"])
+        self.assertFalse(self.configuracao.ativa)
+        self.assertEqual(
+            budget.configuracao_financeira_id,
+            self.configuracao.pk,
+        )
 
 
 class ConfiguracoesFinanceirasMultiTenantTests(MultiTenantTestCase):

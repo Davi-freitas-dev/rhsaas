@@ -1,0 +1,242 @@
+name: Backend quality
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.13"
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  DJANGO_SETTINGS_MODULE: config.settings
+  DEBUG: "True"
+  SECRET_KEY: ci-only-secret-key-with-more-than-fifty-characters-not-for-production
+  ALLOWED_HOSTS: .localhost,localhost,127.0.0.1,testserver,ci.localhost
+  CSRF_TRUSTED_ORIGINS: http://localhost,http://127.0.0.1
+  CORS_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+  DATABASE_URL: postgres://rhsaas_ci:rhsaas_ci@127.0.0.1:5432/rhsaas_ci
+  DB_CONN_MAX_AGE: "0"
+  DB_CONN_HEALTH_CHECKS: "False"
+  CACHE_BACKEND: django.core.cache.backends.locmem.LocMemCache
+  CACHE_LOCATION: rhsaas-ci
+  CACHE_KEY_PREFIX: rhsaas-ci
+  EMAIL_BACKEND: django.core.mail.backends.locmem.EmailBackend
+  DEMO_PUBLIC_LEASE_ENABLED: "False"
+
+jobs:
+  checks-and-migrations:
+    name: Checks and clean migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: rhsaas_ci
+          POSTGRES_USER: rhsaas_ci
+          POSTGRES_PASSWORD: rhsaas_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rhsaas_ci -d rhsaas_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --requirement requirements.txt
+
+      - name: Check whitespace errors
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            git diff --check "${{ github.event.pull_request.base.sha }}...$GITHUB_SHA"
+          elif [[ "$GITHUB_EVENT_NAME" == "push" ]] &&
+               [[ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]] &&
+               git cat-file -e "${{ github.event.before }}^{commit}"; then
+            git diff --check "${{ github.event.before }}..$GITHUB_SHA"
+          else
+            git diff-tree --check --root -r "$GITHUB_SHA"
+          fi
+
+      - name: Run Django system checks
+        run: python manage.py check
+
+      - name: Run Django deployment checks
+        env:
+          DEBUG: "False"
+          ALLOWED_HOSTS: ci.localhost
+          CSRF_TRUSTED_ORIGINS: https://ci.localhost
+          CORS_ALLOWED_ORIGINS: https://ci.localhost
+          NEXT_FRONTEND_URL: https://ci.localhost
+          CACHE_BACKEND: django.core.cache.backends.redis.RedisCache
+          CACHE_LOCATION: redis://127.0.0.1:6379/1
+          SESSION_COOKIE_SECURE: "True"
+          CSRF_COOKIE_SECURE: "True"
+          SECURE_SSL_REDIRECT: "True"
+          SECURE_PROXY_SSL_HEADER: "True"
+          SECURE_HSTS_SECONDS: "3600"
+          SECURE_HSTS_INCLUDE_SUBDOMAINS: "True"
+          SECURE_HSTS_PRELOAD: "True"
+        run: python manage.py check --deploy --fail-level ERROR
+
+      - name: Check for missing migrations
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Apply shared migrations to a clean database
+        run: python manage.py migrate_schemas --shared --noinput
+
+      - name: Create and migrate a clean tenant schema
+        run: |
+          python manage.py shell <<'PY'
+          from tenancy.models import Domain, Tenant
+
+          tenant = Tenant(schema_name="ci_tenant", name="CI Tenant")
+          tenant.save(verbosity=0)
+          Domain.objects.create(
+              tenant=tenant,
+              domain="ci.localhost",
+              is_primary=True,
+          )
+          PY
+          python manage.py migrate_schemas --tenant --noinput
+
+      - name: Validate shared and tenant migration boundaries
+        run: |
+          python manage.py shell <<'PY'
+          from django.db import connection
+
+          with connection.cursor() as cursor:
+              cursor.execute(
+                  """
+                  SELECT
+                      to_regclass('public.tenancy_tenant'),
+                      to_regclass('public.caixa_orcamento'),
+                      to_regclass('ci_tenant.tenancy_tenant'),
+                      to_regclass('ci_tenant.caixa_orcamento')
+                  """
+              )
+              public_tenant, public_budget, tenant_tenant, tenant_budget = cursor.fetchone()
+
+          assert public_tenant is not None, "Shared tenancy tables are missing."
+          assert public_budget is None, "Tenant app tables leaked into public."
+          assert tenant_tenant is None, "Shared tenancy tables leaked into the tenant."
+          assert tenant_budget is not None, "Tenant migrations were not applied."
+          PY
+
+      - name: Confirm migration plan is exhausted
+        run: python manage.py migrate_schemas --plan
+
+  django-tests:
+    name: Full Django test suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: rhsaas_ci
+          POSTGRES_USER: rhsaas_ci
+          POSTGRES_PASSWORD: rhsaas_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rhsaas_ci -d rhsaas_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --requirement requirements.txt
+
+      - name: Run all Django tests on PostgreSQL
+        run: python manage.py test --verbosity 1
+
+  postgres-concurrency:
+    name: PostgreSQL concurrency invariants
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: rhsaas_ci
+          POSTGRES_USER: rhsaas_ci
+          POSTGRES_PASSWORD: rhsaas_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rhsaas_ci -d rhsaas_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --requirement requirements.txt
+
+      - name: Run transaction and concurrency tests
+        run: >-
+          python manage.py test
+          caixa.test_configuracoes_financeiras.ConfiguracaoFinanceiraConcorrenciaPostgreSQLTests
+          caixa.test_custos_recorrentes.ConcorrenciaCustoRecorrentePostgreSQLTests
+          caixa.test_servidores.ConcorrenciaSalarialPostgreSQLTests
+          caixa.test_servidores.EscalaDiariaConcorrenciaPostgreSQLTests
+          tenancy.test_demo_public.DemoPublicConcurrencyTests
+          --verbosity 2
