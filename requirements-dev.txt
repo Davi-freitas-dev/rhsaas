@@ -1,0 +1,6 @@
+-r requirements.txt
+
+factory-boy==3.3.3
+pytest==9.0.3
+pytest-django==4.12.0
+pytest-factoryboy==2.8.1

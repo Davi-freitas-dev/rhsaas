@@ -7,6 +7,9 @@ from .selectors_pagamentos import listar_custos_extras, listar_custos_servico
 from .services_pagamentos_custos_extras import registrar_pagamento_custo_extra_com_lock
 
 
+pytestmark = pytest.mark.usefixtures("tenant_db")
+
+
 @pytest.mark.django_db
 def test_selector_custos_servico_prefetch_evita_n_plus_one(
     django_assert_num_queries,

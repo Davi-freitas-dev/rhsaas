@@ -53,7 +53,6 @@ atlassian-ide-plugin.xml
 # Python #
 *.py[cod]
 *$py.class
-requirements-dev.txt
 
 # Distribution / packaging
 .Python build/
@@ -89,11 +88,6 @@ nosetests.xml
 coverage.xml
 *.cover
 .hypothesis/
-
-# Local pytest/factory setup
-pytest.ini
-conftest.py
-caixa/factories.py
 
 # Jupyter Notebook
 .ipynb_checkpoints
