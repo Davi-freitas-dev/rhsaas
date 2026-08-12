@@ -1282,7 +1282,10 @@ def api_orcamento_detalhe(request, pk):
                         "budget": _serialize_orcamento(orcamento),
                         "permissions": _permissions_payload(request.user),
                         "filterOptions": _filter_options(
-                            current_configuration=orcamento.configuracao_financeira
+                            current_configuration=relacao_carregada(
+                                orcamento,
+                                "configuracao_financeira",
+                            )
                         ),
                         "meta": {"source": "backend"},
                     }
