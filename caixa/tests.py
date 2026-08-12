@@ -25089,6 +25089,7 @@ class FiltrosHtmlTests(TenantScopedTestCase):
             "--exigir-backup-ref",
             "--release-ref=release-pm02-abc",
             "--backup-ref=backup_banco_pm02.json",
+            "--frontend-ref=frontend-pm02-abc",
             "--ambiente=producao",
             stdout=saida_com_refs_sem_flags,
         )
@@ -25096,6 +25097,11 @@ class FiltrosHtmlTests(TenantScopedTestCase):
 
         self.assertTrue(payload_com_refs_sem_flags["ready"])
         self.assertTrue(payload_com_refs_sem_flags["manualEvidenceComplete"])
+        frontend_evidence = {
+            evidence["key"]: evidence
+            for evidence in payload_com_refs_sem_flags["manualEvidenceStatus"]
+        }["frontendReference"]
+        self.assertEqual(frontend_evidence["value"], "frontend-pm02-abc")
         self.assertFalse(payload_com_refs_sem_flags["strictServerFlagsComplete"])
         self.assertFalse(payload_com_refs_sem_flags["pm02ClosureReady"])
         self.assertIn(
