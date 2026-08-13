@@ -39961,10 +39961,30 @@ class FiltrosHtmlTests(TenantScopedTestCase):
             {"startDate": "2026-01-01", "endDate": "2026-02-28"},
         )
         payload = response.json()["data"]
+        serie_total = payload["revenueExpense"]
         serie = payload["operationalRevenueExpense"]
         fco = payload["cashFlow"]["cashFlows"]["fco"]
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            serie_total,
+            [
+                {
+                    "month": "Jan/26",
+                    "receitas": 1400.0,
+                    "revenueAmount": 1400.0,
+                    "despesas": 200.0,
+                    "expenseAmount": 200.0,
+                },
+                {
+                    "month": "Fev/26",
+                    "receitas": 300.0,
+                    "revenueAmount": 300.0,
+                    "despesas": 110.0,
+                    "expenseAmount": 110.0,
+                },
+            ],
+        )
         self.assertEqual(
             serie,
             [
@@ -39979,6 +39999,10 @@ class FiltrosHtmlTests(TenantScopedTestCase):
                     "operationalExpenseAmount": 70.0,
                 },
             ],
+        )
+        self.assertEqual(
+            [item["month"] for item in serie_total],
+            [item["month"] for item in serie],
         )
         self.assertEqual(
             sum(item["operationalRevenueAmount"] for item in serie),
