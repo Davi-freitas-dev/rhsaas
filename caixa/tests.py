@@ -25119,6 +25119,7 @@ class FiltrosHtmlTests(TenantScopedTestCase):
                 "--exigir-backup-ref",
                 "--release-ref=release-pm02-abc",
                 "--backup-ref=backup_banco_pm02.json",
+                "--frontend-ref=frontend-pm02-abc",
                 "--ambiente=producao",
                 "--exigir-fechamento-pm02",
                 stdout=StringIO(),
