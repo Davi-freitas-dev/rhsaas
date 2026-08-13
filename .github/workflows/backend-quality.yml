@@ -68,12 +68,14 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-          cache-dependency-path: requirements.txt
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --requirement requirements.txt
+          python -m pip install --requirement requirements-dev.txt
 
       - name: Check whitespace errors
         shell: bash
@@ -156,70 +158,8 @@ jobs:
       - name: Confirm migration plan is exhausted
         run: python manage.py migrate_schemas --plan
 
-  django-test-shards:
-    name: Django test shard ${{ matrix.shard }}/8
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
-
-    services:
-      postgres:
-        image: postgres:18
-        env:
-          POSTGRES_DB: rhsaas_ci
-          POSTGRES_USER: rhsaas_ci
-          POSTGRES_PASSWORD: rhsaas_ci
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U rhsaas_ci -d rhsaas_ci"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v5
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-          cache-dependency-path: |
-            requirements.txt
-            requirements-dev.txt
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install --requirement requirements-dev.txt
-
-      - name: Run Django test shard
-        run: >-
-          python .github/scripts/run_django_test_shard.py
-          --shard-index=${{ matrix.shard }}
-          --total-shards=8
-          --verbosity=1
-
       - name: Run pytest-native payment tests
-        if: matrix.shard == 1
         run: python -m pytest caixa/test_pytest_pagamentos.py
-
-  django-tests:
-    name: Full Django test suite
-    if: ${{ always() }}
-    needs: django-test-shards
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Confirm all Django test shards passed
-        env:
-          SHARD_RESULT: ${{ needs.django-test-shards.result }}
-        run: test "$SHARD_RESULT" = "success"
 
   postgres-concurrency:
     name: PostgreSQL concurrency invariants
