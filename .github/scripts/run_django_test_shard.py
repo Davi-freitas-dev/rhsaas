@@ -66,7 +66,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         from django.test.utils import iter_test_cases
 
         runner = runner_class(verbosity=0, interactive=False)
-        tests = sorted(iter_test_cases(runner.build_suite([])), key=lambda test: test.id())
+        tests = list(iter_test_cases(runner.build_suite([])))
         selected_tests = select_shard(
             tests,
             shard_index=args.shard_index,
@@ -80,7 +80,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     class ShardedRunner(runner_class):
         def build_suite(self, test_labels=None, *runner_args, **runner_kwargs):
             full_suite = super().build_suite([], *runner_args, **runner_kwargs)
-            tests = sorted(iter_test_cases(full_suite), key=lambda test: test.id())
+            tests = list(iter_test_cases(full_suite))
             if len(tests) != len({test.id() for test in tests}):
                 raise RuntimeError("Django test discovery returned duplicate test IDs")
             selected_tests = select_shard(
