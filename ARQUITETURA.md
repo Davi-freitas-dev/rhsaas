@@ -3,8 +3,9 @@
 Este projeto passa a seguir arquitetura frontend separado + backend API:
 Next.js e a interface operacional dos usuarios, enquanto Django e a fonte da
 verdade de dados, regras, permissoes, APIs, comandos e administracao tecnica.
-O HTML Django operacional foi removido da linha principal; Django preserva
-apenas Admin, API, autenticacao, erro/suporte e downloads tecnicos.
+O HTML Django operacional e de autenticacao/conta foi removido da linha
+principal; Django preserva Admin tecnico, APIs, regras de autenticacao e
+downloads tecnicos. Toda interface apresentada ao usuario fica no Next.js.
 
 ## Camadas
 
@@ -14,16 +15,13 @@ apenas Admin, API, autenticacao, erro/suporte e downloads tecnicos.
 - `caixa/selectors_opcoes_filtros.py`: opcoes reutilizaveis de filtros compartilhados entre telas.
 - `caixa/serializers_*.py`: montagem de payloads JSON para contratos de API.
 - `caixa/services_*.py`: casos de uso e operacoes de escrita.
-- `caixa/views_*.py`: entrada HTTP fina para APIs, autenticacao, Admin/suporte e
+- `caixa/views_*.py`: entrada HTTP fina para APIs, autenticacao, Admin e
   redirects legados para links antigos.
-- `caixa/templates/caixa/layouts/`: layouts preservados apenas para
-  autenticacao, erro e suporte enquanto necessarios.
-- `caixa/templates/caixa/`: sem templates operacionais Django; permanecem
-  `login.html`, `password_reset_*`, `403.html`, `layouts/auth.html` e includes
-  PWA usados por autenticacao/suporte.
+- `caixa/templates/caixa/`: sem telas web Django; permanece o template de
+  e-mail do reset de senha e includes tecnicos sem rota de renderizacao.
 - `caixa/static/caixa/js/` e `caixa/static/caixa/css/`: assets operacionais
-  Django foram removidos; permanecem apenas recursos de auth/Admin/suporte,
-  PWA, logos e apoio tecnico.
+  e de autenticacao Django foram removidos; permanecem PWA, logos e apoio
+  tecnico.
 - `caixa/permissions.py`: guards reutilizaveis de acesso.
 
 ## Migracao gradual para Next.js
@@ -47,10 +45,10 @@ Responsabilidades do Next.js:
 - consumo dos contratos JSON expostos pelo Django;
 - composicao visual sem duplicar regra financeira.
 
-Nao criar ou reativar tela HTML Django operacional. Com a base operacional
-vazia, templates, rotas, aliases e fluxos que existirem apenas para
-compatibilidade historica devem ser removidos quando nao sustentarem Admin,
-auth, API, auditoria, comando ou download tecnico.
+Nao criar ou reativar tela HTML Django operacional ou de autenticacao/conta.
+Templates, rotas, aliases e fluxos que existirem apenas para compatibilidade
+historica devem ser removidos quando nao sustentarem Admin, API, auditoria,
+comando ou download tecnico.
 
 O documento `INTEGRACAO_NEXT_DJANGO.md` complementa esta secao com o contrato intermediario entre o dashboard Next.js e o backend Django, incluindo endpoint inicial, variaveis do frontend, regra de consumo via services/hooks e criterio de pronto.
 
@@ -381,8 +379,10 @@ operacional nova. A separacao oficial passa a ser:
 - Django: regras de negocio, models, services, selectors, serializers, APIs,
   permissoes, comandos, auditorias e integridade de dados.
 - Django Admin: superficie HTML administrativa para suporte controlado.
-- Auth/erro/suporte: templates Django minimos para login, reset de senha,
-  erro 403 e includes PWA necessarios.
+- Auth/conta: interfaces exclusivas no Next.js; Django mantem CSRF, sessao,
+  login, logout, reset de senha, permissoes e respostas 401/403 por API.
+- Suporte tecnico: somente templates de corpo/assunto de e-mail e includes PWA
+  nao roteaveis; nenhum template Django de autenticacao/conta e publicado.
 
 Templates HTML Django operacionais foram removidos. Rotas antigas podem
 permanecer apenas como redirects legados para o Next.js; novas superficies
@@ -391,8 +391,8 @@ devem nascer como API Django + tela Next.js.
 PM-06.1313 adicionou o comando read-only
 `python manage.py inventariar_html_django_pm06 --json` como gate de limpeza de
 HTML Django operacional. O inventario separa superficies removidas, redirects
-legados, suporte preservado de auth/download e forms compartilhados com
-API/Admin/services. Depois da PM-06.1327, o gate esperado e
+legados, auth/conta removidos, download tecnico preservado e forms
+compartilhados com API/Admin/services. Depois da PM-06.1327, o gate esperado e
 `operationalHtmlCount=0`.
 
 PM-06.1314 removeu as rotas/views POST HTML operacionais avulsas
@@ -486,9 +486,9 @@ performance e auditoria.
 
 PM-06.1327 removeu o shell operacional Django remanescente (`base.html`,
 `shared/_app_header.html`, `shared/_app_nav.html`, aviso de migracao, tabela
-vazia, titulo de pagina e mensagens do shell). Permanecem apenas templates de
-auth/erro/suporte (`login.html`, `password_reset_*`, `403.html`,
-`layouts/auth.html`) e includes PWA usados por auth. Regras de negocio,
+vazia, titulo de pagina e mensagens do shell). Naquele marco, templates de
+auth/erro/suporte ainda permaneciam; eles foram removidos na migracao posterior
+do reset de senha para API + Next.js. Regras de negocio,
 filtros, permissoes, performance e calculos seguem no backend/API.
 
 PM-06.1328 removeu `forms_orcamentos.py`, pois ele era usado apenas pela tela
@@ -498,8 +498,14 @@ services, models e testes backend.
 
 PM-06.1329 removeu assets estaticos exclusivos do shell/telas operacionais
 Django (`caixa/css/base.css`, `caixa/css/dashboard.css` e
-`caixa/js/menu.js`). Permanecem `login.css`, PWA/manifest/icones e JS usado
-pelo Admin, pois sustentam auth/suporte/administracao tecnica.
+`caixa/js/menu.js`). `login.css` foi removido depois, junto da ultima interface
+HTML de conta; PWA/manifest/icones e JS tecnico permanecem.
+
+O reset de senha atual usa `POST /api/auth/password-reset/` e
+`GET|POST /api/auth/password-reset/<uid>/<token>/`. Django gera e valida token
+e contexto de tenant assinados, aplica CSRF, rate limit e politica de senha; o
+Next.js apresenta `/recuperar-senha`, `/recuperar-senha/enviado`,
+`/redefinir-senha/<uid>/<token>` e `/redefinir-senha/concluida`.
 
 ### Sequencia recomendada
 

@@ -1,10 +1,50 @@
 from django.conf import settings
+from django.contrib.auth.tokens import PasswordResetTokenGenerator
+from django.core import signing
 from django.core.cache import cache
 from django.core.cache.backends.base import InvalidCacheBackendError
-from django.utils.crypto import salted_hmac
+from django.db import connection
+from django.utils.crypto import constant_time_compare, salted_hmac
 
 
-def password_reset_rate_limit_exceeded(request):
+PASSWORD_RESET_CONTEXT_SALT = "rhsaas.password-reset.tenant-context"
+
+
+class TenantPasswordResetTokenGenerator(PasswordResetTokenGenerator):
+    def _make_hash_value(self, user, timestamp):
+        base_value = super()._make_hash_value(user, timestamp)
+        return f"{base_value}:{connection.schema_name}"
+
+
+tenant_password_reset_token_generator = TenantPasswordResetTokenGenerator()
+
+
+def create_password_reset_tenant_context():
+    return signing.dumps(
+        {"schema": connection.schema_name},
+        salt=PASSWORD_RESET_CONTEXT_SALT,
+        compress=True,
+    )
+
+
+def password_reset_tenant_context_is_valid(value):
+    if not isinstance(value, str) or not value:
+        return False
+
+    try:
+        payload = signing.loads(
+            value,
+            salt=PASSWORD_RESET_CONTEXT_SALT,
+            max_age=settings.PASSWORD_RESET_TIMEOUT,
+        )
+    except signing.BadSignature:
+        return False
+
+    schema_name = payload.get("schema") if isinstance(payload, dict) else ""
+    return constant_time_compare(str(schema_name), connection.schema_name)
+
+
+def password_reset_rate_limit_exceeded(request, *, email=""):
     attempts = settings.PASSWORD_RESET_RATE_LIMIT_ATTEMPTS
     window = settings.PASSWORD_RESET_RATE_LIMIT_WINDOW
 
@@ -12,7 +52,7 @@ def password_reset_rate_limit_exceeded(request):
         return False
 
     identifiers = [_client_ip(request)]
-    email = request.POST.get("email", "").strip().lower()
+    email = str(email or "").strip().lower()
     if email:
         identifiers.append(email)
 

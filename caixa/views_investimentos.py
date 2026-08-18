@@ -22,7 +22,6 @@ from .permissions import (
     api_no_store_json_response,
     api_permission_denied_response,
     require_api_permission,
-    require_permission,
 )
 from .serializers_investimentos import (
     montar_payload_investimentos_api,
@@ -263,9 +262,12 @@ def _api_criar_investimento(request):
     )
 
 
-@require_permission(FINANCIAL_INVESTMENTS_PERMISSION)
 def lista_investimentos(request):
-    return legacy_frontend_redirect_required_response(request, "lista_investimentos")
+    return legacy_frontend_redirect_required_response(
+        request,
+        "lista_investimentos",
+        required_permissions=FINANCIAL_INVESTMENTS_PERMISSION,
+    )
 
 
 @csrf_protect_drf_view

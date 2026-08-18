@@ -21,10 +21,6 @@ EXEMPT_PATH_PREFIXES = (
     "/admin/",
     "/api/auth/",
     "/api/demo/",
-    "/login/",
-    "/logout/",
-    "/password-reset/",
-    "/reset/",
 )
 
 

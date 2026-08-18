@@ -161,6 +161,16 @@ jobs:
       - name: Run pytest-native payment tests
         run: python -m pytest caixa/test_pytest_pagamentos.py
 
+      - name: Run authentication and tenant-isolation tests
+        run: >-
+          python manage.py test
+          caixa.tests.UrlsTests
+          caixa.tests.ApiDocsUrlsTests
+          caixa.tests.RecuperacaoSenhaTests
+          tenancy.tests.TenantAuthSessionIsolationTests
+          tenancy.tests.TenantThrottleIsolationTests
+          --verbosity 2
+
   postgres-concurrency:
     name: PostgreSQL concurrency invariants
     runs-on: ubuntu-latest

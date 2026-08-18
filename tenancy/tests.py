@@ -1,5 +1,6 @@
 import json
 import hashlib
+import re
 from types import SimpleNamespace
 from io import StringIO
 from pathlib import Path
@@ -7,6 +8,7 @@ from tempfile import TemporaryDirectory
 from datetime import date, timedelta
 from decimal import Decimal
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -2609,6 +2611,7 @@ class TenantThrottleIsolationTests(MultiTenantTestCase):
         EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
         PASSWORD_RESET_RATE_LIMIT_ATTEMPTS=1,
         PASSWORD_RESET_RATE_LIMIT_WINDOW=3600,
+        NEXT_FRONTEND_URL="https://app.rhsaas.example.com",
     )
     def test_rate_limit_de_reset_de_senha_e_isolado_por_schema(self):
         email = "reset-compartilhado@example.com"
@@ -2620,19 +2623,110 @@ class TenantThrottleIsolationTests(MultiTenantTestCase):
             client_a = self._client_for_schema("tenant_a")
             client_b = self._client_for_schema("tenant_b")
 
-            primeira_a = client_a.post("/password-reset/", {"email": email})
-            segunda_a = client_a.post("/password-reset/", {"email": email})
-            primeira_b = client_b.post("/password-reset/", {"email": email})
+            payload = json.dumps({"email": email})
+            primeira_a = client_a.post(
+                "/api/auth/password-reset/",
+                data=payload,
+                content_type="application/json",
+            )
+            segunda_a = client_a.post(
+                "/api/auth/password-reset/",
+                data=payload,
+                content_type="application/json",
+            )
+            primeira_b = client_b.post(
+                "/api/auth/password-reset/",
+                data=payload,
+                content_type="application/json",
+            )
 
-            self.assertEqual(primeira_a.status_code, 302)
-            self.assertEqual(segunda_a.status_code, 302)
-            self.assertEqual(primeira_b.status_code, 302)
+            self.assertEqual(primeira_a.status_code, 200)
+            self.assertEqual(segunda_a.status_code, 200)
+            self.assertEqual(primeira_b.status_code, 200)
             self.assertEqual(primeira_a.wsgi_request.tenant.schema_name, "tenant_a")
             self.assertEqual(segunda_a.wsgi_request.tenant.schema_name, "tenant_a")
             self.assertEqual(primeira_b.wsgi_request.tenant.schema_name, "tenant_b")
             self.assertEqual(len(mail.outbox), 2)
         finally:
             cache.clear()
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        NEXT_FRONTEND_URL="https://app.rhsaas.example.com",
+    )
+    def test_token_e_contexto_de_reset_do_tenant_a_nao_funcionam_no_tenant_b(self):
+        email = "reset-isolado@example.com"
+        user_a = self.create_user(
+            "tenant_a",
+            "reset-isolado",
+            "senha-identica-inicial",
+            email=email,
+        )
+        user_b = self.create_user(
+            "tenant_b",
+            "reset-isolado",
+            "senha-identica-inicial",
+            email=email,
+        )
+        self.assertEqual(user_a.pk, user_b.pk)
+        mail.outbox = []
+        client_a = self._client_for_schema("tenant_a")
+        client_b = self._client_for_schema("tenant_b")
+
+        request_response = client_a.post(
+            "/api/auth/password-reset/",
+            data=json.dumps({"email": email}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(request_response.status_code, 200)
+        self.assertEqual(request_response.wsgi_request.tenant.schema_name, "tenant_a")
+        self.assertEqual(len(mail.outbox), 1)
+        link = re.search(r"https?://\S+", mail.outbox[0].body).group(0)
+        parsed = urlsplit(link)
+        _route, uidb64, token = parsed.path.strip("/").split("/")
+        tenant_context = parse_qs(parsed.query)["context"][0]
+        api_path = (
+            f"/api/auth/password-reset/{uidb64}/{token}/"
+            f"?context={tenant_context}"
+        )
+
+        validacao_a = client_a.get(api_path)
+        validacao_b = client_b.get(api_path)
+        tentativa_b = client_b.post(
+            api_path,
+            data=json.dumps(
+                {
+                    "newPassword1": "Nova-senha-isolada-2026",
+                    "newPassword2": "Nova-senha-isolada-2026",
+                }
+            ),
+            content_type="application/json",
+        )
+        confirmacao_a = client_a.post(
+            api_path,
+            data=json.dumps(
+                {
+                    "newPassword1": "Nova-senha-isolada-2026",
+                    "newPassword2": "Nova-senha-isolada-2026",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(validacao_a.status_code, 200)
+        self.assertEqual(validacao_a.wsgi_request.tenant.schema_name, "tenant_a")
+        self.assertEqual(validacao_b.status_code, 400)
+        self.assertEqual(validacao_b.wsgi_request.tenant.schema_name, "tenant_b")
+        self.assertEqual(tentativa_b.status_code, 400)
+        self.assertEqual(confirmacao_a.status_code, 200)
+
+        with self.in_schema("tenant_a"):
+            refreshed_a = get_user_model().objects.get(pk=user_a.pk)
+            self.assertTrue(refreshed_a.check_password("Nova-senha-isolada-2026"))
+        with self.in_schema("tenant_b"):
+            refreshed_b = get_user_model().objects.get(pk=user_b.pk)
+            self.assertTrue(refreshed_b.check_password("senha-identica-inicial"))
 
 
 class TenantCommandGuardTests(MultiTenantTestCase):

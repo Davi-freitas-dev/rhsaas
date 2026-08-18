@@ -43,17 +43,19 @@ Para frontend e backend em subdominios do mesmo dominio principal, como
 `app.rhsaas.example.com` e `api.rhsaas.example.com`, configure tambem:
 
 ```text
-SESSION_COOKIE_DOMAIN=.rhsaas.example.com
-CSRF_COOKIE_DOMAIN=.rhsaas.example.com
+SESSION_COOKIE_DOMAIN=
+CSRF_COOKIE_DOMAIN=
 SESSION_COOKIE_SAMESITE=Lax
 CSRF_COOKIE_SAMESITE=Lax
 SESSION_COOKIE_SECURE=True
 CSRF_COOKIE_SECURE=True
 ```
 
-Essas variaveis so funcionam porque o `settings.py` le
-`SESSION_COOKIE_DOMAIN` e `CSRF_COOKIE_DOMAIN`. Em desenvolvimento local,
-deixe esses campos vazios.
+Os dominios vazios emitem cookies host-only no host da API de cada tenant. O
+frontend continua enviando esses cookies nas chamadas para a API com
+`credentials: include`, sem compartilhar sessao ou CSRF entre subdominios.
+Nao use `Domain=.rhsaas.example.com`: esse escopo amplo permite colisao de
+cookies entre tenants.
 
 Se ainda nao tiver dominio/HTTPS, use temporariamente:
 

@@ -1,8 +1,11 @@
-from urllib.parse import parse_qsl, urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from django.conf import settings
+from django.core.exceptions import PermissionDenied
 from django.http import HttpResponseGone, HttpResponseNotAllowed
 from django.shortcuts import redirect
+
+from .permissions import is_tenant_administrator
 
 
 DEFAULT_NEXT_FRONTEND_URL = "http://localhost:3000"
@@ -202,11 +205,37 @@ SAFE_REDIRECT_METHODS = {"GET", "HEAD"}
 
 def next_frontend_base_url():
     configured_url = getattr(settings, "NEXT_FRONTEND_URL", "")
-    if configured_url:
+    if configured_url and frontend_origin_error(configured_url) is None:
         return configured_url.rstrip("/")
     if getattr(settings, "DEBUG", False):
         return DEFAULT_NEXT_FRONTEND_URL
     return ""
+
+
+def frontend_origin_error(configured_url, *, require_https=None):
+    if not configured_url:
+        return "NEXT_FRONTEND_URL deve apontar para a origem oficial do frontend."
+
+    try:
+        parsed = urlsplit(configured_url)
+        parsed_port = parsed.port
+    except ValueError:
+        return "NEXT_FRONTEND_URL deve ser uma origem absoluta valida."
+    if require_https is None:
+        require_https = not getattr(settings, "DEBUG", False)
+    allowed_schemes = {"https"} if require_https else {"http", "https"}
+
+    if parsed.scheme not in allowed_schemes or not parsed.hostname:
+        expected = "HTTPS" if require_https else "HTTP ou HTTPS"
+        return f"NEXT_FRONTEND_URL deve ser uma origem absoluta em {expected}."
+    if parsed.username or parsed.password:
+        return "NEXT_FRONTEND_URL nao pode conter credenciais."
+    if parsed.netloc.endswith(":") or (parsed_port is not None and parsed_port < 1):
+        return "NEXT_FRONTEND_URL contem uma porta invalida."
+    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+        return "NEXT_FRONTEND_URL deve conter somente a origem, sem caminho, query ou fragmento."
+
+    return None
 
 
 def build_next_frontend_url(path):
@@ -288,9 +317,34 @@ def legacy_frontend_redirect_response(request, surface_key, extra_query=None):
     return redirect(url)
 
 
-def legacy_frontend_redirect_required_response(request, surface_key, extra_query=None):
+def legacy_frontend_redirect_required_response(
+    request,
+    surface_key,
+    extra_query=None,
+    *,
+    required_permissions=(),
+    any_permission=False,
+    tenant_administrator=False,
+):
     if request.method not in SAFE_REDIRECT_METHODS:
         return HttpResponseNotAllowed(sorted(SAFE_REDIRECT_METHODS))
+
+    user = request.user
+    if user.is_authenticated:
+        if tenant_administrator and not is_tenant_administrator(user):
+            raise PermissionDenied
+
+        if isinstance(required_permissions, str):
+            required_permissions = (required_permissions,)
+        permissions = tuple(required_permissions)
+        if permissions:
+            has_permission = (
+                any(user.has_perm(permission) for permission in permissions)
+                if any_permission
+                else all(user.has_perm(permission) for permission in permissions)
+            )
+            if not has_permission:
+                raise PermissionDenied
 
     url = build_next_frontend_url_for_surface(
         surface_key,

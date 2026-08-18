@@ -2,8 +2,11 @@
 
 ## Superficies
 
-- Autenticacao web: `caixa.views_auth.LoginSeguroView`, `LogoutSeguroView` e fluxo de reset de senha.
-- Autenticacao API: `caixa.views_api_auth` com sessao Django, CSRF explicito e respostas JSON para o frontend.
+- Autenticacao e conta: somente interface Next.js; Django nao publica telas HTML
+  de login, logout, reset ou 403.
+- Autenticacao API: `caixa.views_api_auth` e
+  `caixa.views_api_password_reset`, com sessao Django, CSRF explicito, token e
+  contexto tenant-aware e respostas JSON para o frontend.
 - APIs operacionais: rotas `/api/...` em `caixa.urls`, com `SessionAuthentication`, permissoes por dominio e respostas 401/403 padronizadas.
 - Backups: tela e APIs restritas a superusuario.
 - Admin Django: mantido fora do CSP customizado para preservar scripts internos do admin.
@@ -12,7 +15,7 @@
 
 - Cookies de sessao e CSRF `HttpOnly`, `SameSite` e `Secure` em producao.
 - `django-axes` para bloqueio por falhas de login.
-- Limite de reset de senha por IP/e-mail em `caixa.services_auth`.
+- Limite de reset de senha por IP/e-mail e schema em `caixa.services_auth`.
 - CSRF real preservado em escritas DRF sensiveis.
 - CORS por allowlist em `caixa.middleware.ConfiguredCorsMiddleware`.
 - Headers de seguranca em `caixa.middleware.SecurityHeadersMiddleware`: CSP, Permissions-Policy, COOP, CORP e X-Permitted-Cross-Domain-Policies.
@@ -49,7 +52,8 @@ Em producao com mais de um worker/processo, use Redis em `CACHE_BACKEND`/`CACHE_
 
 ## Proximos endurecimentos recomendados
 
-- Adicionar rate limit no proxy reverso para `/api/auth/login/`, `/password-reset/` e `/api/`.
+- Adicionar rate limit no proxy reverso para `/api/auth/login/`,
+  `/api/auth/password-reset/` e `/api/`.
 - Rodar auditoria de dependencias no CI antes de publicar.
 - Registrar alertas de 401/403/429 em logs ou observabilidade.
 - Revisar periodicamente `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS` e `ALLOWED_HOSTS`.

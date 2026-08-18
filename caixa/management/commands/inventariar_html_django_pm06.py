@@ -272,46 +272,54 @@ REMOVED_INLINE_LEGACY_POST_SURFACES = [
 
 PRESERVED_HTML_SUPPORT = [
     {
-        "routeName": "login",
-        "template": "caixa/login.html",
-        "classification": "auth_support",
-        "decision": "preserve",
-    },
-    {
-        "routeName": "password_reset",
-        "template": "caixa/password_reset_form.html",
-        "classification": "auth_support",
-        "decision": "preserve",
-    },
-    {
-        "routeName": "password_reset_done",
-        "template": "caixa/password_reset_done.html",
-        "classification": "auth_support",
-        "decision": "preserve",
-    },
-    {
-        "routeName": "password_reset_confirm",
-        "template": "caixa/password_reset_confirm.html",
-        "classification": "auth_support",
-        "decision": "preserve",
-    },
-    {
-        "routeName": "password_reset_complete",
-        "template": "caixa/password_reset_complete.html",
-        "classification": "auth_support",
-        "decision": "preserve",
-    },
-    {
-        "routeName": "permission_denied",
-        "template": "caixa/403.html",
-        "classification": "auth_error_support",
-        "decision": "preserve",
-    },
-    {
         "routeName": "backup_download",
         "template": "",
         "classification": "technical_download",
         "decision": "preserve",
+    },
+]
+
+
+REMOVED_AUTH_HTML_SUPPORT = [
+    {
+        "routeName": "login",
+        "template": "caixa/login.html",
+        "replacement": "Next.js login components + POST /api/auth/login/",
+    },
+    {
+        "routeName": "logout",
+        "template": "",
+        "replacement": "Next.js logout action + POST /api/auth/logout/",
+    },
+    {
+        "routeName": "password_reset",
+        "template": "caixa/password_reset_form.html",
+        "replacement": "Next.js /recuperar-senha + POST /api/auth/password-reset/",
+    },
+    {
+        "routeName": "password_reset_done",
+        "template": "caixa/password_reset_done.html",
+        "replacement": "Next.js /recuperar-senha/enviado",
+    },
+    {
+        "routeName": "password_reset_confirm",
+        "template": "caixa/password_reset_confirm.html",
+        "replacement": "Next.js /redefinir-senha/<uid>/<token>",
+    },
+    {
+        "routeName": "password_reset_complete",
+        "template": "caixa/password_reset_complete.html",
+        "replacement": "Next.js /redefinir-senha/concluida",
+    },
+    {
+        "routeName": "permission_denied",
+        "template": "caixa/403.html",
+        "replacement": "JSON 403 no-store; Next.js apresenta o estado de acesso negado",
+    },
+    {
+        "routeName": "",
+        "template": "caixa/layouts/auth.html",
+        "replacement": "Next.js AccountAccessShell",
     },
 ]
 
@@ -321,7 +329,7 @@ REMOVED_OPERATIONAL_SHELL_TEMPLATES = [
         "template": "caixa/base.html",
         "classification": "legacy_operational_shell",
         "removedIn": "PM-06.1327",
-        "reason": "Shell base usado apenas por telas operacionais Django removidas; auth usa layouts/auth.html.",
+        "reason": "Shell base era usado apenas por telas operacionais Django removidas; auth usava layouts/auth.html.",
     },
     {
         "template": "caixa/shared/_app_header.html",
@@ -357,7 +365,7 @@ REMOVED_OPERATIONAL_SHELL_TEMPLATES = [
         "template": "caixa/shared/_messages.html",
         "classification": "legacy_operational_shell",
         "removedIn": "PM-06.1327",
-        "reason": "Mensagens do shell operacional antigo removidas; auth preserva layout proprio.",
+        "reason": "Mensagens do shell operacional antigo removidas; auth/conta migraram integralmente para Next.js.",
     },
 ]
 
@@ -462,7 +470,7 @@ def inventariar_html_django_pm06(options=None):
         "generatedAt": timezone.now().isoformat(),
         "architectureDecision": {
             "djangoOperationalHtml": "remove_after_surface_validation",
-            "djangoOperationalShell": "removed_when_unused_by_auth_or_admin",
+            "djangoOperationalShell": "removed_when_unused_by_admin_or_technical_support",
             "djangoAdmin": "preserve",
             "djangoApis": "preserve",
             "nextOperationalUi": "single_operational_interface",
@@ -484,6 +492,7 @@ def inventariar_html_django_pm06(options=None):
             "inlineLegacyPostSurfaceCount": len(inline_post_surfaces),
             "removedInlineLegacyPostSurfaceCount": len(removed_inline_post_surfaces),
             "preservedSupportHtmlCount": len(support),
+            "removedAuthHtmlSupportCount": len(REMOVED_AUTH_HTML_SUPPORT),
             "removedOperationalShellTemplateCount": len(removed_shell_templates),
             "removedLegacyFormCount": len(REMOVED_FORMS_INVENTORY),
             "removedOperationalAssetCount": len(REMOVED_OPERATIONAL_ASSETS),
@@ -495,6 +504,7 @@ def inventariar_html_django_pm06(options=None):
         "inlineLegacyPostSurfaces": inline_post_surfaces,
         "removedInlineLegacyPostSurfaces": removed_inline_post_surfaces,
         "preservedHtmlSupport": support,
+        "removedAuthHtmlSupport": REMOVED_AUTH_HTML_SUPPORT,
         "removedOperationalShellTemplates": removed_shell_templates,
         "formsInventory": FORMS_INVENTORY,
         "removedFormsInventory": REMOVED_FORMS_INVENTORY,
@@ -709,7 +719,7 @@ def _registro_inventario(resultado):
         "#### Decisao arquitetural",
         "- Django fica como backend/API/Admin.",
         "- Next.js fica como unica interface operacional.",
-        "- HTML Django operacional foi removido; auth, erro e suporte tecnico permanecem preservados.",
+        "- HTML Django operacional e de auth/conta foi removido; apenas suporte tecnico nao visual permanece preservado.",
         "",
         "#### Superficies operacionais",
     ]

@@ -5,5 +5,6 @@ class CaixaConfig(AppConfig):
     name = "caixa"
 
     def ready(self):
+        import caixa.checks
         import caixa.signals
         import caixa.signals_pagamentos

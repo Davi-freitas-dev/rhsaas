@@ -1,5 +1,5 @@
-from django.shortcuts import render
+from .permissions import api_permission_denied_response
 
 
 def permission_denied(request, exception=None):
-    return render(request, "caixa/403.html", status=403)
+    return api_permission_denied_response()

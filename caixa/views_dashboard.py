@@ -11,7 +11,6 @@ from .permissions import (
     api_authentication_required_response,
     api_no_store_json_response,
     api_permission_denied_response,
-    require_permission,
 )
 from .frontend_bridge import (
     legacy_frontend_redirect_required_response,
@@ -36,14 +35,20 @@ from .security_salarios import usuario_pode_ver_salarios
 STATUS_FRONTEND_DASHBOARD = {valor for valor, _rotulo in STATUS_DASHBOARD_FILTRO}
 
 
-@require_permission(DASHBOARD_PERMISSION)
 def dashboard_financeiro(request):
-    return legacy_frontend_redirect_required_response(request, "dashboard_financeiro")
+    return legacy_frontend_redirect_required_response(
+        request,
+        "dashboard_financeiro",
+        required_permissions=DASHBOARD_PERMISSION,
+    )
 
 
-@require_permission(DASHBOARD_PERMISSION)
 def custos_por_evento(request):
-    return legacy_frontend_redirect_required_response(request, "custos_por_evento")
+    return legacy_frontend_redirect_required_response(
+        request,
+        "custos_por_evento",
+        required_permissions=DASHBOARD_PERMISSION,
+    )
 
 
 @require_GET

@@ -6,13 +6,9 @@ from .views_api_auth import (
     api_auth_logout,
     api_auth_session,
 )
-from .views_auth import (
-    LoginSeguroView,
-    LogoutSeguroView,
-    RecuperarSenhaView,
-    RecuperarSenhaDoneView,
-    RecuperarSenhaConfirmView,
-    RecuperarSenhaCompleteView,
+from .views_api_password_reset import (
+    api_auth_password_reset_confirm,
+    api_auth_password_reset_request,
 )
 from .views_backups import (
     api_backup_criar_manual,
@@ -101,16 +97,20 @@ app_name = "caixa"
 
 urlpatterns = [
     # Autenticacao
-    path("login/", LoginSeguroView.as_view(), name="login"),
-    path("logout/", LogoutSeguroView.as_view(), name="logout"),
     path("api/auth/csrf/", api_auth_csrf, name="api_auth_csrf"),
     path("api/auth/login/", api_auth_login, name="api_auth_login"),
     path("api/auth/logout/", api_auth_logout, name="api_auth_logout"),
     path("api/auth/session/", api_auth_session, name="api_auth_session"),
-    path("password-reset/", RecuperarSenhaView.as_view(), name="password_reset"),
-    path("password-reset/done/", RecuperarSenhaDoneView.as_view(), name="password_reset_done"),
-    path("reset/<uidb64>/<token>/", RecuperarSenhaConfirmView.as_view(), name="password_reset_confirm"),
-    path("reset/done/", RecuperarSenhaCompleteView.as_view(), name="password_reset_complete"),
+    path(
+        "api/auth/password-reset/",
+        api_auth_password_reset_request,
+        name="api_auth_password_reset_request",
+    ),
+    path(
+        "api/auth/password-reset/<uidb64>/<token>/",
+        api_auth_password_reset_confirm,
+        name="api_auth_password_reset_confirm",
+    ),
     path("backups/", backups_lista, name="backups_lista"),
     path("backups/<str:nome_arquivo>/download/", backup_download, name="backup_download"),
     path("api/backups/", api_backups, name="api_backups"),

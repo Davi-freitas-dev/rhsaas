@@ -12,7 +12,6 @@ from .permissions import (
     api_authentication_required_response,
     api_no_store_json_response,
     api_permission_denied_response,
-    require_permission,
 )
 from .serializers_mes_financeiro import montar_payload_mes_financeiro_api
 from .utils_request import filtros_texto
@@ -33,9 +32,12 @@ FILTROS_MES_FINANCEIRO_CANONICOS = [
 ]
 
 
-@require_permission(FINANCIAL_MONTH_PERMISSIONS)
 def mes_financeiro(request):
-    return legacy_frontend_redirect_required_response(request, "mes_financeiro")
+    return legacy_frontend_redirect_required_response(
+        request,
+        "mes_financeiro",
+        required_permissions=FINANCIAL_MONTH_PERMISSIONS,
+    )
 
 
 @require_GET

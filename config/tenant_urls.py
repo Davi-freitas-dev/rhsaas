@@ -1,5 +1,4 @@
 from django.conf import settings
-from django.contrib.admin.views.decorators import staff_member_required
 from django.urls import include, path
 from drf_spectacular.views import (
     SpectacularAPIView,
@@ -8,6 +7,7 @@ from drf_spectacular.views import (
 )
 
 from caixa.views import pwa_manifest, service_worker
+from caixa.permissions import require_api_staff_member
 from tenancy.views_demo_public import (
     api_demo_exchange,
     api_demo_lease,
@@ -21,25 +21,20 @@ if settings.ENABLE_API_DOCS:
     api_docs_urlpatterns = [
         path(
             "api/schema/",
-            staff_member_required(
-                SpectacularAPIView.as_view(),
-                login_url="caixa:login",
-            ),
+            require_api_staff_member(SpectacularAPIView.as_view()),
             name="api_schema",
         ),
         path(
             "api/docs/",
-            staff_member_required(
-                SpectacularSwaggerView.as_view(url_name="api_schema"),
-                login_url="caixa:login",
+            require_api_staff_member(
+                SpectacularSwaggerView.as_view(url_name="api_schema")
             ),
             name="api_docs",
         ),
         path(
             "api/redoc/",
-            staff_member_required(
-                SpectacularRedocView.as_view(url_name="api_schema"),
-                login_url="caixa:login",
+            require_api_staff_member(
+                SpectacularRedocView.as_view(url_name="api_schema")
             ),
             name="api_redoc",
         ),

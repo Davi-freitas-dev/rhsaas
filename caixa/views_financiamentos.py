@@ -30,7 +30,6 @@ from .permissions import (
     api_no_store_json_response,
     api_permission_denied_response,
     require_api_permission,
-    require_permission,
 )
 from .serializers_financiamentos import (
     montar_payload_credores_financiamentos_api,
@@ -560,9 +559,12 @@ def _api_criar_movimentacao_financiamento(request):
     )
 
 
-@require_permission(FINANCIAL_DEBT_INSTALLMENTS_PERMISSION)
 def lista_financiamentos(request):
-    return legacy_frontend_redirect_required_response(request, "lista_financiamentos")
+    return legacy_frontend_redirect_required_response(
+        request,
+        "lista_financiamentos",
+        required_permissions=FINANCIAL_DEBT_INSTALLMENTS_PERMISSION,
+    )
 
 
 @csrf_protect_drf_view
@@ -657,10 +659,10 @@ def api_credores_financiamentos(request):
     )
 
 
-@require_permission(PAY_DEBT_INSTALLMENT_PERMISSION)
 def pagar_parcela(request, pk):
     return legacy_frontend_redirect_required_response(
         request,
         "pagar_parcela",
         extra_query={"sourceId": pk},
+        required_permissions=PAY_DEBT_INSTALLMENT_PERMISSION,
     )

@@ -200,8 +200,9 @@ FCO/FCI/FCF, caixa disponivel, performance e auditoria nao devem ser
 recriados no frontend.
 
 PM-06.1327 removeu o shell operacional HTML Django remanescente (`base.html`
-e includes de cabecalho/menu/listagem). Permanecem apenas templates de
-autenticacao, erro/suporte e includes PWA usados por auth. Qualquer nova
+e includes de cabecalho/menu/listagem). Os templates de autenticacao e conta
+que ainda existiam naquele marco foram removidos depois da migracao do reset
+para API + Next.js. Qualquer nova
 experiencia operacional deve nascer no Next.js, chamando API/selector/service
 do backend.
 
@@ -212,7 +213,8 @@ testes backend.
 
 PM-06.1329 removeu assets exclusivos do shell/telas operacionais Django:
 `caixa/css/base.css`, `caixa/css/dashboard.css` e `caixa/js/menu.js`.
-Permanecem assets de login, PWA, icones e Admin.
+Permanecem assets de PWA, icones e Admin; `login.css` foi removido com a ultima
+tela HTML de conta.
 
 No fluxo de orcamentos, o numero do orcamento e o contrato visivel desta linha:
 cadastrar e editar no Next.js antes da aprovacao; aceitar edicao de servico,
@@ -1202,9 +1204,10 @@ Diretriz de arquitetura principal/prime:
 - O Next.js deve consumir contratos canonicos publicados pelo backend, sem
   recriar calculos nem assumir que uma origem virou canonical-first antes da API
   e da metadata operacional indicarem isso.
-- Em producao com subdominios do RH SaaS, o backend deve ler
-  `SESSION_COOKIE_DOMAIN=<dominio-cookie-rh-saas>` e
-  `CSRF_COOKIE_DOMAIN=<dominio-cookie-rh-saas>` do `.env`.
+- Em producao com subdominios do RH SaaS, manter `SESSION_COOKIE_DOMAIN` e
+  `CSRF_COOKIE_DOMAIN` vazios para emitir cookies host-only no host da API de
+  cada tenant. `credentials: include` continua enviando os cookies nas chamadas
+  ao backend sem ampliar o escopo para outros subdominios.
 - Em producao, usar Redis para cache compartilhado entre workers/processos:
   `CACHE_BACKEND=django.core.cache.backends.redis.RedisCache` e
   `CACHE_LOCATION=redis://127.0.0.1:6379/1`.
@@ -1350,6 +1353,17 @@ Endpoints de autenticacao para o Next.js:
 - `POST /api/auth/login/`: recebe JSON `{ "username": "...", "password": "..." }`, exige `X-CSRFToken`, autentica no Django e cria sessao HttpOnly;
 - `POST /api/auth/logout/`: encerra a sessao atual, tambem com CSRF;
 - `GET /api/auth/session/`: retorna estado autenticado e usuario minimo quando houver sessao; no Next.js, pode ser usado pelo painel de login para reaproveitar sessao ativa antes de pedir senha.
+- `POST /api/auth/password-reset/`: recebe e-mail em JSON, exige CSRF, aplica
+  rate limit e responde sempre de forma generica para e-mails validos;
+- `GET /api/auth/password-reset/<uid>/<token>/?context=<assinado>`: valida o
+  link no host/schema atual sem alterar senha;
+- `POST /api/auth/password-reset/<uid>/<token>/?context=<assinado>`: recebe as
+  duas senhas em JSON, exige CSRF e aplica os validadores do Django.
+
+O e-mail aponta para a origem validada de `NEXT_FRONTEND_URL`, na rota
+`/redefinir-senha/<uid>/<token>`, sem `next` ou destino arbitrario. Token e
+contexto sao vinculados ao schema; a interface de solicitacao, confirmacao e
+conclusao existe somente no Next.js.
 
 O payload publico de usuario da autenticacao expoe `canViewDashboard`,
 `canPayFinancialDebtInstallment` e o espelho `permissions` com esses mesmos
@@ -1377,7 +1391,6 @@ Desenvolvimento:
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api
 NEXT_PUBLIC_API_TIMEOUT_MS=12000
 NEXT_PUBLIC_API_MOCK_FALLBACK=true
-NEXT_PUBLIC_AUTH_LOGIN_URL=http://localhost:8000/login/
 ```
 
 Producao:
@@ -1385,7 +1398,6 @@ Producao:
 ```env
 NEXT_PUBLIC_API_BASE_URL=https://seudominio.com/api
 NEXT_PUBLIC_API_MOCK_FALLBACK=false
-NEXT_PUBLIC_AUTH_LOGIN_URL=https://seudominio.com/login/
 ```
 
 ## Regra de consumo no frontend

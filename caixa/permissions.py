@@ -1,10 +1,5 @@
 from functools import wraps
 
-from django.contrib.auth.decorators import (
-    login_required,
-    permission_required,
-    user_passes_test,
-)
 from django.contrib.auth.models import Group, Permission
 from django.core.exceptions import ImproperlyConfigured, PermissionDenied
 from django.db import connection
@@ -285,29 +280,6 @@ def sincronizar_grupos_permissoes():
         grupo.permissions.set(permissoes_caixa.filter(codename__in=codenames))
 
 
-def require_permission(permissions):
-    def decorator(view_func):
-        return login_required(
-            permission_required(permissions, raise_exception=True)(view_func)
-        )
-
-    return decorator
-
-
-def require_any_permission(*permissions):
-    def decorator(view_func):
-        @wraps(view_func)
-        def guarded_view(request, *args, **kwargs):
-            if not any(request.user.has_perm(permission) for permission in permissions):
-                raise PermissionDenied
-
-            return view_func(request, *args, **kwargs)
-
-        return login_required(guarded_view)
-
-    return decorator
-
-
 def current_schema_name():
     return getattr(connection, "schema_name", get_public_schema_name())
 
@@ -349,24 +321,6 @@ def is_platform_operator(user):
         and user.is_superuser
         and is_public_schema()
     )
-
-
-def require_tenant_administrator(view_func):
-    return user_passes_test(
-        is_tenant_administrator,
-        login_url="caixa:login",
-    )(view_func)
-
-
-def require_platform_operator(view_func):
-    return user_passes_test(
-        is_platform_operator,
-        login_url="caixa:login",
-    )(view_func)
-
-
-def require_superuser(view_func):
-    return require_tenant_administrator(view_func)
 
 
 def normalizar_lista_permissoes(permissions):
@@ -448,6 +402,22 @@ def require_api_platform_operator(view_func):
             return api_authentication_required_response()
 
         if not is_platform_operator(request.user):
+            return api_permission_denied_response()
+
+        response = view_func(request, *args, **kwargs)
+        add_never_cache_headers(response)
+        return response
+
+    return wrapper
+
+
+def require_api_staff_member(view_func):
+    @wraps(view_func)
+    def wrapper(request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            return api_authentication_required_response()
+
+        if not request.user.is_active or not request.user.is_staff:
             return api_permission_denied_response()
 
         response = view_func(request, *args, **kwargs)

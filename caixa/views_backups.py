@@ -20,10 +20,11 @@ from rest_framework.response import Response
 
 from .frontend_bridge import legacy_frontend_redirect_required_response
 from .permissions import (
+    api_authentication_required_response,
+    api_permission_denied_response,
     current_schema_name,
     is_tenant_administrator,
     require_api_tenant_administrator,
-    require_tenant_administrator,
 )
 from .selectors_backups import listar_backups_disponiveis, obter_caminho_backup
 from .services_backups import criar_backup_banco
@@ -57,10 +58,13 @@ def _audit_backup_event(request, action, outcome, *, filename=""):
     )
 
 
-@require_tenant_administrator
 @require_safe
 def backups_lista(request):
-    return legacy_frontend_redirect_required_response(request, "backups_lista")
+    return legacy_frontend_redirect_required_response(
+        request,
+        "backups_lista",
+        tenant_administrator=True,
+    )
 
 
 def serializar_backup(arquivo):
@@ -160,8 +164,13 @@ def api_backup_criar_manual(request):
     )
 
 
-@require_tenant_administrator
 def backup_download(request, nome_arquivo):
+    if not request.user.is_authenticated:
+        return api_authentication_required_response()
+    if not is_tenant_administrator(request.user):
+        _audit_backup_event(request, "download", "denied", filename=nome_arquivo)
+        return api_permission_denied_response()
+
     throttled_response = check_django_rate_limit(request, BackupDownloadRateThrottle)
     if throttled_response is not None:
         _audit_backup_event(request, "download", "throttled", filename=nome_arquivo)

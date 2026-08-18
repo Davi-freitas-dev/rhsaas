@@ -421,10 +421,6 @@ CACHES = {
 
 
 # Autenticacao e sessao
-LOGIN_URL = "caixa:login"
-LOGIN_REDIRECT_URL = "caixa:dashboard_financeiro"
-LOGOUT_REDIRECT_URL = "caixa:login"
-
 SESSION_ENGINE = env(
     "SESSION_ENGINE",
     default="django.contrib.sessions.backends.db",
