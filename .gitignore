@@ -10,6 +10,7 @@ media/
 backup_dados*.json
 dados_*.json
 backups/
+.e2e-emails/
 
 # Backup files #
 *.bak

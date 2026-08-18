@@ -169,6 +169,8 @@ jobs:
           caixa.tests.RecuperacaoSenhaTests
           tenancy.tests.TenantAuthSessionIsolationTests
           tenancy.tests.TenantThrottleIsolationTests
+          tenancy.tests.TenantPasswordResetGatewayIsolationTests
+          tenancy.test_security_documentation.SecurityDocumentationGuardrailTests
           --verbosity 2
 
   postgres-concurrency:

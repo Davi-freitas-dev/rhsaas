@@ -12,6 +12,7 @@ from django.contrib.sessions.models import Session
 from django.core.cache import cache
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.core.management.color import no_style
 from django.db import DatabaseError, close_old_connections, connection
 from django.test import Client, TransactionTestCase, override_settings
 from django.utils import timezone
@@ -1255,6 +1256,9 @@ class Demo1DiagnosticCommandTests(TransactionTestCase):
         super().setUp()
         self._cleanup_demo1()
         connection.set_schema_to_public()
+        with connection.cursor() as cursor:
+            for sql in connection.ops.sequence_reset_sql(no_style(), [Tenant]):
+                cursor.execute(sql)
         self.tenant = Tenant(schema_name="demo1", name="Demo 1")
         self.tenant.save(verbosity=0)
         Domain.objects.create(
