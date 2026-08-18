@@ -1030,7 +1030,7 @@ Atualizacao PM-02 adicional: `validar_baseline_pm02` tambem aceita `--exigir-rel
 
 Atualizacao PM-02 adicional: `validar_baseline_pm02` tambem aceita `--exigir-frontend-deploy-url-https` para conferir, quando a evidencia do frontend for URL publicada, que o deploy informado usa HTTPS.
 
-Atualizacao PM-02 adicional: `validar_baseline_pm02` tambem aceita `--perfil-rhremoto-producao` para preencher `--ambiente=producao`, cookies `.rhremoto.com` e Redis local esperados na janela PM-02 da producao RHRemoto; canonical-first e banco continuam explicitos quando a janela exigir esses gates.
+Atualizacao PM-02 adicional: `validar_baseline_pm02` tambem aceita `--perfil-rhremoto-producao` para preencher `--ambiente=producao`, cookies `.rhremoto.com` e Redis local esperados na janela PM-02 da producao RHRemoto; canonical-first e banco continuam explicitos quando a janela exigir esses gates. **HISTORICO SUPERADO; NAO UTILIZAR COOKIES COMPARTILHADOS.**
 
 Atualizacao PM-02 adicional: quando `--perfil-rhremoto-producao` e usado, o relatorio publica `environmentProfile=rhremoto-producao` no JSON e `Perfil de ambiente: rhremoto-producao` no markdown da janela.
 
@@ -3818,8 +3818,10 @@ fonte de escrita, monitoramento da janela e auditoria de totais antes de ampliar
 
 ## Atualizacao - Cookies `.rhremoto.com` e cache LocMem/Redis
 
+> **HISTORICO SUPERADO:** este bloco registra uma configuracao antiga. Nao use dominio compartilhado no SaaS multi-tenant atual; mantenha `SESSION_COOKIE_DOMAIN` e `CSRF_COOKIE_DOMAIN` vazios para cookies host-only.
+
 - `settings.py` agora le `SESSION_COOKIE_DOMAIN` e `CSRF_COOKIE_DOMAIN` do `.env`.
-- `.env.production.example` registra `SESSION_COOKIE_DOMAIN=.rhremoto.com` e `CSRF_COOKIE_DOMAIN=.rhremoto.com`.
+- `.env.production.example` registra `SESSION_COOKIE_DOMAIN=.rhremoto.com` e `CSRF_COOKIE_DOMAIN=.rhremoto.com`. **HISTORICO SUPERADO; NAO UTILIZAR.**
 - Valor vazio em desenvolvimento vira `None`, evitando dominio de cookie indevido em localhost.
 - A documentacao de deploy explica que `LocMemCache` e a opcao mais simples para servidor unico, mas isolada por processo.
 - Para multiplos workers/servidores ou cache compartilhado critico, a recomendacao passa a ser Redis em etapa separada com `django-redis` no deploy.

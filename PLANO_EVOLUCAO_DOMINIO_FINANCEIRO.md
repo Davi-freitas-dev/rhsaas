@@ -9084,8 +9084,8 @@ ampliar a escrita canonical-first.
 - [x] Registrar variaveis relevantes do ambiente: `CANONICAL_FIRST_SETTLEMENT_ENABLED`,
   `CANONICAL_FIRST_SETTLEMENT_SOURCES`, cache, cookies, banco e versao do
   frontend. Quando a janela for em `rhremoto.com`, validar tambem
-  `--esperar-session-cookie-domain=.rhremoto.com`,
-  `--esperar-csrf-cookie-domain=.rhremoto.com` e
+  `--esperar-session-cookie-domain=.rhremoto.com`, **HISTORICO SUPERADO; NAO UTILIZAR.**
+  `--esperar-csrf-cookie-domain=.rhremoto.com` e **HISTORICO SUPERADO; NAO UTILIZAR.**
   `--esperar-cache-backend=django.core.cache.backends.redis.RedisCache`; se a
   localizacao Redis tambem for fixa, validar
   `--esperar-cache-location=redis://127.0.0.1:6379/1`. Se a janela tambem
@@ -9184,8 +9184,8 @@ Backup real: backups/db/backup_banco_2026-05_20260526_155413_806163.json
 CANONICAL_FIRST_SETTLEMENT_ENABLED: True
 CANONICAL_FIRST_SETTLEMENT_SOURCES: custo_fixo
 Cache backend/location: django.core.cache.backends.redis.RedisCache; redis://127.0.0.1:6379/1
-Cookie domain/session/csrf: session=.rhremoto.com; csrf=.rhremoto.com; sessionSecure=True; csrfSecure=True; sessionSameSite=Lax; csrfSameSite=Lax
-Comando estrito executado: python manage.py validar_baseline_pm02 --modo-servidor-estrito --perfil-rhremoto-producao --frontend-deploy-url=https://adm.rhremoto.com --ambiente=producao --release-ref=483c6bc --backup-ref=backups/db/backup_banco_2026-05_20260526_155413_806163.json --esperar-session-cookie-domain=.rhremoto.com --esperar-csrf-cookie-domain=.rhremoto.com --esperar-session-cookie-secure=true --esperar-csrf-cookie-secure=true --esperar-session-cookie-samesite=lax --esperar-csrf-cookie-samesite=lax --esperar-cache-backend=django.core.cache.backends.redis.RedisCache --esperar-cache-location=redis://127.0.0.1:6379/1 --exigir-frontend-deploy-url-https --exigir-backup-arquivo-existente --diretorio-evidencias=~/evidencias_pm02_controledecaixa --salvar-json=/home/ubuntu/evidencias_pm02_controledecaixa/pm02-baseline.json --salvar-registro=/home/ubuntu/evidencias_pm02_controledecaixa/pm02-registro.md --salvar-snapshot-json=/home/ubuntu/evidencias_pm02_controledecaixa/pm02-snapshot.json --exigir-arquivos-evidencia --json
+Cookie domain/session/csrf: session=.rhremoto.com; csrf=.rhremoto.com; sessionSecure=True; csrfSecure=True; sessionSameSite=Lax; csrfSameSite=Lax **HISTORICO SUPERADO; NAO UTILIZAR.**
+Comando estrito executado: python manage.py validar_baseline_pm02 --modo-servidor-estrito --perfil-rhremoto-producao --frontend-deploy-url=https://adm.rhremoto.com --ambiente=producao --release-ref=483c6bc --backup-ref=backups/db/backup_banco_2026-05_20260526_155413_806163.json --esperar-session-cookie-domain=.rhremoto.com --esperar-csrf-cookie-domain=.rhremoto.com --esperar-session-cookie-secure=true --esperar-csrf-cookie-secure=true --esperar-session-cookie-samesite=lax --esperar-csrf-cookie-samesite=lax --esperar-cache-backend=django.core.cache.backends.redis.RedisCache --esperar-cache-location=redis://127.0.0.1:6379/1 --exigir-frontend-deploy-url-https --exigir-backup-arquivo-existente --diretorio-evidencias=~/evidencias_pm02_controledecaixa --salvar-json=/home/ubuntu/evidencias_pm02_controledecaixa/pm02-baseline.json --salvar-registro=/home/ubuntu/evidencias_pm02_controledecaixa/pm02-registro.md --salvar-snapshot-json=/home/ubuntu/evidencias_pm02_controledecaixa/pm02-snapshot.json --exigir-arquivos-evidencia --json **HISTORICO SUPERADO; NAO UTILIZAR.**
 Resultado ready/issues: ready=True; issues=nenhuma
 manualEvidenceComplete: True
 strictServerFlagsComplete: True
@@ -55251,8 +55251,9 @@ Se o trabalho parar por limite de uso, retomar por:
   - O pacote atual de credores FCF, filtro por id e normalizacao Next.js segue validado de ponta a ponta localmente.
 
 - Fase 609 concluida para configurar dominios de cookies e registrar politica de cache.
+  - **HISTORICO SUPERADO:** as referencias a `.rhremoto.com` abaixo registram a decisao da epoca. Nao utilizar no SaaS multi-tenant atual; sessao e CSRF devem permanecer host-only, sem `Domain` compartilhado.
 - Diagnostico:
-  - O servidor usara `SESSION_COOKIE_DOMAIN=.rhremoto.com` e `CSRF_COOKIE_DOMAIN=.rhremoto.com` no `.env`.
+  - O servidor usara `SESSION_COOKIE_DOMAIN=.rhremoto.com` e `CSRF_COOKIE_DOMAIN=.rhremoto.com` no `.env`. **HISTORICO SUPERADO; NAO UTILIZAR.**
   - Antes desta fase, o `settings.py` nao lia essas duas variaveis, entao elas nao teriam efeito real no deploy.
   - `CACHE_BACKEND=django.core.cache.backends.locmem.LocMemCache` ja era suportado, mas faltava documentar claramente o limite do cache local.
 - Implementacao:
@@ -55274,10 +55275,10 @@ Se o trabalho parar por limite de uso, retomar por:
   - Revisao 2: conferido que `SESSION_COOKIE_DOMAIN` e `CSRF_COOKIE_DOMAIN` nao eram lidos antes do ajuste.
   - Revisao 3: registrado que `cached_db` preserva sessao no banco, mas cache local continua isolado por processo.
 - Validacao da Fase 609:
-  - `venv\\Scripts\\python.exe manage.py shell -c "from django.conf import settings; ..."` com `SESSION_COOKIE_DOMAIN=.rhremoto.com` e `CSRF_COOKIE_DOMAIN=.rhremoto.com` (OK)
+  - `venv\\Scripts\\python.exe manage.py shell -c "from django.conf import settings; ..."` com `SESSION_COOKIE_DOMAIN=.rhremoto.com` e `CSRF_COOKIE_DOMAIN=.rhremoto.com` (OK). **HISTORICO SUPERADO; NAO UTILIZAR.**
   - `venv\\Scripts\\python.exe manage.py check` (OK)
 - Checkpoint:
-  - Pode usar `SESSION_COOKIE_DOMAIN=.rhremoto.com` e `CSRF_COOKIE_DOMAIN=.rhremoto.com` no servidor apos deploy desta alteracao.
+  - Pode usar `SESSION_COOKIE_DOMAIN=.rhremoto.com` e `CSRF_COOKIE_DOMAIN=.rhremoto.com` no servidor apos deploy desta alteracao. **HISTORICO SUPERADO; NAO UTILIZAR.**
   - Pode manter LocMem em servidor unico simples; para cache compartilhado real, planejar etapa separada com Redis e dependencias.
 
 - Fase 610 concluida para promover Redis como cache de producao.
@@ -57291,7 +57292,7 @@ Se o trabalho parar por limite de uso, retomar por:
 
 - Fase 684 concluida para validar o checkpoint de deploy cache/cookies.
 - Diagnostico:
-  - O servidor passou a usar Redis como cache e cookies compartilhados por `.rhremoto.com`.
+  - O servidor passou a usar Redis como cache e cookies compartilhados por `.rhremoto.com`. **HISTORICO SUPERADO; NAO UTILIZAR.**
   - O roteiro documentado precisava ser testado com o comando exato recomendado para evitar ruido do autoimport do shell.
 - Implementacao:
   - Nenhum codigo de producao foi alterado nesta fase.
@@ -57311,7 +57312,7 @@ Se o trabalho parar por limite de uso, retomar por:
   - `venv\\Scripts\\python.exe manage.py shell --no-imports -c "from django.core.cache import cache; cache.set('deploy-cache-check', 'ok', 30); print(cache.get('deploy-cache-check'))"` (OK com `SECRET_KEY` e `DEBUG=True` temporarios locais; retorno `ok`)
   - `venv\\Scripts\\python.exe manage.py check --deploy` com variaveis temporarias de producao simulada (OK, sem issues)
 - Checkpoint:
-  - O roteiro de deploy para cache/cookies esta validado localmente e segue compativel com Redis no servidor e cookies em `.rhremoto.com`.
+  - O roteiro de deploy para cache/cookies esta validado localmente e segue compativel com Redis no servidor e cookies em `.rhremoto.com`. **HISTORICO SUPERADO; NAO UTILIZAR.**
 
 - Fase 685 concluida para robustecer a normalizacao frontend de credores FCF.
 - Diagnostico:
@@ -64260,8 +64261,9 @@ Se o trabalho parar por limite de uso, retomar por:
   - Seguir para a proxima entrega incremental.
 
 - Fase 974 concluida para documentar cookies `.rhremoto.com` no frontend.
+  - **HISTORICO SUPERADO:** este bloco preserva o registro da epoca, mas a arquitetura vigente exige cookies host-only e proibe `Domain` compartilhado.
 - Diagnostico:
-  - O backend ja registrava `SESSION_COOKIE_DOMAIN=.rhremoto.com` e `CSRF_COOKIE_DOMAIN=.rhremoto.com`, mas os guias do Next.js ainda nao deixavam essa dependencia operacional explicita.
+  - O backend ja registrava `SESSION_COOKIE_DOMAIN=.rhremoto.com` e `CSRF_COOKIE_DOMAIN=.rhremoto.com`, mas os guias do Next.js ainda nao deixavam essa dependencia operacional explicita. **HISTORICO SUPERADO; NAO UTILIZAR.**
 - Implementacao:
   - `docs/INTEGRACAO_FRONTEND_BACKEND.md` e `docs/PROJECT_GUIDE.md` passaram a orientar cookies de sessao/CSRF em `.rhremoto.com`, API base HTTPS no Vercel e `credentials: "include"`.
 - Por que essa estrutura:
@@ -70413,8 +70415,8 @@ Data: 2026-05-26.
   - `validar_baseline_pm02` passou a aceitar `--perfil-rhremoto-producao`.
   - O perfil preenche, quando o valor ainda nao foi informado manualmente:
     `--ambiente=producao`,
-    `--esperar-session-cookie-domain=.rhremoto.com`,
-    `--esperar-csrf-cookie-domain=.rhremoto.com`,
+    `--esperar-session-cookie-domain=.rhremoto.com`, **HISTORICO SUPERADO; NAO UTILIZAR.**
+    `--esperar-csrf-cookie-domain=.rhremoto.com`, **HISTORICO SUPERADO; NAO UTILIZAR.**
     `--esperar-cache-backend=django.core.cache.backends.redis.RedisCache` e
     `--esperar-cache-location=redis://127.0.0.1:6379/1`.
   - `strictServerCommandResolved` e `executionRecord.markdown` continuam

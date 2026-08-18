@@ -47,7 +47,10 @@ from .admin import (
     PagamentoParcelaDividaInline,
     ParcelaDividaAdmin,
 )
-from .checks import check_next_frontend_origin
+from .checks import (
+    check_next_frontend_origin,
+    check_password_reset_security_settings,
+)
 from .forms_dividas import PagamentoParcelaDividaAdminForm, PagamentoParcelaDividaForm
 from .frontend_bridge import build_next_frontend_url
 from .forms_pagamentos import (
@@ -181,7 +184,11 @@ from .selectors_pagamentos import (
 )
 from .services_validacao_pagamentos import saldo_caixa_disponivel
 from .serializers_dashboard import montar_payload_dashboard_financial_overview_api
-from .services_auth import _client_ip, tenant_password_reset_token_generator
+from .services_auth import (
+    equalize_password_reset_response_time,
+    password_reset_rate_limit_exceeded,
+    tenant_password_reset_token_generator,
+)
 from .services_dividas import (
     parcela_disponivel_para_pagamento,
     prorrogar_parcelas_pendentes,
@@ -6093,7 +6100,14 @@ class PermissoesTests(TenantScopedTestCase):
                     )
 
                 self.assertEqual(response_metodo.status_code, 405)
-                self.assertEqual(response_metodo["Allow"], "POST")
+                self.assertEqual(
+                    {method.strip() for method in response_metodo["Allow"].split(",")},
+                    {"POST", "OPTIONS"},
+                )
+                self.assertEqual(
+                    response_metodo["Content-Type"],
+                    "application/json",
+                )
 
         content_type_response = client.post(
             login_url,
@@ -6132,7 +6146,12 @@ class PermissoesTests(TenantScopedTestCase):
         )
 
         self.assertEqual(response_sem_csrf.status_code, 403)
-        self.assertIn("text/html", response_sem_csrf["Content-Type"])
+        self.assertEqual(response_sem_csrf["Content-Type"], "application/json")
+        self.assertIn("no-store", response_sem_csrf["Cache-Control"])
+        self.assertEqual(
+            response_sem_csrf.json(),
+            {"detail": "Nao foi possivel validar a solicitacao."},
+        )
         self.assertEqual(content_type_response.status_code, 415)
         self.assertEqual(
             content_type_response.json(),
@@ -6488,6 +6507,8 @@ class PermissoesTests(TenantScopedTestCase):
         response = client.post(reverse("caixa:api_auth_logout"))
 
         self.assertEqual(response.status_code, 403)
+        self.assertEqual(response["Content-Type"], "application/json")
+        self.assertIn("no-store", response["Cache-Control"])
 
     @override_settings(
         CSRF_TRUSTED_ORIGINS=["http://localhost:3000"],
@@ -6526,7 +6547,14 @@ class PermissoesTests(TenantScopedTestCase):
                     )
 
                 self.assertEqual(response_metodo.status_code, 405)
-                self.assertEqual(response_metodo["Allow"], "POST")
+                self.assertEqual(
+                    {method.strip() for method in response_metodo["Allow"].split(",")},
+                    {"POST", "OPTIONS"},
+                )
+                self.assertEqual(
+                    response_metodo["Content-Type"],
+                    "application/json",
+                )
 
         response_anonimo = client.post(
             logout_url,
@@ -6545,7 +6573,12 @@ class PermissoesTests(TenantScopedTestCase):
         )
 
         self.assertEqual(response_sem_csrf.status_code, 403)
-        self.assertIn("text/html", response_sem_csrf["Content-Type"])
+        self.assertEqual(response_sem_csrf["Content-Type"], "application/json")
+        self.assertIn("no-store", response_sem_csrf["Cache-Control"])
+        self.assertEqual(
+            response_sem_csrf.json(),
+            {"detail": "Nao foi possivel validar a solicitacao."},
+        )
         self.assertEqual(response_anonimo.status_code, 200)
         self.assertEqual(set(response_anonimo.json()), {"authenticated", "csrfToken"})
         self.assertFalse(response_anonimo.json()["authenticated"])
@@ -7788,7 +7821,7 @@ class SmokeViewsTests(TenantScopedTestCase):
         )
         self.assertEqual(
             auth_html_removido["password_reset_confirm"]["replacement"],
-            "Next.js /redefinir-senha/<uid>/<token>",
+            "Next.js /redefinir-senha#uid=...&token=...&context=...",
         )
         self.assertEqual(
             payload["preservedHtmlSupport"][0]["routeName"],
@@ -8274,6 +8307,26 @@ class SegurancaTests(TenantScopedTestCase):
         with override_settings(NEXT_FRONTEND_URL="https://app.rhsaas.example.com"):
             self.assertEqual(check_next_frontend_origin(None), [])
 
+    def test_check_de_deploy_rejeita_configuracao_insegura_de_password_reset(self):
+        scenarios = (
+            ({"PASSWORD_RESET_GATEWAY_SCHEMA": ""}, "caixa.E002"),
+            ({"PASSWORD_RESET_MIN_RESPONSE_SECONDS": float("nan")}, "caixa.E003"),
+            ({"PASSWORD_RESET_MIN_RESPONSE_SECONDS": 2.1}, "caixa.E003"),
+            ({"PASSWORD_RESET_RESPONSE_JITTER_SECONDS": float("nan")}, "caixa.E004"),
+            ({"PASSWORD_RESET_RESPONSE_JITTER_SECONDS": 1.1}, "caixa.E004"),
+            (
+                {"DEBUG": False, "PASSWORD_RESET_E2E_ENABLED": True},
+                "caixa.E005",
+            ),
+        )
+
+        for overridden_settings, expected_id in scenarios:
+            with self.subTest(expected_id=expected_id):
+                with override_settings(**overridden_settings):
+                    errors = check_password_reset_security_settings(None)
+
+                self.assertIn(expected_id, [error.id for error in errors])
+
     @override_settings(SECURE_SSL_REDIRECT=False)
     def test_api_backup_criar_manual_preserva_auth_permissao_e_headers(self):
         url = reverse("caixa:api_backup_criar_manual")
@@ -8314,7 +8367,12 @@ class SegurancaTests(TenantScopedTestCase):
             response = client.post(reverse("caixa:api_backup_criar_manual"))
 
             self.assertEqual(response.status_code, 403)
-            self.assertIn("text/html", response["Content-Type"])
+            self.assertEqual(response["Content-Type"], "application/json")
+            self.assertIn("no-store", response["Cache-Control"])
+            self.assertEqual(
+                response.json(),
+                {"detail": "Nao foi possivel validar a solicitacao."},
+            )
             criar_backup.assert_not_called()
 
     @override_settings(SECURE_SSL_REDIRECT=False)
@@ -8712,18 +8770,24 @@ class SegurancaTests(TenantScopedTestCase):
                 self.assertIn("Nenhum backup criado", saida_sem_alteracao.getvalue())
                 self.assertEqual(len(listar_backups_disponiveis()), 1)
 
-    def test_recuperacao_senha_nao_confia_em_x_forwarded_for_por_padrao(self):
+    def test_recuperacao_senha_reutiliza_resolvedor_de_proxy_confiavel(self):
         request = RequestFactory().post(
             "/",
             REMOTE_ADDR="10.0.0.10",
             HTTP_X_FORWARDED_FOR="203.0.113.20, 10.0.0.1",
         )
 
-        with override_settings(PASSWORD_RESET_TRUST_X_FORWARDED_FOR=False):
-            self.assertEqual(_client_ip(request), "10.0.0.10")
+        cache.clear()
+        try:
+            with patch(
+                "caixa.services_auth.get_axes_client_ip",
+                return_value="10.0.0.10",
+            ) as resolver:
+                password_reset_rate_limit_exceeded(request)
+        finally:
+            cache.clear()
 
-        with override_settings(PASSWORD_RESET_TRUST_X_FORWARDED_FOR=True):
-            self.assertEqual(_client_ip(request), "203.0.113.20")
+        resolver.assert_called_once_with(request)
 
     def test_backups_restringem_download_a_arquivos_json_reais(self):
         with TemporaryDirectory() as temp_dir:
@@ -15423,7 +15487,12 @@ class FiltrosHtmlTests(TenantScopedTestCase):
         )
 
         self.assertEqual(response_sem_csrf.status_code, 403)
-        self.assertIn("text/html", response_sem_csrf["Content-Type"])
+        self.assertEqual(response_sem_csrf["Content-Type"], "application/json")
+        self.assertEqual(
+            response_sem_csrf.json(),
+            {"detail": "Nao foi possivel validar a solicitacao."},
+        )
+        self.assertIn("no-store", response_sem_csrf["Cache-Control"])
 
         client_com_csrf, csrf_headers_com_add = self._csrf_client_for_user(
             usuario_com_add
@@ -17052,7 +17121,8 @@ class FiltrosHtmlTests(TenantScopedTestCase):
         )
 
         self.assertEqual(response.status_code, 403)
-        self.assertIn("text/html", response["Content-Type"])
+        self.assertEqual(response["Content-Type"], "application/json")
+        self.assertIn("no-store", response["Cache-Control"])
         self.assertEqual(FinanciamentoMovimentacao.objects.count(), 0)
 
     def test_api_financiamentos_preserva_erros_de_content_type_json_e_validacao(self):
@@ -17435,7 +17505,8 @@ class FiltrosHtmlTests(TenantScopedTestCase):
         )
 
         self.assertEqual(response.status_code, 403)
-        self.assertIn("text/html", response["Content-Type"])
+        self.assertEqual(response["Content-Type"], "application/json")
+        self.assertIn("no-store", response["Cache-Control"])
         self.assertEqual(Investimento.objects.count(), 0)
 
     def test_api_investimentos_preserva_erros_de_content_type_json_e_validacao(self):
@@ -41585,9 +41656,15 @@ class RecuperacaoSenhaTests(TenantScopedTestCase):
     def _reset_link_parts(self):
         link = re.search(r"https?://\S+", mail.outbox[-1].body).group(0)
         parsed = urlsplit(link)
-        path_parts = parsed.path.strip("/").split("/")
-        self.assertEqual(path_parts[0], "redefinir-senha")
-        return parsed, path_parts[1], path_parts[2], parse_qs(parsed.query)["context"][0]
+        fragment = parse_qs(parsed.fragment)
+        self.assertEqual(parsed.path, "/redefinir-senha")
+        self.assertFalse(parsed.query)
+        return (
+            parsed,
+            fragment["uid"][0],
+            fragment["token"][0],
+            fragment["context"][0],
+        )
 
     def _confirm_url(self, uidb64, token, tenant_context):
         return (
@@ -41597,6 +41674,33 @@ class RecuperacaoSenhaTests(TenantScopedTestCase):
             )
             + f"?context={tenant_context}"
         )
+
+    def _gateway_payload(self, uidb64, token, tenant_context, **extra):
+        return json.dumps(
+            {
+                "uidb64": uidb64,
+                "token": token,
+                "context": tenant_context,
+                **extra,
+            }
+        )
+
+    def test_endpoints_post_de_reset_rejeitam_get_com_json(self):
+        for route_name in (
+            "api_auth_password_reset_request",
+            "api_auth_password_reset_gateway_validate",
+            "api_auth_password_reset_gateway_confirm",
+        ):
+            with self.subTest(route_name=route_name):
+                response = self.client.get(reverse(f"caixa:{route_name}"))
+
+                self.assertEqual(response.status_code, 405)
+                self.assertEqual(
+                    {method.strip() for method in response["Allow"].split(",")},
+                    {"POST", "OPTIONS"},
+                )
+                self.assertEqual(response["Content-Type"], "application/json")
+                self.assertIn("no-store", response["Cache-Control"])
 
     @override_settings(
         EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
@@ -41634,6 +41738,43 @@ class RecuperacaoSenhaTests(TenantScopedTestCase):
         self.assertTrue(tenant_context)
         self.assertNotIn("testserver", mail.outbox[0].body)
         self.assertNotIn("next=", mail.outbox[0].body)
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        NEXT_FRONTEND_URL="https://app.rhsaas.example.com",
+    )
+    def test_gateway_valida_e_confirma_sem_segredos_na_url_da_api(self):
+        self._request_reset()
+        _parsed, uidb64, token, tenant_context = self._reset_link_parts()
+        validation_url = reverse("caixa:api_auth_password_reset_gateway_validate")
+        confirm_url = reverse("caixa:api_auth_password_reset_gateway_confirm")
+
+        validation = self.client.post(
+            validation_url,
+            data=self._gateway_payload(uidb64, token, tenant_context),
+            content_type="application/json",
+        )
+        confirmation = self.client.post(
+            confirm_url,
+            data=self._gateway_payload(
+                uidb64,
+                token,
+                tenant_context,
+                newPassword1="Senha-gateway-segura-2026",
+                newPassword2="Senha-gateway-segura-2026",
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(validation.status_code, 200)
+        self.assertEqual(validation.json(), {"valid": True})
+        self.assertEqual(confirmation.status_code, 200)
+        self.assertEqual(confirmation.json(), {"passwordReset": True})
+        self.assertNotIn(uidb64, validation.wsgi_request.path)
+        self.assertNotIn(token, validation.wsgi_request.get_full_path())
+        self.assertNotIn(tenant_context, validation.wsgi_request.get_full_path())
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("Senha-gateway-segura-2026"))
 
     @override_settings(NEXT_FRONTEND_URL="https://app.rhsaas.example.com")
     def test_falha_de_email_nao_revela_se_a_conta_existe(self):
@@ -41760,6 +41901,12 @@ class RecuperacaoSenhaTests(TenantScopedTestCase):
         )
 
         self.assertEqual(sem_csrf.status_code, 403)
+        self.assertEqual(sem_csrf["Content-Type"], "application/json")
+        self.assertEqual(
+            sem_csrf.json(),
+            {"detail": "Nao foi possivel validar a solicitacao."},
+        )
+        self.assertIn("no-store", sem_csrf["Cache-Control"])
         self.assertEqual(com_csrf.status_code, 200)
         _parsed, uidb64, token, tenant_context = self._reset_link_parts()
         url = self._confirm_url(uidb64, token, tenant_context)
@@ -41775,6 +41922,160 @@ class RecuperacaoSenhaTests(TenantScopedTestCase):
         )
 
         self.assertEqual(reset_sem_csrf.status_code, 403)
+
+        gateway_sem_csrf = Client(enforce_csrf_checks=True).post(
+            reverse("caixa:api_auth_password_reset_gateway_confirm"),
+            data=self._gateway_payload(
+                uidb64,
+                token,
+                tenant_context,
+                newPassword1="Outra-senha-segura-2026",
+                newPassword2="Outra-senha-segura-2026",
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(gateway_sem_csrf.status_code, 403)
+        self.assertEqual(gateway_sem_csrf["Content-Type"], "application/json")
+        self.assertIn("no-store", gateway_sem_csrf["Cache-Control"])
+
+    @override_settings(
+        PASSWORD_RESET_MIN_RESPONSE_SECONDS=0.4,
+        PASSWORD_RESET_RESPONSE_JITTER_SECONDS=0,
+    )
+    def test_equalizacao_temporal_compensa_amostras_de_trabalho_lento_sem_benchmark(self):
+        with (
+            patch(
+                "caixa.services_auth.time.monotonic",
+                side_effect=(100.0, 200.15, 300.35),
+            ),
+            patch("caixa.services_auth.time.sleep") as sleep,
+        ):
+            equalize_password_reset_response_time(100.0)
+            equalize_password_reset_response_time(200.0)
+            equalize_password_reset_response_time(300.0)
+
+        compensated_totals = [
+            elapsed + call.args[0]
+            for elapsed, call in zip((0.0, 0.15, 0.35), sleep.call_args_list)
+        ]
+        self.assertEqual(len(compensated_totals), 3)
+        for total in compensated_totals:
+            self.assertAlmostEqual(total, 0.4)
+
+    @override_settings(
+        PASSWORD_RESET_MIN_RESPONSE_SECONDS=99,
+        PASSWORD_RESET_RESPONSE_JITTER_SECONDS=99,
+    )
+    def test_equalizacao_temporal_limita_sleep_mesmo_com_configuracao_incorreta(self):
+        with (
+            patch("caixa.services_auth.time.monotonic", return_value=100.0),
+            patch("caixa.services_auth.time.sleep") as sleep,
+            patch("caixa.services_auth.secrets.randbelow", return_value=1_000_000),
+        ):
+            equalize_password_reset_response_time(100.0)
+
+        sleep.assert_called_once_with(3.0)
+
+    @override_settings(
+        PASSWORD_RESET_MIN_RESPONSE_SECONDS=float("nan"),
+        PASSWORD_RESET_RESPONSE_JITTER_SECONDS=float("nan"),
+    )
+    def test_equalizacao_temporal_descarta_valores_nao_finitos(self):
+        with (
+            patch("caixa.services_auth.time.monotonic", return_value=100.0),
+            patch("caixa.services_auth.time.sleep") as sleep,
+        ):
+            equalize_password_reset_response_time(100.0)
+
+        sleep.assert_not_called()
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        NEXT_FRONTEND_URL="https://app.rhsaas.example.com",
+        PASSWORD_RESET_RATE_LIMIT_ATTEMPTS=20,
+        PASSWORD_RESET_MIN_RESPONSE_SECONDS=0.4,
+        PASSWORD_RESET_RESPONSE_JITTER_SECONDS=0,
+    )
+    def test_caminhos_existente_e_inexistente_aplicam_mesma_equalizacao(self):
+        clock = {"now": 100.0}
+        existing_work = iter((0.3, 0.35, 0.25))
+        missing_work = iter((0.0, 0.0, 0.0))
+
+        def monotonic():
+            return clock["now"]
+
+        def sleep(seconds):
+            clock["now"] += seconds
+
+        def simulate_password_reset_save(form, *args, **kwargs):
+            work_samples = (
+                existing_work
+                if form.cleaned_data["email"] == self.user.email
+                else missing_work
+            )
+            clock["now"] += next(work_samples)
+
+        fake_time = SimpleNamespace(monotonic=monotonic, sleep=sleep)
+        sample_totals = []
+        responses = []
+        with (
+            patch("caixa.views_api_password_reset.time", fake_time),
+            patch("caixa.services_auth.time", fake_time),
+            patch(
+                "caixa.views_api_password_reset.PasswordResetForm.save",
+                new=simulate_password_reset_save,
+            ),
+        ):
+            for email in (self.user.email, "conta-inexistente@example.com") * 3:
+                started_at = clock["now"]
+                responses.append(self._request_reset(email))
+                sample_totals.append(clock["now"] - started_at)
+
+        self.assertTrue(all(response.status_code == 200 for response in responses))
+        self.assertTrue(all(response.json() == responses[0].json() for response in responses))
+        for total in sample_totals:
+            self.assertAlmostEqual(total, 0.4)
+
+    @override_settings(
+        PASSWORD_RESET_RATE_LIMIT_ATTEMPTS=1,
+        PASSWORD_RESET_RATE_LIMIT_WINDOW=3600,
+        AXES_TRUSTED_PROXY_REMOTE_ADDRS=["10.0.0.1"],
+    )
+    def test_rate_limit_separa_ips_atras_de_proxy_confiavel(self):
+        request_a = RequestFactory().post(
+            "/",
+            REMOTE_ADDR="10.0.0.1",
+            HTTP_X_REAL_IP="203.0.113.10",
+        )
+        request_b = RequestFactory().post(
+            "/",
+            REMOTE_ADDR="10.0.0.1",
+            HTTP_X_REAL_IP="203.0.113.11",
+        )
+
+        self.assertFalse(password_reset_rate_limit_exceeded(request_a))
+        self.assertFalse(password_reset_rate_limit_exceeded(request_b))
+        self.assertTrue(password_reset_rate_limit_exceeded(request_a))
+
+    @override_settings(
+        PASSWORD_RESET_RATE_LIMIT_ATTEMPTS=1,
+        PASSWORD_RESET_RATE_LIMIT_WINDOW=3600,
+        AXES_TRUSTED_PROXY_REMOTE_ADDRS=["10.0.0.1"],
+    )
+    def test_rate_limit_ignora_forwarded_for_de_origem_nao_confiavel(self):
+        primeiro = RequestFactory().post(
+            "/",
+            REMOTE_ADDR="198.51.100.20",
+            HTTP_X_FORWARDED_FOR="203.0.113.10",
+        )
+        segundo = RequestFactory().post(
+            "/",
+            REMOTE_ADDR="198.51.100.20",
+            HTTP_X_FORWARDED_FOR="203.0.113.11",
+        )
+
+        self.assertFalse(password_reset_rate_limit_exceeded(primeiro))
+        self.assertTrue(password_reset_rate_limit_exceeded(segundo))
 
 
 class PagamentosEventoTests(TenantScopedTestCase):

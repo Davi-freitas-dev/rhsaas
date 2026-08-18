@@ -304,7 +304,7 @@ REMOVED_AUTH_HTML_SUPPORT = [
     {
         "routeName": "password_reset_confirm",
         "template": "caixa/password_reset_confirm.html",
-        "replacement": "Next.js /redefinir-senha/<uid>/<token>",
+        "replacement": "Next.js /redefinir-senha#uid=...&token=...&context=...",
     },
     {
         "routeName": "password_reset_complete",

@@ -4,11 +4,11 @@ from functools import wraps
 
 from django.contrib.auth import login, logout
 from django.contrib.auth.forms import AuthenticationForm
+from django.http import JsonResponse
 from django.views.decorators.cache import never_cache
 from django.middleware.csrf import CsrfViewMiddleware, get_token
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.debug import sensitive_post_parameters, sensitive_variables
-from django.views.decorators.http import require_GET, require_POST
 from drf_spectacular.utils import OpenApiTypes, extend_schema
 from rest_framework.decorators import (
     api_view,
@@ -114,7 +114,12 @@ def csrf_protect_drf_view(view_func):
             kwargs,
         )
         if response is not None:
-            return response
+            rejection = JsonResponse(
+                {"detail": "Nao foi possivel validar a solicitacao."},
+                status=403,
+            )
+            rejection["Cache-Control"] = "no-store"
+            return rejection
 
         return view_func(request, *args, **kwargs)
 
@@ -308,7 +313,6 @@ def api_auth_session(request):
     )
 
 
-@require_POST
 @csrf_protect_drf_view
 @sensitive_post_parameters("password")
 @sensitive_variables("password")
@@ -365,7 +369,6 @@ def api_auth_login(request):
     )
 
 
-@require_POST
 @csrf_protect_drf_view
 @never_cache
 @extend_schema(

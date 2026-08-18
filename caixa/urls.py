@@ -8,6 +8,8 @@ from .views_api_auth import (
 )
 from .views_api_password_reset import (
     api_auth_password_reset_confirm,
+    api_auth_password_reset_gateway_confirm,
+    api_auth_password_reset_gateway_validate,
     api_auth_password_reset_request,
 )
 from .views_backups import (
@@ -105,6 +107,16 @@ urlpatterns = [
         "api/auth/password-reset/",
         api_auth_password_reset_request,
         name="api_auth_password_reset_request",
+    ),
+    path(
+        "api/auth/password-reset/gateway/validate/",
+        api_auth_password_reset_gateway_validate,
+        name="api_auth_password_reset_gateway_validate",
+    ),
+    path(
+        "api/auth/password-reset/gateway/confirm/",
+        api_auth_password_reset_gateway_confirm,
+        name="api_auth_password_reset_gateway_confirm",
     ),
     path(
         "api/auth/password-reset/<uidb64>/<token>/",

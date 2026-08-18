@@ -28,6 +28,7 @@ from rest_framework.throttling import SimpleRateThrottle
 from config.client_ip import get_axes_client_ip, get_client_network_identifier
 from caixa.models import Cliente, ReceitaOperacional
 from caixa.permissions import is_platform_operator, is_tenant_administrator
+from caixa.services_auth import tenant_password_reset_token_generator
 from caixa.tenant_files import backup_dir_for_schema
 from caixa.throttling import (
     AuthLoginRateThrottle,
@@ -2684,8 +2685,10 @@ class TenantThrottleIsolationTests(MultiTenantTestCase):
         self.assertEqual(len(mail.outbox), 1)
         link = re.search(r"https?://\S+", mail.outbox[0].body).group(0)
         parsed = urlsplit(link)
-        _route, uidb64, token = parsed.path.strip("/").split("/")
-        tenant_context = parse_qs(parsed.query)["context"][0]
+        fragment = parse_qs(parsed.fragment)
+        uidb64 = fragment["uid"][0]
+        token = fragment["token"][0]
+        tenant_context = fragment["context"][0]
         api_path = (
             f"/api/auth/password-reset/{uidb64}/{token}/"
             f"?context={tenant_context}"
@@ -2727,6 +2730,161 @@ class TenantThrottleIsolationTests(MultiTenantTestCase):
         with self.in_schema("tenant_b"):
             refreshed_b = get_user_model().objects.get(pk=user_b.pk)
             self.assertTrue(refreshed_b.check_password("senha-identica-inicial"))
+
+
+class TenantPasswordResetGatewayIsolationTests(MultiTenantTestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.secondary_tenant, _ = cls.create_tenant(
+            schema_name="tenant_b",
+            name="Tenant B",
+            domain="tenant-b.localhost",
+        )
+        cls.gateway_tenant, _ = cls.create_tenant(
+            schema_name="tenant_gateway",
+            name="Tenant Gateway",
+            domain="gateway.localhost",
+        )
+        cls.tenants = {
+            cls.primary_tenant.schema_name: cls.primary_tenant,
+            cls.secondary_tenant.schema_name: cls.secondary_tenant,
+            cls.gateway_tenant.schema_name: cls.gateway_tenant,
+        }
+
+    def setUp(self):
+        cache.clear()
+        mail.outbox = []
+
+    def tearDown(self):
+        cache.clear()
+
+    def _client(self, schema_name):
+        return self.client_for_tenant(self.tenants[schema_name])
+
+    def _request_reset(self, schema_name, email):
+        return self._client(schema_name).post(
+            "/api/auth/password-reset/",
+            data=json.dumps({"email": email}),
+            content_type="application/json",
+        )
+
+    def _link_credentials(self):
+        link = re.search(r"https?://\S+", mail.outbox[-1].body).group(0)
+        parsed = urlsplit(link)
+        fragment = parse_qs(parsed.fragment)
+        self.assertEqual(parsed.path, "/redefinir-senha")
+        self.assertFalse(parsed.query)
+        return {
+            "uidb64": fragment["uid"][0],
+            "token": fragment["token"][0],
+            "context": fragment["context"][0],
+        }
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        NEXT_FRONTEND_URL="https://app.rhsaas.example.com",
+        PASSWORD_RESET_GATEWAY_SCHEMA="tenant_gateway",
+        PASSWORD_RESET_MIN_RESPONSE_SECONDS=0,
+        PASSWORD_RESET_RESPONSE_JITTER_SECONDS=0,
+    )
+    def test_link_real_resolve_tenant_a_no_gateway_e_rejeita_host_b(self):
+        shared_email = "reset-gateway@example.com"
+        shared_username = "reset-gateway"
+        old_password = "Senha-inicial-identica-2026"
+        user_a = self.create_user(
+            "tenant_a",
+            shared_username,
+            old_password,
+            email=shared_email,
+            pk=900001,
+        )
+        user_b = self.create_user(
+            "tenant_b",
+            shared_username,
+            old_password,
+            email=shared_email,
+            pk=900001,
+        )
+        self.assertEqual(user_a.pk, user_b.pk)
+
+        request_response = self._request_reset("tenant_a", shared_email)
+        self.assertEqual(request_response.status_code, 200)
+        self.assertEqual(len(mail.outbox), 1)
+        credentials = self._link_credentials()
+        validate_path = "/api/auth/password-reset/gateway/validate/"
+        confirm_path = "/api/auth/password-reset/gateway/confirm/"
+
+        wrong_host = self._client("tenant_b").post(
+            validate_path,
+            data=json.dumps(credentials),
+            content_type="application/json",
+        )
+        gateway_validation = self._client("tenant_gateway").post(
+            validate_path,
+            data=json.dumps(credentials),
+            content_type="application/json",
+        )
+        gateway_confirmation = self._client("tenant_gateway").post(
+            confirm_path,
+            data=json.dumps(
+                {
+                    **credentials,
+                    "newPassword1": "Nova-senha-gateway-2026",
+                    "newPassword2": "Nova-senha-gateway-2026",
+                }
+            ),
+            content_type="application/json",
+        )
+        reused_token = self._client("tenant_gateway").post(
+            validate_path,
+            data=json.dumps(credentials),
+            content_type="application/json",
+        )
+
+        self.assertEqual(wrong_host.status_code, 400)
+        self.assertEqual(gateway_validation.status_code, 200)
+        self.assertEqual(gateway_confirmation.status_code, 200)
+        self.assertEqual(reused_token.status_code, 400)
+        with self.in_schema("tenant_a"):
+            refreshed_a = get_user_model().objects.get(pk=user_a.pk)
+            self.assertTrue(refreshed_a.check_password("Nova-senha-gateway-2026"))
+        with self.in_schema("tenant_b"):
+            refreshed_b = get_user_model().objects.get(pk=user_b.pk)
+            self.assertTrue(refreshed_b.check_password(old_password))
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        NEXT_FRONTEND_URL="https://app.rhsaas.example.com",
+        PASSWORD_RESET_GATEWAY_SCHEMA="tenant_gateway",
+        PASSWORD_RESET_TIMEOUT=3600,
+        PASSWORD_RESET_MIN_RESPONSE_SECONDS=0,
+        PASSWORD_RESET_RESPONSE_JITTER_SECONDS=0,
+    )
+    def test_gateway_rejeita_token_expirado(self):
+        email = "reset-expirado-gateway@example.com"
+        self.create_user(
+            "tenant_a",
+            "reset-expirado-gateway",
+            "Senha-inicial-expirada-2026",
+            email=email,
+        )
+        self.assertEqual(self._request_reset("tenant_a", email).status_code, 200)
+        credentials = self._link_credentials()
+        issued_at = timezone.now().replace(tzinfo=None)
+
+        with patch.object(
+            tenant_password_reset_token_generator,
+            "_now",
+            return_value=issued_at + timedelta(seconds=3601),
+        ):
+            response = self._client("tenant_gateway").post(
+                "/api/auth/password-reset/gateway/validate/",
+                data=json.dumps(credentials),
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 400)
 
 
 class TenantCommandGuardTests(MultiTenantTestCase):
