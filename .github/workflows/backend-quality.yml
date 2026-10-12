@@ -171,6 +171,7 @@ jobs:
           tenancy.tests.TenantThrottleIsolationTests
           tenancy.tests.TenantPasswordResetGatewayIsolationTests
           tenancy.test_security_documentation.SecurityDocumentationGuardrailTests
+          --keepdb
           --verbosity 2
 
   postgres-concurrency:

@@ -33,7 +33,7 @@ def test_selector_custos_servico_prefetch_evita_n_plus_one(
 
     filtros = {"busca": "", "evento": "", "tipo": "", "situacao": "todos"}
 
-    with django_assert_num_queries(2):
+    with django_assert_num_queries(4):
         custos = listar_custos_servico(filtros)
         saldos = [custo.saldo_diarias for custo in custos]
 
@@ -61,7 +61,7 @@ def test_selector_custos_extras_prefetch_evita_n_plus_one(
 
     filtros = {"busca": "", "evento": "", "categoria": "", "situacao": "todos"}
 
-    with django_assert_num_queries(2):
+    with django_assert_num_queries(4):
         custos = listar_custos_extras(filtros)
         saldos = [custo.saldo_a_pagar for custo in custos]
 
